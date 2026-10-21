@@ -1,35 +1,24 @@
-//! Red contract matrix — deterministic failing cases for every
-//! remaining LSP contract gap.
-//!
-//! Every case in this file was authored `#[ignore]`'d while its behavior was
-//! unimplemented; those attributes were removed as the features
-//! landed, and the tests now run as ordinary (passing) contract gates. Each
-//! test's doc-comment names the behavior (and issue) it covers.
-//!
-//! Shared infrastructure reuses `ry-testkit` (`FixtureProject`,
-//! `LspSession`, `AsyncJsonRpcClient`) and the `ry_lsp::run_with` in-memory
-//! server seam, plus the `Published` comparison helpers shared with
-//! `protocol.rs` in `harness.rs`, so the contract is "LSP published
-//! diagnostics equal `ry check` run independently in the same root."
-//!
-//! No test below adds package-import or filtering differences to `normalise()`.
+//! Multi-root, reload, and cache contracts. Each test compares the editor's
+//! publications with `ry check` or with a fresh server on the same files.
 
 use ry_lsp::test_seam::Seam;
 use ry_testkit::{AsyncJsonRpcClient, FixtureProject, normalize_path};
 use serde_json::{Value, json};
-use std::path::Path;
-use std::process::Command;
+use std::path::{Path, PathBuf};
 
 use crate::harness;
 
-use harness::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
+use harness::{
+    Published, cli_diagnostics, file_uri, join_session, open_published, published_from_lsp,
+    spawn_session, sync_barrier,
+};
 
 #[tokio::test]
 async fn assignment_hints_keep_source_types_across_edits_and_ranges() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("main.R", "").unwrap();
-    let uri = ry_testkit::file_uri(&fixture.path("main.R")).unwrap();
-    let (mut session, server) = harness::spawn_session(&[fixture.root()], json!({}), None).await;
+    let uri = file_uri(&fixture.path("main.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
     session
         .open(&uri, 1, "x <- 1L\nx <- \"later\"\n")
         .await
@@ -47,13 +36,7 @@ async fn assignment_hints_keep_source_types_across_edits_and_ranges() {
         assert_eq!(hints[0]["label"], ": integer<len=1>");
     }
     session
-        .notify(
-            "textDocument/didChange",
-            json!({
-                "textDocument": {"uri": uri, "version": 2},
-                "contentChanges": [{"text": "x <- FALSE\nx <- 1L\n"}]
-            }),
-        )
+        .change(&uri, 2, json!([{"text": "x <- FALSE\nx <- 1L\n"}]))
         .await
         .unwrap();
     let hints = session
@@ -62,7 +45,7 @@ async fn assignment_hints_keep_source_types_across_edits_and_ranges() {
         .unwrap();
     assert_eq!(hints.as_array().unwrap().len(), 1, "{hints}");
     assert_eq!(hints[0]["label"], ": logical<len=1>");
-    harness::join_session(session, server).await;
+    join_session(session, server).await;
 }
 
 #[tokio::test]
@@ -80,8 +63,8 @@ async fn assignment_hints_refresh_when_local_stubs_change() {
         };
     write_stub("integer");
     fixture.write_file("main.R", "").unwrap();
-    let uri = ry_testkit::file_uri(&fixture.path("main.R")).unwrap();
-    let (mut session, server) = harness::spawn_session(&[fixture.root()], json!({}), None).await;
+    let uri = file_uri(&fixture.path("main.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
     session
         .open(&uri, 1, "x <- localdep::value()\n")
         .await
@@ -113,215 +96,73 @@ async fn assignment_hints_refresh_when_local_stubs_change() {
         .await
         .unwrap();
     assert_eq!(hints[0]["label"], ": character<len=1>");
-    harness::join_session(session, server).await;
+    join_session(session, server).await;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Shared helpers (adapted from protocol.rs for multi-root support)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Run `ry check` in `dir` (as the working directory) and return normalized
-/// diagnostics. Each root is checked independently so multi-root parity is
-/// "LSP equals an independent CLI invocation in that root."
 fn cli_diagnostics_in_dir(dir: &Path, extra: &[&str]) -> Vec<Published> {
-    let mut command = Command::new(ry_binary());
-    command
-        .current_dir(dir)
-        .arg("check")
-        .arg("--output-format")
-        .arg("json");
-    for arg in extra {
-        command.arg(arg);
+    cli_diagnostics(dir, ".", extra)
+}
+
+/// Open `R/main.R` in each root and return its publication, relative to
+/// that root.
+async fn open_each_main(
+    session: &mut harness::ClientSession,
+    roots: &[PathBuf],
+) -> Vec<Vec<Published>> {
+    let mut published = Vec::new();
+    for root in roots {
+        let path = root.join("R/main.R");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let publish = open_published(session, &file_uri(&path), 1, &text).await;
+        published.push(published_from_lsp(&publish, &path, root));
     }
-    command.arg(".");
-    let output = command.output().expect("run ry check");
-    assert!(
-        matches!(output.status.code(), Some(0 | 1)),
-        "CLI failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let values: Vec<Value> = serde_json::from_slice(&output.stdout).expect("CLI JSON output");
-    let mut diagnostics: Vec<_> = values
-        .into_iter()
-        .map(|v| published_from_cli_value(&v, dir))
-        .collect();
-    diagnostics.sort();
-    diagnostics
+    published
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Per-folder editor settings (#44)
-//
-// Bug being pinned: the server stored a single server-wide `folder_settings`
-// (`State::folder_settings`) taken from the first `initializationOptions`
-// entry, so per-folder editor settings were not honored. W2a replaced it
-// with per-root values.
+// Per-folder settings and stubs
 // ──────────────────────────────────────────────────────────────────────────
 
-/// (#44): two roots with different editor settings must produce
-/// per-file CLI/LSP parity. Root A ignores RY002 (both in `ry.toml` and
-/// editor settings); root B does not. Both files trigger RY002.
-///
-/// Before W2a, root A's ignore list was applied server-wide and wrongly
-/// suppressed RY002 in root B, diverging from `ry check` run there.
+/// Each root publishes what `ry check` reports in that root. Root A ignores
+/// RY002 in `ry.toml` and in its editor settings. Root B does not.
 #[tokio::test]
 async fn two_roots_different_editor_settings_differential() {
     let fixture = FixtureProject::empty().unwrap();
-    // Root A: ry.toml ignores RY002.
     fixture
         .write_file("root-a/ry.toml", "ignore = [\"RY002\"]\n")
         .unwrap();
-    fixture
-        .write_file("root-a/R/main.R", "if (c(TRUE, FALSE)) print(1)\n")
-        .unwrap();
-    // Root B: no ignore for RY002.
-    fixture
-        .write_file("root-b/R/main.R", "if (c(TRUE, FALSE)) print(1)\n")
-        .unwrap();
+    for root in ["root-a", "root-b"] {
+        fixture
+            .write_file(format!("{root}/R/main.R"), "if (c(TRUE, FALSE)) print(1)\n")
+            .unwrap();
+    }
+    let roots = [fixture.path("root-a"), fixture.path("root-b")];
+    let cli: Vec<_> = roots
+        .iter()
+        .map(|root| cli_diagnostics(root, ".", &[]))
+        .collect();
+    assert_ne!(cli[0], cli[1], "roots must produce different CLI output");
 
-    let root_a = fixture.path("root-a");
-    let root_b = fixture.path("root-b");
-
-    // CLI reference: run `ry check` independently in each root.
-    let cli_a = cli_diagnostics_in_dir(&root_a, &[]);
-    let cli_b = cli_diagnostics_in_dir(&root_b, &[]);
-
-    // They must differ (root A suppresses RY002; root B does not).
-    assert_ne!(cli_a, cli_b, "roots must produce different CLI output");
-
-    let root_uri = file_uri(fixture.root());
-    let root_a_uri = file_uri(&root_a);
-    let root_b_uri = file_uri(&root_b);
-
-    // Per-folder editor settings matching each root's ry.toml.
-    let init_options = json!({
-        "settings": [
-            {"lint": {"ignore": ["RY002"]}},
-            {}
-        ],
-        "globalSettings": {}
-    });
-
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
-    let mut client = AsyncJsonRpcClient::new(client_reader, client_writer);
-
-    let init_id = client
-        .request(
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": root_uri,
-                "capabilities": {},
-                "initializationOptions": init_options,
-                "workspaceFolders": [
-                    {"uri": root_a_uri, "name": "root-a"},
-                    {"uri": root_b_uri, "name": "root-b"}
-                ]
-            }),
-        )
-        .await
-        .unwrap();
-    client
-        .receive_until(|m| m.get("id") == Some(&json!(init_id)), 16)
-        .await
-        .unwrap();
-    client.notify("initialized", json!({})).await.unwrap();
-
-    // Open root A's file and collect its diagnostics.
-    let path_a = fixture.path("root-a/R/main.R");
-    let uri_a = file_uri(&path_a);
-    let text_a = std::fs::read_to_string(&path_a).unwrap();
-    client
-        .notify(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {"uri": uri_a, "languageId": "r", "version": 1, "text": text_a}
-            }),
-        )
-        .await
-        .unwrap();
-    let publish_a = client
-        .receive_until(
-            |m| {
-                m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                    && m.pointer("/params/uri") == Some(&json!(uri_a))
-            },
-            64,
-        )
-        .await
-        .unwrap();
-    let lsp_a = published_from_lsp(&publish_a, &path_a, &root_a);
-
-    // Open root B's file and collect its diagnostics.
-    let path_b = fixture.path("root-b/R/main.R");
-    let uri_b = file_uri(&path_b);
-    let text_b = std::fs::read_to_string(&path_b).unwrap();
-    client
-        .notify(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {"uri": uri_b, "languageId": "r", "version": 1, "text": text_b}
-            }),
-        )
-        .await
-        .unwrap();
-    let publish_b = client
-        .receive_until(
-            |m| {
-                m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                    && m.pointer("/params/uri") == Some(&json!(uri_b))
-            },
-            64,
-        )
-        .await
-        .unwrap();
-    let lsp_b = published_from_lsp(&publish_b, &path_b, &root_b);
-
-    // Shutdown.
-    let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
-    client
-        .receive_until(|m| m.get("id") == Some(&json!(shutdown_id)), 16)
-        .await
-        .unwrap();
-    client.notify("exit", Value::Null).await.unwrap();
-    drop(client);
-    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(code, std::process::ExitCode::SUCCESS);
-
-    // Each root's LSP output must match its independent CLI run.
-    assert_eq!(lsp_a, cli_a, "root-a LSP must match independent CLI run");
-    assert_eq!(lsp_b, cli_b, "root-b LSP must match independent CLI run");
+    let (mut session, server) = spawn_session(
+        &[&roots[0], &roots[1]],
+        json!({}),
+        Some(json!({
+            "settings": [{"lint": {"ignore": ["RY002"]}}, {}],
+            "globalSettings": {}
+        })),
+    )
+    .await;
+    let lsp = open_each_main(&mut session, &roots).await;
+    join_session(session, server).await;
+    assert_eq!(lsp, cli, "each root must match an independent CLI run");
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Per-folder typeshed isolation (#54)
-//
-// Bug being pinned: stubs were loaded only for the root URI, so in a
-// multi-root workspace two roots defining the same package differently
-// collided. The fix loads stubs per root and resolves them through
-// longest-prefix ownership.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// (#54): two roots define the same stub package (`localdep`) with
-/// different return types for `my_func`. Root A's stub returns integer (no
-/// diagnostic); root B's stub returns list (RY001 — `if` condition is
-/// a list). Each root's LSP output must equal its independent CLI run.
-///
-/// Before W2b, neither root loaded its local stubs: `my_func` had an
-/// unknown return type and neither root produced RY001.
+/// Two roots define the stub package `localdep` with different return types
+/// for `my_func`. Root B's list return makes `if (my_func())` fire RY001.
+/// Each root publishes what `ry check` reports in that root.
 #[tokio::test]
 async fn colliding_local_stubs_isolation() {
     let fixture = FixtureProject::empty().unwrap();
-
-    // root-b's stub returns a list so `if (my_func())` fires RY001 there;
-    // a character return went silent for conditions in #373 and can no
-    // longer discriminate the two roots' outputs.
     for (root, return_mode) in [("root-a", "integer"), ("root-b", "list")] {
         fixture
             .write_file(
@@ -357,312 +198,59 @@ async fn colliding_local_stubs_isolation() {
             .write_file(format!("{root}/R/main.R"), "if (my_func()) print(1)\n")
             .unwrap();
     }
+    let roots = [fixture.path("root-a"), fixture.path("root-b")];
+    let cli: Vec<_> = roots
+        .iter()
+        .map(|root| cli_diagnostics(root, ".", &[]))
+        .collect();
+    assert_ne!(cli[0], cli[1], "roots must produce different CLI output");
 
-    let root_a = fixture.path("root-a");
-    let root_b = fixture.path("root-b");
-    let cli_a = cli_diagnostics_in_dir(&root_a, &[]);
-    let cli_b = cli_diagnostics_in_dir(&root_b, &[]);
-
-    // The two roots MUST produce different CLI output (the stub return types
-    // differ). Without this, the test cannot detect a collision.
-    assert_ne!(cli_a, cli_b, "roots must produce different CLI output");
-
-    let root_uri = file_uri(fixture.root());
-    let root_a_uri = file_uri(&root_a);
-    let root_b_uri = file_uri(&root_b);
-
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
-    let mut client = AsyncJsonRpcClient::new(client_reader, client_writer);
-
-    let init_id = client
-        .request(
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": root_uri,
-                "capabilities": {},
-                "workspaceFolders": [
-                    {"uri": root_a_uri, "name": "root-a"},
-                    {"uri": root_b_uri, "name": "root-b"}
-                ]
-            }),
-        )
-        .await
-        .unwrap();
-    client
-        .receive_until(|m| m.get("id") == Some(&json!(init_id)), 16)
-        .await
-        .unwrap();
-    client.notify("initialized", json!({})).await.unwrap();
-
-    // Collect diagnostics for each root's file.
-    let mut lsp_results: Vec<(String, Vec<Published>)> = Vec::new();
-    for (label, root_dir) in [("root-a", &root_a), ("root-b", &root_b)] {
-        let path = root_dir.join("R/main.R");
-        let uri = file_uri(&path);
-        let text = std::fs::read_to_string(&path).unwrap();
-        client
-            .notify(
-                "textDocument/didOpen",
-                json!({
-                    "textDocument": {"uri": uri, "languageId": "r", "version": 1, "text": text}
-                }),
-            )
-            .await
-            .unwrap();
-        let publish = client
-            .receive_until(
-                |m| {
-                    m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                        && m.pointer("/params/uri") == Some(&json!(uri))
-                },
-                64,
-            )
-            .await
-            .unwrap();
-        let diags = published_from_lsp(&publish, &path, root_dir);
-        lsp_results.push((label.to_string(), diags));
-    }
-
-    let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
-    client
-        .receive_until(|m| m.get("id") == Some(&json!(shutdown_id)), 16)
-        .await
-        .unwrap();
-    client.notify("exit", Value::Null).await.unwrap();
-    drop(client);
-    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(code, std::process::ExitCode::SUCCESS);
-
-    assert_eq!(
-        lsp_results[0].1, cli_a,
-        "root-a LSP must match independent CLI run"
-    );
-    assert_eq!(
-        lsp_results[1].1, cli_b,
-        "root-b LSP must match independent CLI run"
-    );
+    let (mut session, server) = spawn_session(&[&roots[0], &roots[1]], json!({}), None).await;
+    let lsp = open_each_main(&mut session, &roots).await;
+    join_session(session, server).await;
+    assert_eq!(lsp, cli, "each root must match an independent CLI run");
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Honor the configuration override (#56)
-//
-// Bug being pinned: `FolderSettings::configuration` was deserialized but
-// never read. The fix resolves it relative to the workspace root and loads
-// that file instead of directory discovery.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// (#56): a folder whose `ry.toml` lives at a custom path
-/// (`config/custom.toml`) should honor the `configuration` editor setting.
-/// The custom config ignores RY002; the source triggers RY002. Asserts
-/// RY002 is absent, proving the override was honored.
-#[tokio::test]
-async fn per_folder_custom_config_path() {
-    let fixture = FixtureProject::empty().unwrap();
-    fixture
-        .write_file("config/custom.toml", "ignore = [\"RY002\"]\n")
-        .unwrap();
-    fixture
-        .write_file("R/main.R", "if (c(TRUE, FALSE)) print(1)\n")
-        .unwrap();
-
-    let root_uri = file_uri(fixture.root());
-    let init_options = json!({
-        "settings": [{"configuration": "config/custom.toml"}],
-        "globalSettings": {}
-    });
-
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
-    let mut client = AsyncJsonRpcClient::new(client_reader, client_writer);
-
-    let init_id = client
-        .request(
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": root_uri,
-                "capabilities": {},
-                "initializationOptions": init_options,
-                "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
-            }),
-        )
-        .await
-        .unwrap();
-    client
-        .receive_until(|m| m.get("id") == Some(&json!(init_id)), 16)
-        .await
-        .unwrap();
-    client.notify("initialized", json!({})).await.unwrap();
-
-    let path = fixture.path("R/main.R");
-    let uri = file_uri(&path);
-    let text = std::fs::read_to_string(&path).unwrap();
-    client
-        .notify(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {"uri": uri, "languageId": "r", "version": 1, "text": text}
-            }),
-        )
-        .await
-        .unwrap();
-    let publish = client
-        .receive_until(
-            |m| {
-                m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                    && m.pointer("/params/uri") == Some(&json!(uri))
-            },
-            64,
-        )
-        .await
-        .unwrap();
-    let diagnostics = published_from_lsp(&publish, &path, fixture.root());
-
-    let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
-    client
-        .receive_until(|m| m.get("id") == Some(&json!(shutdown_id)), 16)
-        .await
-        .unwrap();
-    client.notify("exit", Value::Null).await.unwrap();
-    drop(client);
-    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(code, std::process::ExitCode::SUCCESS);
-
-    // RY002 must be absent — the configuration override should load
-    // custom.toml and suppress it.
-    assert!(
-        !diagnostics.iter().any(|d| d.code == "RY002"),
-        "RY002 must be suppressed by the configuration override; got: {diagnostics:?}"
-    );
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Workspace-folder mutation converges to cold state (#55)
-//
-// Bug being pinned: `did_change_workspace_folders` updated
-// `workspace_folders` but left behind `disk_files`, trees, diagnostics,
-// and contexts owned by removed roots.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// (#55): add and remove a workspace folder. After each mutation the
-/// final diagnostics must equal a fresh server initialized on the same final
-/// roots. Removed roots must leave no reachable state.
+/// Removing a workspace folder clears the diagnostics of its open document:
+/// the next publication for it is empty, or none arrives.
 #[tokio::test]
 async fn workspace_folder_add_remove_convergence() {
-    use ry_testkit::LspSession;
-
     let fixture = FixtureProject::empty().unwrap();
-    // root-a and root-b each have a file with a diagnostic.
     fixture
         .write_file("root-a/R/main.R", "length(xx = 1L)\n")
         .unwrap();
     fixture
         .write_file("root-b/R/main.R", "length(xx = 1L)\n")
         .unwrap();
-
     let root_a = fixture.path("root-a");
     let root_b = fixture.path("root-b");
-    let root_a_uri = file_uri(&root_a);
-    let root_b_uri = file_uri(&root_b);
     let main_a_uri = file_uri(&root_a.join("R/main.R"));
     let main_b_uri = file_uri(&root_b.join("R/main.R"));
-    let main_b_text = "length(xx = 1L)\n".to_string();
+    let (mut session, server) = spawn_session(&[&root_a, &root_b], json!({}), None).await;
+    sync_barrier(&mut session, &main_a_uri).await;
+    open_published(&mut session, &main_b_uri, 1, "length(xx = 1L)\n").await;
 
-    // ── Phase: initialize with both roots, open root-b's file,
-    //    remove root-b, assert root-b's diagnostics are cleared. ──
-    let (cs2, ss2) = tokio::io::duplex(128 * 1024);
-    let (cr2, cw2) = tokio::io::split(cs2);
-    let (sr2, sw2) = tokio::io::split(ss2);
-    let server2 = tokio::spawn(async move { ry_lsp::run_with(sr2, sw2).await });
-    let mut live2 = LspSession::new(cr2, cw2);
-
-    live2
-        .request(
-            "initialize",
-            json!({
-                "processId": null,
-                "rootUri": root_a_uri,
-                "capabilities": {},
-                "workspaceFolders": [
-                    {"uri": root_a_uri, "name": "root-a"},
-                    {"uri": root_b_uri, "name": "root-b"}
-                ]
-            }),
-        )
-        .await
-        .unwrap();
-    live2.notify("initialized", json!({})).await.unwrap();
-    live2
-        .request(
-            "textDocument/inlayHint",
-            json!({
-                "textDocument": {"uri": main_a_uri},
-                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
-            }),
-        )
-        .await
-        .ok();
-
-    // Open root-b's file so we can observe its diagnostics.
-    let open_mark = live2.publication_mark();
-    live2.open(&main_b_uri, 1, &main_b_text).await.unwrap();
-    live2
-        .published_diagnostics_after(&main_b_uri, open_mark)
-        .await
-        .unwrap();
-
-    // Remove root-b.
-    live2
+    session
         .notify(
             "workspace/didChangeWorkspaceFolders",
             json!({
                 "event": {
                     "added": [],
-                    "removed": [{"uri": root_b_uri, "name": "root-b"}]
+                    "removed": [{"uri": file_uri(&root_b), "name": "root-b"}]
                 }
             }),
         )
         .await
         .unwrap();
-
-    // After removal, trigger a republish and sync.
-    live2
-        .request(
-            "textDocument/inlayHint",
-            json!({
-                "textDocument": {"uri": main_a_uri},
-                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
-            }),
-        )
-        .await
-        .ok();
-    let clear_mark = live2.publication_mark();
-
-    // Wait for a possible post-removal publication for root-b's file.
+    sync_barrier(&mut session, &main_a_uri).await;
+    let clear_mark = session.publication_mark();
     let republish = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        live2.published_diagnostics_after(&main_b_uri, clear_mark),
+        session.published_diagnostics_after(&main_b_uri, clear_mark),
     )
     .await;
+    join_session(session, server).await;
 
-    let _ = live2.shutdown().await;
-    drop(live2);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server2).await;
-
-    // After removing root-b, the server must clear diagnostics for files
-    // owned by root-b (empty publish or no publish at all).
     match republish {
         Ok(Ok(publish)) => {
             let diags = publish
@@ -679,7 +267,7 @@ async fn workspace_folder_add_remove_convergence() {
     }
 }
 
-/// (#53): a stale parse result must not replace a newer tree cache
+/// A stale parse result must not replace a newer tree cache
 /// entry. The forced sequence is:
 ///   1. parse version N starts;
 ///   2. `didChange` installs N+1;
@@ -693,24 +281,16 @@ async fn workspace_folder_add_remove_convergence() {
 /// if the document's edit stamp has not changed.
 #[tokio::test]
 async fn version_stamped_tree_cache_rejects_stale_parse() {
-    use ry_testkit::LspSession;
-
     let fixture = FixtureProject::empty().unwrap();
     let source_v1 = "x <- 1L\ny <- 2L\n";
     let source_v2 = "z <- length(xx = 1L)\n"; // triggers RY090 after edit
     fixture.write_file("main.R", source_v1).unwrap();
 
     let main_uri = file_uri(&fixture.path("main.R"));
+    let (mut live, server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
-    let (cs, ss) = tokio::io::duplex(128 * 1024);
-    let (cr, cw) = tokio::io::split(cs);
-    let (sr, sw) = tokio::io::split(ss);
-    let server = tokio::spawn(async move { ry_lsp::run_with(sr, sw).await });
-    let mut live = LspSession::new(cr, cw);
-    live.initialize(fixture.root()).await.unwrap();
-
-    // Force the parse/didChange interleaving (#53); the sequence is
-    // documented at the `maybe_pause` call site in `backend::parsed_file`.
+    // Force the parse/didChange interleaving; the sequence is documented
+    // at the `maybe_pause` call site in `backend::parsed_file`.
     ry_lsp::test_seam::arm(Seam::Parse);
     ry_lsp::test_seam::arm(Seam::DidChange);
 
@@ -757,150 +337,30 @@ async fn version_stamped_tree_cache_rejects_stale_parse() {
         v2_codes.contains(&"RY090"),
         "version 2 must produce RY090 after the stale parse is rejected; got: {v2_codes:?}"
     );
-
-    // Cleanup.
-    let _ = live.shutdown().await;
-    drop(live);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
+    join_session(live, server).await;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Cache baseline/config state outside the hot lock (#45)
+// Baseline reload
 //
-// The baseline and effective config are loaded into each
-// `FolderAnalysisContext` during initialize; the publish/inlay-hint
-// path reads the cached value and performs no disk access.
-// Watch events rebuild the context outside the write lock and swap it
-// atomically; a failed reload retains the last valid context and emits a
-// visible error.
+// The baseline is loaded into each folder context and reloaded on watch
+// events. A failed reload keeps the last valid context.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// (#45): a failed baseline reload must retain the last valid
-/// context, not silently clear the baseline. The test:
-///   1. Sets up a baseline that suppresses RY002.
-///   2. Verifies the LSP suppresses RY002.
-///   3. Corrupts the baseline file and triggers a watched-files event.
-///   4. Asserts RY002 is STILL suppressed (last valid context retained).
-///
-/// The baseline is cached in the owning `FolderAnalysisContext` during
-/// initialize and reloaded outside the write lock on watch events; when the
-/// reload fails (`load_baseline` → error), the last valid baseline is kept.
-#[tokio::test]
-async fn baseline_reload_retains_context_on_corruption() {
-    use ry_testkit::LspSession;
-
-    let fixture = FixtureProject::empty().unwrap();
-    fixture
-        .write_file("ry.toml", "baseline = \"baseline.json\"\n")
-        .unwrap();
-    fixture.write_file(
-        "baseline.json",
-        r#"{"version": 1, "entries": [{"path": "main.R", "code": "RY002", "message": "`if` condition has length 2; R requires a length-1 condition", "count": 1}]}"#,
-    ).unwrap();
-    fixture
-        .write_file("main.R", "if (c(TRUE, FALSE)) print(1)\n")
-        .unwrap();
-
-    let main_uri = file_uri(&fixture.path("main.R"));
-
-    let (cs, ss) = tokio::io::duplex(128 * 1024);
-    let (cr, cw) = tokio::io::split(cs);
-    let (sr, sw) = tokio::io::split(ss);
-    let server = tokio::spawn(async move { ry_lsp::run_with(sr, sw).await });
-    let mut live = LspSession::new(cr, cw);
-    live.initialize(fixture.root()).await.unwrap();
-
-    // Phase 1: RY002 should be suppressed by the valid baseline.
-    let mark1 = live.publication_mark();
-    live.open(&main_uri, 1, "if (c(TRUE, FALSE)) print(1)\n")
-        .await
-        .unwrap();
-    let publish1 = live
-        .published_diagnostics_after(&main_uri, mark1)
-        .await
-        .unwrap();
-    let codes1: Vec<&str> = publish1["params"]["diagnostics"]
+fn diagnostic_codes(publish: &Value) -> Vec<String> {
+    publish["params"]["diagnostics"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|d| d["code"].as_str().unwrap_or(""))
-        .collect();
-    assert!(
-        !codes1.contains(&"RY002"),
-        "phase 1: RY002 must be suppressed by valid baseline; got: {codes1:?}"
-    );
-
-    // Phase 2: corrupt the baseline file and trigger a watched-files event.
-    std::fs::write(fixture.path("baseline.json"), "CORRUPT NOT JSON").unwrap();
-    let baseline_uri = file_uri(&fixture.path("baseline.json"));
-    live.notify(
-        "workspace/didChangeWatchedFiles",
-        json!({
-            "changes": [{"uri": baseline_uri, "type": 2}]
-        }),
-    )
-    .await
-    .unwrap();
-
-    // Sync barrier to let the reload + republish happen.
-    live.request(
-        "textDocument/inlayHint",
-        json!({
-            "textDocument": {"uri": main_uri},
-            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
-        }),
-    )
-    .await
-    .ok();
-
-    // Phase 3: trigger a republish. RY002 must STILL be suppressed
-    // (the last valid baseline context must be retained).
-    let mark3 = live.publication_mark();
-    live.change(
-        &main_uri,
-        2,
-        json!([{"text": "if (c(TRUE, FALSE)) print(1)\n"}]),
-    )
-    .await
-    .unwrap();
-    let publish3 = live
-        .published_diagnostics_after(&main_uri, mark3)
-        .await
-        .unwrap();
-    let codes3: Vec<&str> = publish3["params"]["diagnostics"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|d| d["code"].as_str().unwrap_or(""))
-        .collect();
-
-    let _ = live.shutdown().await;
-    drop(live);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
-
-    // Baseline contract: a failed reload retains the last valid context.
-    // The cached baseline is kept when the corrupt file fails to reload.
-    assert!(
-        !codes3.contains(&"RY002"),
-        "phase 3: RY002 must still be suppressed (last valid baseline retained); got: {codes3:?}"
-    );
+        .map(|d| d["code"].as_str().unwrap_or("").to_string())
+        .collect()
 }
 
-/// (#45): a *successful* baseline reload must converge to the new
-/// value, matching a cold server started fresh against the same files.
-///
-/// The test:
-///   1. Sets up a baseline that suppresses RY002 (count 1).
-///   2. Verifies the LSP suppresses RY002.
-///   3. Overwrites the baseline with a valid EMPTY baseline.
-///   4. Triggers the watch path and quiesces.
-///   5. Republishes: RY002 must now APPEAR (reload converged).
-///   6. Spawns a FRESH server against the same fixture and asserts both
-///      servers publish identical diagnostics.
+/// A corrupt baseline keeps the last valid one, so RY002 stays suppressed.
+/// A valid empty baseline then lets RY002 back, matching a fresh server.
 #[tokio::test]
-async fn baseline_reload_converges_to_new_value() {
-    use ry_testkit::LspSession;
-
+async fn baseline_reload_keeps_the_last_valid_baseline_and_converges() {
+    const SOURCE: &str = "if (c(TRUE, FALSE)) print(1)\n";
     let fixture = FixtureProject::empty().unwrap();
     fixture
         .write_file("ry.toml", "baseline = \"baseline.json\"\n")
@@ -909,131 +369,42 @@ async fn baseline_reload_converges_to_new_value() {
         "baseline.json",
         r#"{"version": 1, "entries": [{"path": "main.R", "code": "RY002", "message": "`if` condition has length 2; R requires a length-1 condition", "count": 1}]}"#,
     ).unwrap();
-    fixture
-        .write_file("main.R", "if (c(TRUE, FALSE)) print(1)\n")
-        .unwrap();
-
+    fixture.write_file("main.R", SOURCE).unwrap();
     let main_uri = file_uri(&fixture.path("main.R"));
+    let baseline_uri = file_uri(&fixture.path("baseline.json"));
+    let (mut live, server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
-    fn diagnostic_codes(value: &Value) -> Vec<String> {
-        value["params"]["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|d| d["code"].as_str().unwrap_or("").to_string())
-            .collect()
-    }
-
-    // Run a single LSP server to completion and return the codes published
-    // for `main.R` after opening it. Reused for the live (reloaded) server
-    // and the fresh (cold) comparison server.
-    async fn codes_for_fresh_server(fixture: &FixtureProject, main_uri: &str) -> Vec<String> {
-        let (cs, ss) = tokio::io::duplex(128 * 1024);
-        let (cr, cw) = tokio::io::split(cs);
-        let (sr, sw) = tokio::io::split(ss);
-        let server = tokio::spawn(async move { ry_lsp::run_with(sr, sw).await });
-        let mut live = LspSession::new(cr, cw);
-        live.initialize(fixture.root()).await.unwrap();
-        let mark = live.publication_mark();
-        live.open(main_uri, 1, "if (c(TRUE, FALSE)) print(1)\n")
-            .await
-            .unwrap();
-        let publish = live
-            .published_diagnostics_after(main_uri, mark)
-            .await
-            .unwrap();
-        let codes = diagnostic_codes(&publish);
-        let _ = live.shutdown().await;
-        drop(live);
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
-        codes
-    }
-
-    let reloaded_codes = async {
-        let (cs, ss) = tokio::io::duplex(128 * 1024);
-        let (cr, cw) = tokio::io::split(cs);
-        let (sr, sw) = tokio::io::split(ss);
-        let server = tokio::spawn(async move { ry_lsp::run_with(sr, sw).await });
-        let mut live = LspSession::new(cr, cw);
-        live.initialize(fixture.root()).await.unwrap();
-
-        // Phase 1: RY002 should be suppressed by the valid baseline.
-        let mark1 = live.publication_mark();
-        live.open(&main_uri, 1, "if (c(TRUE, FALSE)) print(1)\n")
-            .await
-            .unwrap();
-        let publish1 = live
-            .published_diagnostics_after(&main_uri, mark1)
-            .await
-            .unwrap();
-        let codes1 = diagnostic_codes(&publish1);
-        assert!(
-            !codes1.contains(&"RY002".to_string()),
-            "phase 1: RY002 must be suppressed by valid baseline; got: {codes1:?}"
-        );
-
-        // Phase 2: overwrite the baseline with a valid EMPTY baseline and
-        // trigger the watch path, then quiesce.
-        std::fs::write(
-            fixture.path("baseline.json"),
-            r#"{"version": 1, "entries": []}"#,
-        )
-        .unwrap();
-        let baseline_uri = file_uri(&fixture.path("baseline.json"));
-        live.notify(
-            "workspace/didChangeWatchedFiles",
-            json!({
-                "changes": [{"uri": baseline_uri, "type": 2}]
-            }),
-        )
-        .await
-        .unwrap();
-        // Sync barrier: the inlayHint response guarantees the watch
-        // notification (and its outside-the-lock context rebuild) has been
-        // processed.
-        live.request(
-            "textDocument/inlayHint",
-            json!({
-                "textDocument": {"uri": main_uri},
-                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
-            }),
-        )
-        .await
-        .ok();
-
-        // Phase 3: republish. RY002 must now APPEAR (empty baseline does not
-        // suppress it) — the reload converged.
-        let mark3 = live.publication_mark();
-        live.change(
-            &main_uri,
-            2,
-            json!([{"text": "if (c(TRUE, FALSE)) print(1)\n"}]),
-        )
-        .await
-        .unwrap();
-        let publish3 = live
-            .published_diagnostics_after(&main_uri, mark3)
-            .await
-            .unwrap();
-        let codes3 = diagnostic_codes(&publish3);
-
-        let _ = live.shutdown().await;
-        drop(live);
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
-        codes3
-    }
-    .await;
-
-    // Phase 4: the reloaded live server must match a cold server started
-    // fresh against the now-current (empty) baseline.
-    let fresh_codes = codes_for_fresh_server(&fixture, &main_uri).await;
-    assert_eq!(
-        reloaded_codes, fresh_codes,
-        "reload must converge to cold state; reloaded: {reloaded_codes:?}, fresh: {fresh_codes:?}"
-    );
+    let opened = open_published(&mut live, &main_uri, 1, SOURCE).await;
     assert!(
-        reloaded_codes.contains(&"RY002".to_string()),
-        "phase 3: RY002 must reappear after the baseline reload converged; got: {reloaded_codes:?}"
+        !diagnostic_codes(&opened).contains(&"RY002".to_string()),
+        "the valid baseline must suppress RY002: {opened}"
+    );
+
+    let mut reloaded = Vec::new();
+    for (version, baseline) in [
+        (2, "CORRUPT NOT JSON"),
+        (3, r#"{"version": 1, "entries": []}"#),
+    ] {
+        std::fs::write(fixture.path("baseline.json"), baseline).unwrap();
+        harness::notify_changed(&mut live, &baseline_uri).await;
+        sync_barrier(&mut live, &main_uri).await;
+        reloaded = diagnostic_codes(
+            &harness::change_published(&mut live, &main_uri, version, SOURCE).await,
+        );
+        assert_eq!(
+            reloaded.contains(&"RY002".to_string()),
+            version == 3,
+            "after writing {baseline:?}: {reloaded:?}"
+        );
+    }
+    join_session(live, server).await;
+
+    let (mut fresh, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let fresh_codes = diagnostic_codes(&open_published(&mut fresh, &main_uri, 1, SOURCE).await);
+    join_session(fresh, server).await;
+    assert_eq!(
+        reloaded, fresh_codes,
+        "the reload must converge to a fresh server"
     );
 }
 
@@ -1114,44 +485,28 @@ async fn publish_uses_the_baseline_loaded_at_initialize() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Invalid root ry.toml degrades entirely to defaults
-//
-// Pinned semantics: a root `ry.toml` that parses as TOML but fails
-// `Config::validate` (here `[index] max-files = 0`, which validate
-// rejects with "index.max-files") degrades the root config channel to
-// `Config::default()` plus EMPTY user stubs — one warn, never a fatal
-// error, and never a half-applied config. The diet dropped a lenient
-// stubs-only parser that re-parsed the broken file and kept applying its
-// `typeshed` entries; this test locks the full-defaults behavior in.
+// Invalid root ry.toml
 // ──────────────────────────────────────────────────────────────────────────
 
-/// An invalid root `ry.toml` degrades ENTIRELY to defaults: initialize
-/// still succeeds, diagnostics still publish, and nothing from the broken
-/// file applies — not its `ignore`/`error` severity entries (default
-/// filter and default severity hold) and not its `typeshed` stubs (empty
-/// user-stub set). The probe document lives OUTSIDE every workspace
-/// folder, so its check flows through the root-level
-/// `load_root_config_and_stubs` channel (`state.user_stubs` and the root
-/// filter) — the exact path whose Err branch degrades to defaults.
+/// A root `ry.toml` that parses but fails `Config::validate` (here
+/// `[index] max-files = 0`) degrades to defaults with no user stubs:
+/// initialize succeeds, diagnostics publish, and none of its `ignore`,
+/// `error`, or `typeshed` entries apply. The probe document lives outside
+/// every workspace folder, so it is checked with the root-level config.
 ///
-/// A control session against an identical-but-valid root config proves
-/// the RY001 probe is live: with the stubs applied, `my_func()` returns
-/// list and `if (my_func())` fires RY001. Without that contrast, the
-/// RY001-absence assertion below could pass vacuously.
+/// A control session on a valid root with the same stubs shows the probe
+/// fires RY001 when the stubs apply, so the RY001 absence is not vacuous.
 #[tokio::test]
 async fn invalid_root_rytoml_degrades_entirely_to_defaults() {
     let fixture = FixtureProject::empty().unwrap();
     // Top-level keys precede `[index]` so the file deserializes fully as
-    // a `Config` and is rejected by `validate()` ("index.max-files"), not
-    // by the TOML or schema parse. `ignore`/`error`/`typeshed` are
-    // half-apply probes: none of them may take effect.
+    // a `Config` and `validate()` rejects it, not the TOML parser.
     fixture
         .write_file(
             "broken/ry.toml",
             "ignore = [\"RY002\"]\nerror = [\"RY002\"]\ntypeshed = [\"stubs\"]\n\n[index]\nmax-files = 0\n",
         )
         .unwrap();
-    // Control root: identical stubs, no validation error.
     fixture
         .write_file("valid/ry.toml", "typeshed = [\"stubs\"]\n")
         .unwrap();
@@ -1174,32 +529,17 @@ async fn invalid_root_rytoml_degrades_entirely_to_defaults() {
         .write_file("valid/stubs/localdep.json", &stub)
         .unwrap();
 
-    // Probe document. Line 1 pins the default filter and severity (the
-    // broken config would both ignore and error RY002). Lines 2-3 pin the
-    // stub channel: applied stubs give `my_func` a list return type,
-    // firing RY001 on line 3 (a character condition went silent in #373
-    // and can no longer pin the stub channel).
+    // Line 1 probes the filter and severity. Lines 2-3 probe the stubs:
+    // a list return from `my_func` fires RY001 on line 3.
     let probe = "if (c(TRUE, FALSE)) print(1)\nlibrary(localdep)\nif (my_func()) print(1)\n";
     fixture.write_file("outside/main.R", probe).unwrap();
-
-    let broken_root = fixture.path("broken");
-    let valid_root = fixture.path("valid");
     let doc_uri = file_uri(&fixture.path("outside/main.R"));
 
-    // Start a session on `root`, open the workspace-unowned probe
-    // document, and return the published (code, severity) pairs.
-    // Initialize must succeed and return capabilities even when the root
-    // `ry.toml` is invalid — degradation must not fail the session.
+    /// The (code, severity) pairs published for the probe in a session on
+    /// `root`.
     async fn open_unowned_and_collect(root: &Path, uri: &str, text: &str) -> Vec<(String, u64)> {
-        use ry_testkit::LspSession;
-
-        let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-        let (client_reader, client_writer) = tokio::io::split(client_stream);
-        let (server_reader, server_writer) = tokio::io::split(server_stream);
-        let server =
-            tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
-        let mut live = LspSession::new(client_reader, client_writer);
-        let init = live
+        let (mut session, server) = harness::spawn_server();
+        let init = session
             .initialize(root)
             .await
             .expect("initialize must succeed despite an invalid root ry.toml");
@@ -1207,11 +547,9 @@ async fn invalid_root_rytoml_degrades_entirely_to_defaults() {
             init.get("capabilities").is_some(),
             "initialize must return capabilities despite an invalid root ry.toml"
         );
-
-        let mark = live.publication_mark();
-        live.open(uri, 1, text).await.unwrap();
-        let publish = live.published_diagnostics_after(uri, mark).await.unwrap();
-        let pairs = publish["params"]["diagnostics"]
+        let publish = open_published(&mut session, uri, 1, text).await;
+        join_session(session, server).await;
+        publish["params"]["diagnostics"]
             .as_array()
             .unwrap()
             .iter()
@@ -1221,18 +559,10 @@ async fn invalid_root_rytoml_degrades_entirely_to_defaults() {
                     d["severity"].as_u64().unwrap_or(0),
                 )
             })
-            .collect();
-
-        let _ = live.shutdown().await;
-        drop(live);
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
-        pairs
+            .collect()
     }
 
-    // Control: a valid root config applies the stubs, so `my_func()`
-    // resolves to a list return and RY001 fires. This proves the
-    // probe distinguishes stubs-applied from stubs-absent.
-    let valid_pairs = open_unowned_and_collect(&valid_root, &doc_uri, probe).await;
+    let valid_pairs = open_unowned_and_collect(&fixture.path("valid"), &doc_uri, probe).await;
     assert!(
         valid_pairs.iter().any(|(code, _)| code == "RY001"),
         "control: valid root config must apply the stubs and fire RY001; got {valid_pairs:?}"
@@ -1242,61 +572,31 @@ async fn invalid_root_rytoml_degrades_entirely_to_defaults() {
         "control: RY002 must fire under the valid root config; got {valid_pairs:?}"
     );
 
-    // Invalid root config: full-defaults degradation.
-    let broken_pairs = open_unowned_and_collect(&broken_root, &doc_uri, probe).await;
-    // Diagnostics still publish for the unowned document.
-    assert!(
-        !broken_pairs.is_empty(),
-        "diagnostics must still publish under the invalid root config"
-    );
-    // Default filter holds: the broken config's `ignore = ["RY002"]`
-    // did not half-apply, so RY002 still fires.
+    let broken_pairs = open_unowned_and_collect(&fixture.path("broken"), &doc_uri, probe).await;
     assert!(
         broken_pairs.iter().any(|(code, _)| code == "RY002"),
         "default filter must hold: RY002 must survive the broken config's ignore entry; got {broken_pairs:?}"
     );
-    // Default severity holds: the broken config's `error = ["RY002"]`
-    // did not half-apply, so RY002 stays at its default Warning (2),
-    // not Error (1).
-    let ry002_severities: Vec<u64> = broken_pairs
-        .iter()
-        .filter(|(code, _)| code == "RY002")
-        .map(|(_, severity)| *severity)
-        .collect();
+    // RY002 stays at its default Warning (2), not Error (1).
     assert!(
-        !ry002_severities.is_empty() && ry002_severities.iter().all(|s| *s == 2),
+        broken_pairs
+            .iter()
+            .filter(|(code, _)| code == "RY002")
+            .all(|(_, severity)| *severity == 2),
         "default severity must hold: RY002 must publish as Warning(2), not Error(1); got {broken_pairs:?}"
     );
-    // Empty stubs hold: the broken config's `typeshed = ["stubs"]`
-    // did not half-apply, so `my_func` has no stub return type and
-    // RY001 must be absent (the control shows it fires when applied).
     assert!(
         !broken_pairs.iter().any(|(code, _)| code == "RY001"),
         "no typeshed stubs from the broken config: RY001 must be absent; got {broken_pairs:?}"
     );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Precompute filters once per folder (#46)
-//
-// Filter, confidence, and exclude values are compiled once while building
-// each `FolderAnalysisContext` and borrowed inside the per-file publish
-// loop — visible structurally in `build_folder_contexts`, which computes
-// them per folder rather than per published file.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// #46: the publish loop borrows the folder's precomputed
-/// filter/confidence/excludes once and applies them per file — so
-/// several files with DIFFERENT diagnostics in one folder must each
-/// publish exactly what `ry check` reports for that file. Identical
-/// files (the old shape of this test) could only assert determinism:
-/// a cross-contaminated or misattributed result would still "pass".
-/// Differing rule codes, lines, and counts make any per-file mix-up
-/// observable.
+/// Several files with different diagnostics in one folder each publish
+/// exactly what `ry check` reports for that file. Differing codes, lines,
+/// and counts make a mix-up between files visible.
 #[tokio::test]
 async fn per_file_publication_matches_cli_across_differing_files() {
     let fixture = FixtureProject::empty().unwrap();
-    // Four files whose diagnostic sets differ in rule, line, and count.
     let files: &[(&str, &str)] = &[
         // RY090 (partial argument name) at line 0.
         ("a.R", "z <- length(xx = 1L)\n"),
@@ -1314,11 +614,7 @@ async fn per_file_publication_matches_cli_across_differing_files() {
         fixture.write_file(*name, *text).unwrap();
     }
 
-    // CLI reference: `ry check` over the same folder.
-    let cli = cli_diagnostics_in_dir(fixture.root(), &[]);
-    // Non-vacuity: the diagnostic-bearing files must produce pairwise
-    // different (code, line) sets, or the test degenerates back into a
-    // determinism check.
+    let cli = cli_diagnostics(fixture.root(), ".", &[]);
     let code_lines = |path: &str| -> std::collections::BTreeSet<String> {
         cli.iter()
             .filter(|d| d.path == path)
@@ -1335,24 +631,13 @@ async fn per_file_publication_matches_cli_across_differing_files() {
         "files must produce differing diagnostics; got {a:?}, {b:?}, {c:?}"
     );
 
-    use ry_testkit::LspSession;
-
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
-    let mut client = LspSession::new(client_reader, client_writer);
-    client.initialize(fixture.root()).await.unwrap();
-
-    // Open the clean file: its debounced publish rides along with the
-    // background index's first publication of every indexed file.
-    let clean_uri = file_uri(&fixture.path("d.R"));
+    let (mut client, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    // Opening the clean file publishes every indexed file in one pass.
     let mark = client.publication_mark();
-    client.open(&clean_uri, 1, "ok <- 1L\n").await.unwrap();
-
-    // Wait for each file's publication individually — bounded by the
-    // per-receive deadline, so collection cannot end early on a drain
-    // window the way a 32-file index could (#90).
+    client
+        .open(&file_uri(&fixture.path("d.R")), 1, "ok <- 1L\n")
+        .await
+        .unwrap();
     let mut lsp: Vec<Published> = Vec::new();
     for (name, _) in files {
         let uri = file_uri(&fixture.path(name));
@@ -1367,14 +652,7 @@ async fn per_file_publication_matches_cli_across_differing_files() {
         ));
     }
     lsp.sort();
-
-    client.shutdown().await.unwrap();
-    drop(client);
-    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(code, std::process::ExitCode::SUCCESS);
+    join_session(client, server).await;
 
     assert_eq!(
         lsp, cli,
@@ -1383,12 +661,7 @@ async fn per_file_publication_matches_cli_across_differing_files() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Shared, bounded discovery (#48)
-//
-// Bug being pinned: the CLI and LSP used different discovery rules —
-// for example, the CLI skipped `target/` while the LSP did not. The fix
-// moved discovery behind the shared `ry_workspace` module so both modes
-// agree.
+// Shared discovery
 // ──────────────────────────────────────────────────────────────────────────
 
 /// (#48): the same fixture tree must produce the same discovered path

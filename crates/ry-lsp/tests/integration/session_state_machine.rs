@@ -1,48 +1,16 @@
-//! LSP state-machine property.
+//! After every quiescent operation, the live server publishes what a fresh
+//! server initialized on the same final workspace publishes.
 //!
-//! Extends the session convergence property with the full operation
-//! alphabet:
-//!   - add / remove workspace folder
-//!   - edit config (`ry.toml`), baseline, NAMESPACE, DESCRIPTION, typesheds,
-//!     and discovery caps
-//!   - create / delete / rename on-disk R file
-//!   - controlled parse completion from an older generation (rapid edits)
-//!   - server restart
-//!
-//! ## Property
-//!
-//! After each quiescent operation, every published diagnostic and the
-//! observable discovered-file set equal a fresh server initialized on the
-//! same final workspace.
-//!
-//! ## Determinism
-//!
-//! The property uses **fixed deterministic seeds**, never random proptest
-//! RNG. Each seed drives a `TestRunner` whose RNG is a fixed `ChaCha` seed.
-//! Proptest shrinking is preserved: when a generated case fails, the runner
-//! shrinks it and stores the minimal failing replay in
-//! `session_state_machine.proptest-regressions`.
-//!
-//! Two lanes:
-//!   - **PR** (`pr_session_seeds`): a bounded seed set, run on every PR.
-//!   - **Nightly** (`nightly_session_seeds`): 1,000 fixed seeds,
-//!     `#[ignore]`'d because it takes minutes.
-//!
-//! Neither lane uses sleeps or nondeterministic random seeds. Quiescence is
-//! the `textDocument/publishDiagnostics` notification — an explicit protocol
-//! signal. The drain idle-timeout detects end-of-stream; it does not wait
-//! for computation.
-//!
-//! The file also hosts the deterministic session tests that predate the
-//! property (the full-alphabet property subsumed the original
-//! open/edit/close/restart convergence property): the UTF-16 position
-//! transcript over a non-ASCII document and the #81 close/reopen
-//! republication regression.
+//! Each seed drives a proptest `TestRunner` with a fixed ChaCha RNG, so runs
+//! replay exactly and failures still shrink. `pr_session_seeds` runs a small
+//! seed set on every PR. `nightly_session_seeds` runs 1,000 seeds and is
+//! `#[ignore]`d. Quiescence is the `textDocument/publishDiagnostics`
+//! notification, not a sleep.
 
 use proptest::collection;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
-use ry_testkit::{FixtureProject, LspSession};
+use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -51,8 +19,8 @@ use std::time::Duration;
 use crate::harness;
 
 use harness::{
-    ClientSession, SourceVariant, apply_incremental_edit, file_uri, first_line_utf16_len,
-    join_session, normalize_diagnostics, sorted_diagnostics, spawn_session, sync_barrier,
+    ClientSession, file_uri, join_session, normalize_diagnostics, sorted_diagnostics, spawn_server,
+    spawn_session, sync_barrier,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -77,8 +45,45 @@ const DRAIN_IDLE: Duration = Duration::from_millis(60);
 // Source variants
 // ──────────────────────────────────────────────────────────────────────────
 
-// The variants live in `harness` (`SourceVariant`); the diagnostic
-// variants differ only in the Unicode class of the bound name on line 0.
+/// Line-0 prefixes that move incremental-edit ranges across ASCII and
+/// astral-plane UTF-16 positions. The diagnostic variants emit RY090 and
+/// RY091, so the comparison with a fresh server is not vacuous.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SourceVariant {
+    Clean,
+    AsciiDiagnostic,
+    AstralDiagnostic,
+}
+
+impl SourceVariant {
+    fn text(self) -> &'static str {
+        match self {
+            Self::Clean => "x <- 1L\ny <- 2L\n",
+            Self::AsciiDiagnostic => "z <- length(xx = 1L)\ny <- 2L\n",
+            Self::AstralDiagnostic => "\u{1f600} <- length(xx = 1L)\ny <- 2L\n",
+        }
+    }
+
+    /// Line 0 without its newline: the replacement text of an incremental
+    /// edit of line 0.
+    fn first_line(self) -> &'static str {
+        self.text().lines().next().unwrap()
+    }
+}
+
+/// The UTF-16 length of the first line of `text`: the LSP column at the end
+/// of line 0.
+fn first_line_utf16_len(text: &str) -> u32 {
+    let end = text.find('\n').unwrap_or(text.len());
+    text[..end].encode_utf16().count() as u32
+}
+
+/// Replace line 0 of `old` with the first line of `source`, as the server
+/// applies the incremental edit from (0, 0) to the end of line 0.
+fn apply_incremental_edit(old: &str, source: SourceVariant) -> String {
+    let first_line_end_byte = old.find('\n').unwrap_or(old.len());
+    format!("{}{}", source.first_line(), &old[first_line_end_byte..])
+}
 
 fn source_strategy() -> impl Strategy<Value = SourceVariant> {
     prop_oneof![
@@ -587,14 +592,8 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 if !model.is_open(*file) {
                     continue;
                 }
-                let uri = file_uri_str(&fixture, *file);
                 model.open_docs.remove(file);
-                live.notify(
-                    "textDocument/didClose",
-                    json!({"textDocument": {"uri": uri}}),
-                )
-                .await
-                .unwrap();
+                live.close(&file_uri_str(&fixture, *file)).await.unwrap();
             }
             Operation::Restart => {
                 join_session(live, live_server).await;
@@ -616,12 +615,9 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
 
             // ── state-machine extensions ──
             // `.R` create/delete/rename events travel as the file's own
-            // watched-file event now that the server registers R source
-            // globs (#486); the `ry.toml` change rides along only to keep
-            // exercising the config-reload path on the same step, the way
-            // the original workaround did. The model never saves buffers
-            // to disk, so save-then-close stays covered by the dedicated
-            // `disk_index_freshness` protocol tests.
+            // watched-file event. The `ry.toml` change in the same event
+            // also exercises the config reload. The model never saves
+            // buffers, so `disk_index_freshness` covers save-then-close.
             Operation::CreateFile { file, source } => {
                 if model.has_disk(*file) {
                     continue;
@@ -656,12 +652,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 };
                 if let Some(uri) = close_uri {
                     model.open_docs.remove(file);
-                    live.notify(
-                        "textDocument/didClose",
-                        json!({"textDocument": {"uri": uri}}),
-                    )
-                    .await
-                    .unwrap();
+                    live.close(&uri).await.unwrap();
                 }
                 let path = file_path(&fixture, *file);
                 let deleted_uri = file_uri(&path);
@@ -719,23 +710,13 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 };
                 write_config(&fixture, &model);
                 let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
-                live.notify(
-                    "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
-                )
-                .await
-                .unwrap();
+                harness::notify_changed(&mut live, &ry_toml_uri).await;
             }
             Operation::EditBaseline { suppress } => {
                 model.baseline_suppress = *suppress;
                 write_baseline(&fixture, &model);
                 let baseline_uri = file_uri(&fixture.path("baseline.json"));
-                live.notify(
-                    "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": baseline_uri, "type": 2}]}),
-                )
-                .await
-                .unwrap();
+                harness::notify_changed(&mut live, &baseline_uri).await;
             }
             Operation::EditNamespace => {
                 let content =
@@ -744,12 +725,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     .write_file(format!("{SECOND}/NAMESPACE"), content)
                     .unwrap();
                 let ns_uri = file_uri(&fixture.path(format!("{SECOND}/NAMESPACE")));
-                live.notify(
-                    "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": ns_uri, "type": 2}]}),
-                )
-                .await
-                .unwrap();
+                harness::notify_changed(&mut live, &ns_uri).await;
             }
             Operation::EditDescription => {
                 let content = "Package: second\nVersion: 0.0.2\nImports: localdep\n";
@@ -757,12 +733,7 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     .write_file(format!("{SECOND}/DESCRIPTION"), content)
                     .unwrap();
                 let desc_uri = file_uri(&fixture.path(format!("{SECOND}/DESCRIPTION")));
-                live.notify(
-                    "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": desc_uri, "type": 2}]}),
-                )
-                .await
-                .unwrap();
+                harness::notify_changed(&mut live, &desc_uri).await;
             }
             Operation::EditTypeshed => {
                 let stub = serde_json::to_string(&json!({
@@ -781,23 +752,13 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     .write_file(format!("{SECOND}/typesheds/localdep.json"), &stub)
                     .unwrap();
                 let ts_uri = file_uri(&fixture.path(format!("{SECOND}/typesheds/localdep.json")));
-                live.notify(
-                    "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": ts_uri, "type": 2}]}),
-                )
-                .await
-                .unwrap();
+                harness::notify_changed(&mut live, &ts_uri).await;
             }
             Operation::EditDiscoveryCaps { max_files } => {
                 model.max_files = *max_files as u64;
                 write_config(&fixture, &model);
                 let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
-                live.notify(
-                    "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
-                )
-                .await
-                .unwrap();
+                harness::notify_changed(&mut live, &ry_toml_uri).await;
             }
             Operation::RapidEdit { file, source } => {
                 if !model.is_open(*file) {
@@ -1012,170 +973,148 @@ fn nightly_session_seeds() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Historical bug regression: every pre-release bug caught by a deterministic case
+// Fixed regression sequences
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Helper: build an explicit operation sequence and run it. Used for
-/// targeted regression cases that exercise specific historical bug paths.
-fn run_explicit_sequence(operations: Vec<Operation>) {
+/// Sequences that reach paths the seeds sample only by chance. The metadata
+/// edits (NAMESPACE, DESCRIPTION, typeshed) need the package-shaped second
+/// folder, so they are not in the random alphabet.
+#[test]
+fn regression_sequences_converge() {
+    use Operation::*;
+    use SourceVariant::*;
+    let sequences: [(&str, Vec<Operation>); 8] = [
+        (
+            "stale parse from rapid edits",
+            vec![
+                Open {
+                    file: 0,
+                    source: Clean,
+                },
+                RapidEdit {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+                IncrementalEdit {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+            ],
+        ),
+        (
+            "folder add and remove",
+            vec![
+                AddFolder,
+                RemoveFolder,
+                Open {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+            ],
+        ),
+        (
+            "baseline reload",
+            vec![
+                Open {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+                EditBaseline { suppress: true },
+                FullEdit {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+            ],
+        ),
+        (
+            "discovery cap",
+            vec![
+                EditDiscoveryCaps { max_files: 2 },
+                Open {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+            ],
+        ),
+        (
+            "config reload",
+            vec![
+                Open {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+                EditConfig {
+                    ignore_diagnostic: true,
+                },
+                FullEdit {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+            ],
+        ),
+        (
+            "disk file create, delete, and rename",
+            vec![
+                DeleteFile { file: 4 },
+                Open {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+                CreateFile {
+                    file: 4,
+                    source: AsciiDiagnostic,
+                },
+                RenameFile { from: 4, to: 3 },
+            ],
+        ),
+        (
+            "restart",
+            vec![
+                Open {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+                Restart,
+                IncrementalEdit {
+                    file: 0,
+                    source: AstralDiagnostic,
+                },
+            ],
+        ),
+        (
+            "metadata edits",
+            vec![
+                AddFolder,
+                Open {
+                    file: 0,
+                    source: Clean,
+                },
+                EditNamespace,
+                EditDescription,
+                EditTypeshed,
+                IncrementalEdit {
+                    file: 0,
+                    source: AsciiDiagnostic,
+                },
+            ],
+        ),
+    ];
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    runtime
-        .block_on(convergence_property(operations))
-        .unwrap_or_else(|e| panic!("explicit sequence failed: {e:?}"));
-}
-
-/// #53 (version-stamped tree cache): rapid edits create in-flight parses
-/// from older generations. A regression that serves stale trees produces
-/// wrong diagnostics that diverge from a fresh server.
-#[test]
-fn catches_issue_53_stale_parse() {
-    run_explicit_sequence(vec![
-        Operation::Open {
-            file: 0,
-            source: SourceVariant::Clean,
-        },
-        Operation::RapidEdit {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-        Operation::IncrementalEdit {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-    ]);
-}
-
-/// #55 (workspace-folder mutation): removing a folder must clear its
-/// diagnostics. A regression leaves stale diagnostics from the removed root.
-#[test]
-fn catches_issue_55_folder_mutation() {
-    run_explicit_sequence(vec![
-        Operation::AddFolder,
-        Operation::RemoveFolder,
-        Operation::Open {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-    ]);
-}
-
-/// #45 (baseline reload): editing the baseline must converge to the new
-/// value. A regression that retains stale baseline state diverges.
-#[test]
-fn catches_issue_45_baseline_reload() {
-    run_explicit_sequence(vec![
-        Operation::Open {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-        Operation::EditBaseline { suppress: true },
-        Operation::FullEdit {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-    ]);
-}
-
-/// #48 (bounded discovery): a tight discovery cap must limit the discovered
-/// file set. A regression that ignores the cap discovers more files than a
-/// fresh server with the same cap.
-#[test]
-fn catches_issue_48_discovery_caps() {
-    run_explicit_sequence(vec![
-        Operation::EditDiscoveryCaps { max_files: 2 },
-        Operation::Open {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-    ]);
-}
-
-/// #44 / #56 (per-folder config): editing config changes diagnostic
-/// filtering. A regression that doesn't reload config diverges from a
-/// fresh server.
-#[test]
-fn catches_config_reload() {
-    run_explicit_sequence(vec![
-        Operation::Open {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-        Operation::EditConfig {
-            ignore_diagnostic: true,
-        },
-        Operation::FullEdit {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-    ]);
-}
-
-/// On-disk file lifecycle: create, delete, and rename must converge.
-#[test]
-fn catches_disk_file_lifecycle() {
-    run_explicit_sequence(vec![
-        Operation::DeleteFile { file: 4 },
-        Operation::Open {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-        Operation::CreateFile {
-            file: 4,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-        Operation::RenameFile { from: 4, to: 3 },
-    ]);
-}
-
-/// Server restart must converge to the same state.
-#[test]
-fn catches_restart_convergence() {
-    run_explicit_sequence(vec![
-        Operation::Open {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-        Operation::Restart,
-        Operation::IncrementalEdit {
-            file: 0,
-            source: SourceVariant::AstralDiagnostic,
-        },
-    ]);
-}
-
-/// Metadata operations (NAMESPACE/DESCRIPTION/typeshed) exercise the
-/// didChangeWatchedFiles resolution-reload path. They are not in the random
-/// alphabet because they require a package-structured fixture, but they are
-/// part of the state-machine alphabet and must converge.
-#[test]
-fn metadata_edits_converge() {
-    run_explicit_sequence(vec![
-        Operation::AddFolder,
-        Operation::Open {
-            file: 0,
-            source: SourceVariant::Clean,
-        },
-        Operation::EditNamespace,
-        Operation::EditDescription,
-        Operation::EditTypeshed,
-        Operation::IncrementalEdit {
-            file: 0,
-            source: SourceVariant::AsciiDiagnostic,
-        },
-    ]);
+    for (name, operations) in sequences {
+        runtime
+            .block_on(convergence_property(operations))
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Deterministic session tests
 //
-// Targeted coverage the property only samples randomly: exact UTF-16
-// positions across a non-ASCII transcript, and the #81 close/reopen
-// republication race. These tests predate the property: the original
-// open/edit/close/restart convergence property they accompanied was
-// deleted as subsumed by `pr_session_seeds`.
+// Exact UTF-16 positions across a non-ASCII transcript, and the close and
+// reopen publications, which the property only samples.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// The transcript document: CRLF terminators, BMP text, a decomposed
@@ -1451,11 +1390,7 @@ async fn utf16_transcript() {
     let main_uri = file_uri(&fixture.path("main.R"));
     let other_uri = file_uri(&fixture.path("other.R"));
     let disk_uri = file_uri(&fixture.path("disk.R"));
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
-    let mut session = LspSession::new(client_reader, client_writer);
+    let (mut session, server) = spawn_server();
     let initialize = session.initialize(fixture.root()).await.unwrap();
     assert_eq!(
         initialize.pointer("/capabilities/positionEncoding"),
@@ -1600,19 +1535,11 @@ async fn utf16_transcript() {
     let hints_after_valid_change = hints_for_line(&mut session, &main_uri, 2).await;
     assert_hint_at(&hints_after_valid_change, 2, 28);
 
-    session.shutdown().await.unwrap();
-    drop(session);
-    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(code, std::process::ExitCode::SUCCESS);
+    join_session(session, server).await;
 }
 
-/// Regression for #81: after a close/reopen the server must publish the
-/// reopened document's diagnostics, and the close's clearing `[]` must not
-/// be mistakable for that publication.  Deterministic companion to the
-/// convergence property, which samples this path randomly.
+/// After a close and reopen the server publishes the reopened document's
+/// diagnostics, distinct from the close's clearing `[]`.
 #[tokio::test]
 async fn close_reopen_publishes_diagnostics_again() {
     close_reopen_republishes().await;
@@ -1628,28 +1555,15 @@ async fn close_reopen_republishes() {
     // `fresh_server_snapshot` uses to drain the initialize cycle's
     // background-index publications.
     sync_barrier(&mut session, &uri).await;
-    let open_mark = session.publication_mark();
-    session
-        .open(&uri, 1, SourceVariant::AsciiDiagnostic.text())
-        .await
-        .unwrap();
-    let first = session
-        .published_diagnostics_after(&uri, open_mark)
-        .await
-        .unwrap();
+    let first =
+        harness::open_published(&mut session, &uri, 1, SourceVariant::AsciiDiagnostic.text()).await;
     assert!(
         !normalize_diagnostics(&first).is_empty(),
         "initial open must publish diagnostics"
     );
 
     let close_mark = session.publication_mark();
-    session
-        .notify(
-            "textDocument/didClose",
-            json!({"textDocument": {"uri": uri}}),
-        )
-        .await
-        .unwrap();
+    session.close(&uri).await.unwrap();
     let cleared = session
         .published_diagnostics_after(&uri, close_mark)
         .await
@@ -1659,15 +1573,13 @@ async fn close_reopen_republishes() {
         "close must clear diagnostics"
     );
 
-    let reopen_mark = session.publication_mark();
-    session
-        .open(&uri, 2, SourceVariant::AstralDiagnostic.text())
-        .await
-        .unwrap();
-    let republish = session
-        .published_diagnostics_after(&uri, reopen_mark)
-        .await
-        .unwrap();
+    let republish = harness::open_published(
+        &mut session,
+        &uri,
+        2,
+        SourceVariant::AstralDiagnostic.text(),
+    )
+    .await;
     assert!(
         !normalize_diagnostics(&republish).is_empty(),
         "reopen must publish diagnostics again, not the close's clearing []"
@@ -1716,13 +1628,7 @@ async fn analysis_clear_carries_version_but_close_clear_does_not() {
     assert_eq!(cleared.first["params"]["diagnostics"], json!([]));
 
     let mark = session.publication_mark();
-    session
-        .notify(
-            "textDocument/didClose",
-            json!({"textDocument": {"uri": uri}}),
-        )
-        .await
-        .unwrap();
+    session.close(&uri).await.unwrap();
     let closed = session
         .published_diagnostics_after(&uri, mark)
         .await

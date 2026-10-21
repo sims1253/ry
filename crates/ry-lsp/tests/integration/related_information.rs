@@ -42,12 +42,7 @@ async fn related_information_follows_the_capability_and_edits() {
     let capabilities =
         json!({"textDocument": {"publishDiagnostics": {"relatedInformation": true}}});
     let (mut session, server) = spawn_session(&[fixture.root()], capabilities, None).await;
-    let mark = session.publication_mark();
-    session.open(&uri, 1, SOURCE).await.unwrap();
-    let published = session
-        .published_diagnostics_after(&uri, mark)
-        .await
-        .unwrap();
+    let published = harness::open_published(&mut session, &uri, 1, SOURCE).await;
     assert_eq!(related(&published), [declared(1)], "{published}");
 
     let mark = session.publication_mark();
@@ -64,12 +59,7 @@ async fn related_information_follows_the_capability_and_edits() {
     join_session(session, server).await;
 
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let mark = session.publication_mark();
-    session.open(&uri, 1, SOURCE).await.unwrap();
-    let published = session
-        .published_diagnostics_after(&uri, mark)
-        .await
-        .unwrap();
+    let published = harness::open_published(&mut session, &uri, 1, SOURCE).await;
     assert_eq!(related(&published), [Value::Null], "{published}");
     join_session(session, server).await;
 }

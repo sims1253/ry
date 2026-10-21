@@ -3,8 +3,8 @@
 
 use crate::harness;
 
-use harness::{join_session, spawn_session};
-use ry_testkit::{CliProcess, FixtureProject, file_uri};
+use harness::{cli_diagnostics, file_uri, join_session, notify_changed, spawn_session};
+use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 
 fn severity(publish: &Value, code: &str) -> Option<i64> {
@@ -25,54 +25,27 @@ async fn path_policy_matches_cli_and_reloads_in_editor() {
     fixture.write_file("R/main.R", source).unwrap();
     fixture.write_file("R/scratch/try.R", source).unwrap();
 
-    let cli = CliProcess::new(harness::ry_binary())
-        .check(&fixture, ".", ["--output-format", "json"])
-        .unwrap();
-    let cli: Vec<Value> = serde_json::from_slice(&cli.stdout).unwrap();
-    assert!(
-        cli.iter().any(
-            |d| d["path"].as_str().is_some_and(|p| p.ends_with("R/main.R"))
-                && d["code"] == "RY040"
-                && d["severity"] == "error"
-        ),
-        "{cli:?}"
-    );
-    assert!(
-        cli.iter().any(|d| d["path"]
-            .as_str()
-            .is_some_and(|p| p.ends_with("R/scratch/try.R"))
-            && d["code"] == "RY040"
-            && d["severity"] == "warning"),
-        "{cli:?}"
-    );
+    let cli = cli_diagnostics(fixture.root(), ".", &[]);
+    for (path, severity) in [("R/main.R", "error"), ("R/scratch/try.R", "warning")] {
+        assert!(
+            cli.iter()
+                .any(|d| d.path == path && d.code == "RY040" && d.severity == severity),
+            "{cli:?}"
+        );
+    }
 
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let main_uri = file_uri(&fixture.path("R/main.R")).unwrap();
-    let scratch_uri = file_uri(&fixture.path("R/scratch/try.R")).unwrap();
-    let mark = session.publication_mark();
-    session.open(&main_uri, 1, source).await.unwrap();
-    let main = session
-        .published_diagnostics_after(&main_uri, mark)
-        .await
-        .unwrap();
+    let main_uri = file_uri(&fixture.path("R/main.R"));
+    let scratch_uri = file_uri(&fixture.path("R/scratch/try.R"));
+    let main = harness::open_published(&mut session, &main_uri, 1, source).await;
     assert_eq!(severity(&main, "RY040"), Some(1), "{main}");
-    let mark = session.publication_mark();
-    session.open(&scratch_uri, 1, source).await.unwrap();
-    let scratch = session
-        .published_diagnostics_after(&scratch_uri, mark)
-        .await
-        .unwrap();
+    let scratch = harness::open_published(&mut session, &scratch_uri, 1, source).await;
     assert_eq!(severity(&scratch, "RY040"), Some(2), "{scratch}");
 
     let unsaved_uri = tower_lsp::lsp_types::Url::from_file_path(fixture.path("R/unsaved.R"))
         .unwrap()
         .to_string();
-    let mark = session.publication_mark();
-    session.open(&unsaved_uri, 1, source).await.unwrap();
-    let unsaved = session
-        .published_diagnostics_after(&unsaved_uri, mark)
-        .await
-        .unwrap();
+    let unsaved = harness::open_published(&mut session, &unsaved_uri, 1, source).await;
     assert_eq!(severity(&unsaved, "RY040"), Some(1), "{unsaved}");
 
     fixture
@@ -82,13 +55,7 @@ async fn path_policy_matches_cli_and_reloads_in_editor() {
         )
         .unwrap();
     let mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": file_uri(&fixture.path("ry.toml")).unwrap(), "type": 2}]}),
-        )
-        .await
-        .unwrap();
+    notify_changed(&mut session, &file_uri(&fixture.path("ry.toml"))).await;
     let changed = session
         .published_diagnostics_after(&main_uri, mark)
         .await
@@ -117,13 +84,8 @@ async fn explicit_editor_rule_choice_wins_over_matching_path_table() {
         })),
     )
     .await;
-    let uri = file_uri(&fixture.path("R/main.R")).unwrap();
-    let mark = session.publication_mark();
-    session.open(&uri, 1, source).await.unwrap();
-    let publish = session
-        .published_diagnostics_after(&uri, mark)
-        .await
-        .unwrap();
+    let uri = file_uri(&fixture.path("R/main.R"));
+    let publish = harness::open_published(&mut session, &uri, 1, source).await;
     assert_eq!(severity(&publish, "RY040"), Some(1), "{publish}");
     join_session(session, server).await;
 }
@@ -142,7 +104,7 @@ async fn editor_ignore_list_replacement_survives_unrelated_path_table() {
         let mut uris = Vec::new();
         for path in ["R/inside.R", "scripts/outside.R"] {
             fixture.write_file(path, source).unwrap();
-            uris.push(file_uri(&fixture.path(path)).unwrap());
+            uris.push(file_uri(&fixture.path(path)));
         }
         let (mut session, server) = spawn_session(
             &[fixture.root()],
@@ -151,12 +113,7 @@ async fn editor_ignore_list_replacement_survives_unrelated_path_table() {
         )
         .await;
         for uri in &uris {
-            let mark = session.publication_mark();
-            session.open(uri, 1, source).await.unwrap();
-            let publish = session
-                .published_diagnostics_after(uri, mark)
-                .await
-                .unwrap();
+            let publish = harness::open_published(&mut session, uri, 1, source).await;
             assert_eq!(severity(&publish, "RY040"), expected, "{publish}");
         }
         harness::sync_barrier(&mut session, &uris[0]).await;
@@ -168,13 +125,7 @@ async fn editor_ignore_list_replacement_survives_unrelated_path_table() {
             )
             .unwrap();
         let mark = session.publication_mark();
-        session
-            .notify(
-                "workspace/didChangeWatchedFiles",
-                json!({"changes": [{"uri": file_uri(&fixture.path("ry.toml")).unwrap(), "type": 2}]}),
-            )
-            .await
-            .unwrap();
+        notify_changed(&mut session, &file_uri(&fixture.path("ry.toml"))).await;
         for uri in &uris {
             let publish = session
                 .published_diagnostics_after(uri, mark)
@@ -205,13 +156,8 @@ async fn symlinked_workspace_config_root_keeps_scoped_editor_severity() {
     symlink(fixture.root(), &linked_root).unwrap();
 
     let (mut session, server) = spawn_session(&[&linked_root], json!({}), None).await;
-    let uri = file_uri(&linked_root.join("R/a.R")).unwrap();
-    let mark = session.publication_mark();
-    session.open(&uri, 1, source).await.unwrap();
-    let publish = session
-        .published_diagnostics_after(&uri, mark)
-        .await
-        .unwrap();
+    let uri = file_uri(&linked_root.join("R/a.R"));
+    let publish = harness::open_published(&mut session, &uri, 1, source).await;
     assert_eq!(severity(&publish, "RY040"), Some(1), "{publish}");
     join_session(session, server).await;
 }

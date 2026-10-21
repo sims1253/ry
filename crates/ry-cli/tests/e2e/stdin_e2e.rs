@@ -508,7 +508,6 @@ fn excluded_file_is_explicitly_checked_and_baseline_applies() {
             ("R/ignored.R", source),
         ],
     );
-    // An absolute root: relative roots do not apply `exclude` today.
     let directory = disk(temp.path(), &[temp.path().to_str().unwrap()]);
     assert!(directory.success());
     assert_eq!(directory.json(), json!([]));

@@ -1878,32 +1878,34 @@ impl Checker {
         if let Some(result) = self.callable_function_union(t, args, arg_types) {
             return Some(result);
         }
-        if !t.mode.is_unknown() {
-            // R's function/value namespace separation: when a name is
-            // CALLED, R searches the environment chain for a *function*
-            // named `name` and skips non-function bindings. So a local
-            // non-function binding (e.g. `lengths <- lengths(x)`) does
-            // NOT shadow a same-named function in the typeshed or
-            // FnTable at a call site. If such a function exists, fall
-            // through to the resolution below instead of firing RY070.
-            // Only when no function of that name exists anywhere does
-            // calling the non-function value warrant RY070; an
-            // uncertain outward state also falls through in silence
-            // (see `call_head_function_evidence`).
-            if matches!(head.function_evidence, CallHeadFunctionEvidence::Diagnose) {
-                // RY070: no function of this name is reachable in any
-                // frame, so R errors at runtime with
-                // "could not find function". Args have already been
-                // inferred above, so we just emit and return opaque
-                // (re-inferring would double-emit arg diagnostics).
-                return Some(self.emit_symbol_not_callable(name, t.mode, span));
-            }
-            // A function exists elsewhere; fall through to resolve it
-            // (the local non-function binding is ignored at the call
-            // site, matching R).
+        if t.mode.is_unknown() {
+            // An opaque binding may be a function, and R's call lookup
+            // stops at it, so no same-named stub applies (#722). A selected
+            // project function keeps its own evidence below.
+            return head.user_function().is_none().then(RType::unknown);
         }
-        // Opaque: fall through; the name might still resolve via
-        // the FnTable or typeshed below.
+        // R's function/value namespace separation: when a name is
+        // CALLED, R searches the environment chain for a *function*
+        // named `name` and skips non-function bindings. So a local
+        // non-function binding (e.g. `lengths <- lengths(x)`) does
+        // NOT shadow a same-named function in the typeshed or
+        // FnTable at a call site. If such a function exists, fall
+        // through to the resolution below instead of firing RY070.
+        // Only when no function of that name exists anywhere does
+        // calling the non-function value warrant RY070; an
+        // uncertain outward state also falls through in silence
+        // (see `call_head_function_evidence`).
+        if matches!(head.function_evidence, CallHeadFunctionEvidence::Diagnose) {
+            // RY070: no function of this name is reachable in any
+            // frame, so R errors at runtime with
+            // "could not find function". Args have already been
+            // inferred above, so we just emit and return opaque
+            // (re-inferring would double-emit arg diagnostics).
+            return Some(self.emit_symbol_not_callable(name, t.mode, span));
+        }
+        // A function exists elsewhere; fall through to resolve it (the
+        // local non-function binding is ignored at the call site,
+        // matching R).
         None
     }
 

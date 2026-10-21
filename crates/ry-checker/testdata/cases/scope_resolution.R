@@ -650,3 +650,37 @@ f <- function(flag) {
   n <- if (flag) { helper <- function() hidden <- 1; 1 } else 2
   hidden
 }
+
+## case: an opaque parameter call head is not the same-named stats function
+# no-diag
+# `dt` may be a function argument; R's call lookup stops at it (#722).
+f <- function(dt) dt()$x
+
+## case: an opaque local call head is not the same-named base function
+# no-diag
+# Unknown call results may be functions: no `nchar` arity or return applies.
+g <- function(make) {
+  dt <- make()
+  d <- dt()
+  d$x
+}
+h <- function(make) {
+  nchar <- make()
+  nchar()$x
+}
+
+## case: a NULL-or-function local call head is not the same-named base function
+# no-diag
+# Only the closure arm can be called, and it takes no `x`.
+h <- function(flag) {
+  nchar <- if (flag) NULL else function() list(x = 1)
+  nchar()$x
+}
+
+## case: a known non-function local still calls the base function
+# expect: RY061
+# R skips the double `c` and calls base `c`, whose result has no `$`.
+m <- function() {
+  c <- 1
+  c(2, 3)$x
+}

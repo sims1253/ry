@@ -111,6 +111,9 @@ All notable changes to ry are documented in this file.
   removing RY010 false positives in cli, pak, and rlang.
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
+- Treat a call head bound to an opaque local or parameter as an unknown
+  callable instead of the same-named base function, so `dt()` on a `dt`
+  argument no longer takes `stats::dt`'s arity or return type (#722).
 
 ## [0.11.0] - 2026-09-22
 

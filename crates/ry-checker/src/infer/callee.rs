@@ -180,7 +180,16 @@ impl Checker {
             .then(|| scope.get(lookup_name).cloned())
             .flatten();
         let function_evidence = self.call_head_function_evidence(name, scope);
-        let (target, metadata) = match (function, lexical_callable, signature) {
+        // R's call lookup stops at the first binding that may be a function,
+        // so an opaque local, or a union with a closure member (#700), hides
+        // a same-named stub (#722). Project functions keep their own proof.
+        let may_be_function = lexical_binding.as_ref().is_some_and(|binding| {
+            binding.mode.is_unknown()
+                || binding.members.as_ref().is_some_and(|members| {
+                    members.iter().any(|member| member.mode == Mode::Function)
+                })
+        });
+        let (target, metadata) = match (function, lexical_callable || may_be_function, signature) {
             (Some(function), _, signature) => (CallTarget::User(function), signature),
             (None, true, signature) => (CallTarget::Lexical, signature),
             (None, false, Some(signature)) => (CallTarget::Stub, Some(signature)),

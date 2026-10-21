@@ -302,3 +302,15 @@ expression: rows
       line: 651
       message: "variable `hidden` is not bound in this scope"
       severity: warning
+- case: an opaque parameter call head is not the same-named stats function
+  diagnostics: []
+- case: an opaque local call head is not the same-named base function
+  diagnostics: []
+- case: a NULL-or-function local call head is not the same-named base function
+  diagnostics: []
+- case: a known non-function local still calls the base function
+  diagnostics:
+    - code: RY061
+      line: 685
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error

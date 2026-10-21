@@ -799,6 +799,14 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
         .map(PackageSpec::load)
 }
 
+/// The stub for `package`. A user stub replaces the embedded one wholesale.
+pub fn package_stub<'a>(
+    user_stubs: &'a BTreeMap<String, Typeshed>,
+    package: &str,
+) -> Option<&'a Typeshed> {
+    user_stubs.get(package).or_else(|| load_package(package))
+}
+
 /// Whether a package name is known to ry's embedded typeshed. Used by
 /// the checker to decide whether a `library(pkg)` contributes
 /// signatures (unknown packages are still recorded as loaded for NSE

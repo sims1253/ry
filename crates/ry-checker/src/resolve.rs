@@ -16,10 +16,22 @@ pub(crate) const BASE_DATABASE_PACKAGES: &[&str] = &[
     "datasets",
 ];
 
+/// Which database a stub lookup found its answer in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SchemaProvider {
     Base,
     Package,
+}
+
+/// What a [`Checker::stub_ladder`] walk resolves.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StubLookup {
+    /// Signatures, values, and predicates.
+    Ordinary,
+    /// Declarative verbs. Attached packages come from the project-wide
+    /// `loaded` union, and a qualified name reads its package stub before
+    /// the base database.
+    Schema,
 }
 
 /// Whether a direct call may use package-specific inference.
@@ -43,17 +55,44 @@ impl Checker {
         package: &str,
         scope: &Scope,
     ) -> SpecialCallProvenance {
+        self.special_call_provenance_after_effects(
+            original_name,
+            original_callee,
+            semantic_name,
+            lookup_name,
+            package,
+            scope,
+            false,
+        )
+    }
+
+    /// [`Self::special_call_provenance`] where `effects_unknown` means an
+    /// earlier call may have rebound the callee or `::`. A visible binding
+    /// to another function still decides a bare name.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn special_call_provenance_after_effects(
+        &self,
+        original_name: &str,
+        original_callee: &Expr,
+        semantic_name: &str,
+        lookup_name: &str,
+        package: &str,
+        scope: &Scope,
+        effects_unknown: bool,
+    ) -> SpecialCallProvenance {
         if original_name != semantic_name
             || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::"))
         {
             return SpecialCallProvenance::Unknown;
         }
         if let Some((prefix, _)) = semantic_name.rsplit_once("::") {
-            if self.literal_bindings_may_be_shadowed(
-                ["::", "`::`", ":::", "`:::`"],
-                &HashSet::new(),
-                scope,
-            ) {
+            if effects_unknown
+                || self.literal_bindings_may_be_shadowed(
+                    ["::", "`::`", ":::", "`:::`"],
+                    &HashSet::new(),
+                    scope,
+                )
+            {
                 return SpecialCallProvenance::Unknown;
             }
             if prefix.trim_end_matches(':') != package {
@@ -94,12 +133,14 @@ impl Checker {
                     SpecialCallProvenance::Unknown
                 };
             }
-            if self.literal_bindings_may_shadow_package(
-                [semantic_name, format!("`{semantic_name}`").as_str()],
-                &HashSet::new(),
-                scope,
-                package,
-            ) {
+            if effects_unknown
+                || self.literal_bindings_may_shadow_package(
+                    [semantic_name, format!("`{semantic_name}`").as_str()],
+                    &HashSet::new(),
+                    scope,
+                    package,
+                )
+            {
                 return SpecialCallProvenance::Unknown;
             }
             let explicit_import = self
@@ -118,119 +159,119 @@ impl Checker {
         SpecialCallProvenance::Proven
     }
 
-    /// The attached packages a resolution ladder may consult, in the
-    /// deterministic priority order of [`Self::available_package_names`]:
-    /// the one shared form of the "walk candidate packages, keep the ones
-    /// actually attached" rung that every ladder below uses. The checker
-    /// keeps two attachment sets with different granularity, so each
-    /// ladder picks its gate explicitly (issue #166).
+    /// The stub databases that may define `name`, in lookup order, each with
+    /// the member to look up there and which kind of database it is:
     ///
-    /// `bare_loaded` — this file's own search path — gates ordinary
-    /// bare-name resolution: signatures, values, predicates, and
-    /// `has_function_anywhere`.
-    pub(crate) fn bare_attached_packages(&self) -> impl Iterator<Item = &str> + '_ {
-        self.available_package_names()
-            .filter(move |package| self.bare_loaded.contains(*package))
+    /// 1. `pkg::fun` or `pkg:::fun`: the base database when `pkg` is one of
+    ///    [`BASE_DATABASE_PACKAGES`], and `pkg`'s own stub. Nothing else, since
+    ///    `other::f()` is no evidence that `base::f()` was called.
+    /// 2. A bare name with an `importFrom` binding: that package's stub.
+    /// 3. The base database.
+    /// 4. The attached packages, in the fixed priority order of
+    ///    [`Self::available_package_names`].
+    ///
+    /// R masks by search-path position. The fixed order approximates it,
+    /// since most names are disjoint across the shipped packages.
+    fn stub_ladder<'a>(
+        &'a self,
+        name: &'a str,
+        lookup: StubLookup,
+    ) -> impl Iterator<Item = (&'a Typeshed, &'a str, SchemaProvider)> + 'a {
+        let package = |package: &str| {
+            self.package_typeshed(package)
+                .map(|typeshed| (typeshed, SchemaProvider::Package))
+        };
+        let (member, exact, open) = match split_qualified(name) {
+            Some((pkg, member)) => {
+                let base = BASE_DATABASE_PACKAGES
+                    .contains(&pkg)
+                    .then_some((self.typeshed.as_ref(), SchemaProvider::Base));
+                // Only a user stub named after a standard package tells
+                // these orders apart.
+                let exact = if lookup == StubLookup::Schema {
+                    [package(pkg), base]
+                } else {
+                    [base, package(pkg)]
+                };
+                (member, exact, false)
+            }
+            None => {
+                let import = self.imported_from.get(name).and_then(|pkg| package(pkg));
+                (name, [import, None], true)
+            }
+        };
+        exact
+            .into_iter()
+            .flatten()
+            .chain(open.then(|| self.open_stubs(lookup)).into_iter().flatten())
+            .map(move |(typeshed, provider)| (typeshed, member, provider))
     }
 
-    /// The other gate: `loaded`, the project-wide union, which makes
-    /// declarative verbs resolvable everywhere, exactly like the dplyr NSE
-    /// gating they share inference with.
-    pub(crate) fn schema_attached_packages(&self) -> impl Iterator<Item = &str> + '_ {
-        self.available_package_names()
-            .filter(move |package| self.loaded.contains(*package))
+    /// Rungs 3 and 4 of [`Self::stub_ladder`]: the base database, then the
+    /// attached packages. Ordinary lookup reads this file's own search path,
+    /// `bare_loaded`. Schema lookup reads `loaded`, the project-wide union,
+    /// so declarative verbs resolve everywhere, like the dplyr NSE gating
+    /// they share inference with.
+    fn open_stubs(
+        &self,
+        lookup: StubLookup,
+    ) -> impl Iterator<Item = (&Typeshed, SchemaProvider)> + '_ {
+        let attached = if lookup == StubLookup::Schema {
+            &self.loaded
+        } else {
+            &self.bare_loaded
+        };
+        std::iter::once((self.typeshed.as_ref(), SchemaProvider::Base)).chain(
+            self.available_package_names()
+                .filter(move |package| attached.contains(*package))
+                .filter_map(|package| {
+                    self.package_typeshed(package)
+                        .map(|typeshed| (typeshed, SchemaProvider::Package))
+                }),
+        )
     }
 
     /// Resolve only signatures that declare checker schema semantics. Unlike
     /// ordinary call resolution, a same-named base function without an effect
     /// does not mask an attached package's declarative verb.
     pub(crate) fn resolve_schema_sig(&self, name: &str) -> Option<(FunctionSig, SchemaProvider)> {
-        if let Some((pkg, fun)) = split_qualified(name) {
-            if let Some(signature) = self
-                .package_typeshed(pkg)
-                .and_then(|typeshed| typeshed.functions.get(fun))
-                .filter(|sig| has_schema_semantics(sig))
-            {
-                return Some((signature.clone(), SchemaProvider::Package));
-            }
-            return BASE_DATABASE_PACKAGES
-                .contains(&pkg)
-                .then(|| self.typeshed.functions.get(fun))
-                .flatten()
-                .filter(|sig| has_schema_semantics(sig))
-                .cloned()
-                .map(|signature| (signature, SchemaProvider::Base));
-        }
-        if let Some(package) = self.imported_from.get(name)
-            && let Some(sig) = self
-                .package_typeshed(package)
-                .and_then(|typeshed| typeshed.functions.get(name))
-                .filter(|sig| has_schema_semantics(sig))
-        {
-            return Some((sig.clone(), SchemaProvider::Package));
-        }
-        if let Some(sig) = self
-            .typeshed
-            .functions
-            .get(name)
-            .filter(|sig| has_schema_semantics(sig))
-        {
-            return Some((sig.clone(), SchemaProvider::Base));
-        }
-        self.schema_attached_packages().find_map(|package| {
-            self.package_typeshed(package)
-                .and_then(|typeshed| typeshed.functions.get(name))
-                .filter(|sig| has_schema_semantics(sig))
-                .cloned()
-                .map(|signature| (signature, SchemaProvider::Package))
-        })
+        self.stub_ladder(name, StubLookup::Schema)
+            .find_map(|(typeshed, member, provider)| {
+                typeshed
+                    .functions
+                    .get(member)
+                    .filter(|sig| has_schema_semantics(sig))
+                    .map(|sig| (sig.clone(), provider))
+            })
     }
 
     /// Resolve a predicate declaration with exact callee provenance. Bare
     /// package helpers are accepted only when their predicate declaration is
     /// unambiguous across the candidate packages.
     pub(crate) fn resolve_predicate_sig(&self, name: &str) -> Option<FunctionSig> {
+        let is_predicate = |signature: &&FunctionSig| signature.predicate.is_some();
         if name.contains("::") {
             return self
                 .resolve_typeshed_sig(name)
                 .filter(|signature| signature.predicate.is_some());
         }
-
-        // An importFrom binding establishes one exact package origin. Do not
-        // scan it again below: ambiguity is about distinct origins, not the
-        // number of resolution paths that reach the same declaration.
+        // An importFrom binding is one exact origin. Ambiguity counts
+        // distinct origins, not the rungs that reach the same declaration.
         if let Some(package) = self.imported_from.get(name) {
             return self
                 .package_typeshed(package)
                 .and_then(|typeshed| typeshed.functions.get(name))
-                .filter(|signature| signature.predicate.is_some())
+                .filter(is_predicate)
                 .cloned();
         }
-
-        let mut candidates = Vec::new();
-        if let Some(signature) = self
-            .typeshed
-            .functions
-            .get(name)
-            .filter(|signature| signature.predicate.is_some())
-            .cloned()
-        {
-            candidates.push(signature);
-        }
-        for package in self.bare_attached_packages() {
-            if let Some(signature) = self
-                .package_typeshed(package)
-                .and_then(|typeshed| typeshed.functions.get(name))
-                .filter(|signature| signature.predicate.is_some())
-                .cloned()
-            {
-                // Each package appears once in available_package_names(), so
-                // an attached package cannot be counted both as the ordinary
-                // resolution result and as a schema candidate.
-                candidates.push(signature);
-            }
-        }
-        (candidates.len() == 1).then(|| candidates.remove(0))
+        // Each package appears once in available_package_names(), so one
+        // declaration cannot count twice.
+        let mut predicates = self
+            .open_stubs(StubLookup::Ordinary)
+            .filter_map(|(typeshed, _)| typeshed.functions.get(name))
+            .filter(is_predicate);
+        let first = predicates.next()?;
+        predicates.next().is_none().then(|| first.clone())
     }
 
     /// Resolve a typed package value under the same provenance rules as
@@ -238,92 +279,17 @@ impl Checker {
     /// values as well as package datasets; unlike `functions`, these names are
     /// never callable.
     pub(crate) fn resolve_typeshed_value(&self, name: &str) -> Option<RType> {
-        if let Some((package, value)) = split_qualified(name) {
-            if BASE_DATABASE_PACKAGES.contains(&package)
-                && let Some(value_type) = self.typeshed.datasets.get(value)
-            {
-                return Some(json_rtype_to_rtype(value_type));
-            }
-            return self
-                .package_typeshed(package)
-                .and_then(|typeshed| typeshed.datasets.get(value))
-                .map(json_rtype_to_rtype);
-        }
-        if let Some(package) = self.imported_from.get(name)
-            && let Some(value_type) = self
-                .package_typeshed(package)
-                .and_then(|typeshed| typeshed.datasets.get(name))
-        {
-            return Some(json_rtype_to_rtype(value_type));
-        }
-        if let Some(value_type) = self.typeshed.datasets.get(name) {
-            return Some(json_rtype_to_rtype(value_type));
-        }
-        self.bare_attached_packages().find_map(|package| {
-            self.package_typeshed(package)
-                .and_then(|typeshed| typeshed.datasets.get(name))
-                .map(json_rtype_to_rtype)
-        })
+        self.stub_ladder(name, StubLookup::Ordinary)
+            .find_map(|(typeshed, member, _)| typeshed.datasets.get(member))
+            .map(json_rtype_to_rtype)
     }
 
-    /// Resolve a function signature by name, consulting (in order):
-    ///   1. a `pkg::fun` / `pkg:::fun` qualified name -- looked up in
-    ///      `package_typeshed(pkg)` directly, bypassing base and loaded
-    ///      packages (a qualified call is an explicit reference);
-    ///   2. an unqualified name with a recorded `importFrom` binding --
-    ///      resolved against that package's typeshed (exact provenance);
-    ///   3. the base typeshed (`self.typeshed`);
-    ///   4. each loaded package that ships signatures, in a fixed
-    ///      deterministic priority order approximating R's search path.
-    ///
-    /// Returns the signature; `None` when no package knows the name.
+    /// Resolve a function signature by name through [`Self::stub_ladder`].
+    /// Returns `None` when no stub knows the name.
     pub(crate) fn resolve_typeshed_sig(&self, name: &str) -> Option<FunctionSig> {
-        // Qualified call: explicit package reference.
-        if let Some((pkg, fun)) = split_qualified(name) {
-            // R's standard packages share our embedded base database. This
-            // is an explicit package-to-database mapping, not a fallback to
-            // a similarly named export from another package.
-            if BASE_DATABASE_PACKAGES.contains(&pkg)
-                && let Some(sig) = self.typeshed.functions.get(fun)
-            {
-                return Some(sig.clone());
-            }
-            if let Some(sig) = self
-                .package_typeshed(pkg)
-                .and_then(|typeshed| typeshed.functions.get(fun))
-            {
-                return Some(sig.clone());
-            }
-            // A qualified callee has exact provenance. In particular, do
-            // not borrow a same-named base or attached-package signature:
-            // `other::f()` is not evidence that `base::f()` was called.
-            return None;
-        }
-        // Unqualified: base typeshed, then loaded packages (fixed
-        // priority order; see the comment on masking below).
-        // An importFrom binding carries exact provenance without attaching
-        // unrelated exports from that package.
-        if let Some(package) = self.imported_from.get(name)
-            && let Some(signature) = self
-                .package_typeshed(package)
-                .and_then(|typeshed| typeshed.functions.get(name).cloned())
-        {
-            return Some(signature);
-        }
-        if let Some(sig) = self.typeshed.functions.get(name) {
-            return Some(sig.clone());
-        }
-        // Loaded packages. R's actual masking depends on search-path
-        // position; we approximate with a fixed priority order over the
-        // packages that ship signatures (most function names are
-        // disjoint across these packages, so masking rarely bites).
-        // `loaded` is a HashSet (unordered) so we walk a deterministic
-        // known-packages list and check membership.
-        self.bare_attached_packages().find_map(|pkg| {
-            self.package_typeshed(pkg)
-                .and_then(|typeshed| typeshed.functions.get(name))
-                .cloned()
-        })
+        self.stub_ladder(name, StubLookup::Ordinary)
+            .find_map(|(typeshed, member, _)| typeshed.functions.get(member))
+            .cloned()
     }
 
     /// Inherit declarative NSE metadata when a source package defines an S3
@@ -374,38 +340,25 @@ impl Checker {
 
     /// Function candidates outside the current project's execution frame.
     pub(crate) fn has_external_function(&self, name: &str) -> bool {
-        // Qualified: check the named package.
-        if let Some((pkg, fun)) = split_qualified(name)
-            && let Some(t) = self.package_typeshed(pkg)
-            && t.functions.contains_key(fun)
-        {
-            return true;
-        }
-        if self.typeshed.functions.contains_key(name) {
-            return true;
-        }
-        if self
+        // A qualified name reads its package's own stub without the base
+        // database mapping. Its full spelling still reaches the open rungs,
+        // where base defines `::` and `:::`.
+        split_qualified(name).is_some_and(|(package, member)| {
+            self.package_typeshed(package)
+                .is_some_and(|typeshed| typeshed.functions.contains_key(member))
+        }) || self
             .typeshed
             .globals
             .ambient_functions
             .iter()
             .any(|function| function == name)
-        {
-            return true;
-        }
-        // Treat externally supplied names, including NAMESPACE imports, as
-        // possible function candidates outside the local value namespace.
-        if self.external_bindings.contains(name) {
-            return true;
-        }
-        // Loaded packages (fixed priority order; see resolve_typeshed_sig).
-        if self.bare_attached_packages().any(|pkg| {
-            self.package_typeshed(pkg)
-                .is_some_and(|t| t.functions.contains_key(name))
-        }) {
-            return true;
-        }
-        false
+            // Treat externally supplied names, including NAMESPACE imports,
+            // as possible function candidates outside the local value
+            // namespace.
+            || self.external_bindings.contains(name)
+            || self
+                .open_stubs(StubLookup::Ordinary)
+                .any(|(typeshed, _)| typeshed.functions.contains_key(name))
     }
 
     pub(crate) fn resolves_user_s3_dispatch(&self, generic: &str, first: &RType) -> bool {

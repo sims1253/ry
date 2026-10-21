@@ -5,6 +5,7 @@ use std::ops::ControlFlow;
 
 pub(crate) struct OperandEvidence {
     pub known_null: bool,
+    pub dispatchable_null: bool,
     pub plain_vectors: bool,
 }
 
@@ -22,6 +23,7 @@ impl Checker {
         scope.invalidate_literal_values_for_dispatch(&rt);
         let OperandEvidence {
             known_null: known_null_is_actionable,
+            dispatchable_null,
             plain_vectors,
         } = operand_proof;
         if matches!(op, BinOpKind::Colon) {
@@ -79,6 +81,7 @@ impl Checker {
                         rt.with_class(ClassVector::empty()),
                         span,
                         known_null_is_actionable,
+                        dispatchable_null,
                     );
                     if op.is_arithmetic() && !result.mode.is_unknown() {
                         result.class = result_class;
@@ -96,7 +99,14 @@ impl Checker {
         if op.is_arithmetic() && (lt.class.contains("factor") || rt.class.contains("factor")) {
             return self.infer_factor_arithmetic(&lt, Some(&rt), span);
         }
-        self.infer_primitive_binop(op, lt, rt, span, known_null_is_actionable)
+        self.infer_primitive_binop(
+            op,
+            lt,
+            rt,
+            span,
+            known_null_is_actionable,
+            dispatchable_null,
+        )
     }
 
     /// Whether a `:` endpoint is a numeric or logical literal, possibly
@@ -134,6 +144,7 @@ impl Checker {
         rt: RType,
         span: Span,
         known_null_is_actionable: bool,
+        dispatchable_null: bool,
     ) -> RType {
         let is_compare = is_comparison(op);
         let is_logic = matches!(
@@ -152,22 +163,33 @@ impl Checker {
             let comparable_lt = equality_list_leaf_type(&lt).unwrap_or_else(|| lt.clone());
             let comparable_rt = equality_list_leaf_type(&rt).unwrap_or_else(|| rt.clone());
             if let Some(t) = comparable_lt.compare(comparable_rt) {
-                // RY033: warn about comparing a character value with a
-                // non-character one. R coerces the numeric operand to
-                // character, then compares lexicographically, which is
-                // rarely the programmer's intent.
-                if lt_mode.is_atomic()
+                // RY033: warn about ordering a character value against a
+                // non-character one. R coerces the other operand to
+                // character, then compares lexicographically (`"9" > 14`
+                // is TRUE), which is rarely the programmer's intent.
+                // `==`/`!=` compare the same strings for equality, which
+                // gives the intended answer for integer, logical and
+                // integer-valued double operands (`Sys.getenv("X") == 1`,
+                // `flag == "array"`), so they stay quiet (#699).
+                let is_ordering = !matches!(op, BinOpKind::Eq | BinOpKind::Ne);
+                if is_ordering
+                    && lt_mode.is_atomic()
                     && rt_mode.is_atomic()
                     && (lt_mode == Mode::Character) != (rt_mode == Mode::Character)
                     && !compares_factor
                 {
+                    let coerced_mode = if lt_mode == Mode::Character {
+                        rt_mode
+                    } else {
+                        lt_mode
+                    };
                     self.emit(
                         Severity::Warning,
                         span,
                         "RY033",
                         format!(
-                            "comparing `{}` with `{}`; R coerces the numeric value to character and compares lexicographically, which is rarely intended",
-                            lt_mode, rt_mode
+                            "comparing `{}` with `{}`; R coerces the `{}` value to character and compares lexicographically, which is rarely intended",
+                            lt_mode, rt_mode, coerced_mode
                         ),
                     );
                 }
@@ -239,6 +261,9 @@ impl Checker {
                 );
             }
             return t;
+        }
+        if dispatchable_null {
+            return RType::unknown();
         }
         self.emit(
             Severity::Error,
@@ -476,14 +501,18 @@ impl Checker {
         // A parameter guard relies on lazy short-circuit evaluation, so it
         // keeps its distinct warning below rather than the length-based one.
         let before = self.diagnostics.len();
+        let known_null = known_null_arithmetic_operand(lhs, &rt, scope)
+            || known_null_arithmetic_operand(rhs, &lt, scope);
+        let dispatchable_null =
+            dispatchable_null_operand(lhs, &rt) || dispatchable_null_operand(rhs, &lt);
         let result = self.infer_binop(
             op,
             lt,
             rt,
             span,
             OperandEvidence {
-                known_null: known_null_arithmetic_operand(lhs, scope)
-                    || known_null_arithmetic_operand(rhs, scope),
+                known_null,
+                dispatchable_null,
                 plain_vectors: false,
             },
             scope,

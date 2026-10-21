@@ -837,14 +837,22 @@ fn compare_char_char_no_warning() {
     );
 }
 
+/// #699: `==`/`!=` compare the formatted strings for equality, which is
+/// the intended answer for `Sys.getenv("X") == 1` and `flag == "array"`.
+/// Only ordering compares lexicographically.
 #[test]
-fn compare_eq_char_numeric_warns() {
-    let diags = check(r#"bad <- "hello" == 1"#);
-    assert!(
-        diags.iter().any(|d| d.code == "RY033"),
-        "expected RY033 for character == numeric, got {:?}",
-        diags
-    );
+fn compare_eq_char_numeric_no_warning() {
+    for src in [
+        r#"ok <- "hello" == 1"#,
+        r#"ok <- "1" != 1L"#,
+        r#"ok <- TRUE == "array""#,
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY033"),
+            "{src}: equality between character and non-character should not warn, got {diags:?}"
+        );
+    }
 }
 
 #[test]

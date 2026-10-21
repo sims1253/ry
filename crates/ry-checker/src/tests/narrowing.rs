@@ -76,7 +76,7 @@ fn diverging_guards_narrow_the_guarded_continuation() {
                 "x = NULL",
                 "!is.character(x)",
                 "stop(\"x must be character\")",
-                "x == \"1\"",
+                "x < \"1\"",
                 "f()",
             ),
             "RY033",

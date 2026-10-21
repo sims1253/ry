@@ -1459,28 +1459,32 @@ async fn cli_lsp_discovery_set_equality() {
         "textDocument": {"uri": normal_uri, "languageId": "r", "version": 1, "text": normal_text}
     })).await.unwrap();
 
-    // Record every published path. Publications can arrive in any order, so
-    // the wait for normal.R records the others it passes.
+    // Record every published path, in any order.
     let mut lsp_uris: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut record = |message: &Value| -> Option<String> {
+    let record = |lsp_uris: &mut std::collections::BTreeSet<String>, message: &Value| {
         if message.get("method") != Some(&json!("textDocument/publishDiagnostics")) {
-            return None;
+            return;
         }
-        let uri = message.pointer("/params/uri").and_then(Value::as_str)?;
-        let path = uri.strip_prefix("file://").unwrap_or(uri);
-        lsp_uris.insert(normalize_path(Path::new(path), root));
-        Some(uri.to_string())
+        if let Some(uri) = message.pointer("/params/uri").and_then(Value::as_str) {
+            let path = uri.strip_prefix("file://").unwrap_or(uri);
+            lsp_uris.insert(normalize_path(Path::new(path), root));
+        }
     };
-    client
-        .receive_until(|m| record(m).as_deref() == Some(normal_uri.as_str()), 128)
-        .await
-        .unwrap();
+    // Wait for every path the CLI found, with a deadline. An idle gap between
+    // publications does not prove the background pass is over.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !cli_paths.is_subset(&lsp_uris) {
+            let message = client.receive().await.unwrap();
+            record(&mut lsp_uris, &message);
+        }
+    })
+    .await;
 
-    // Now drain remaining indexed-file publications (bounded).
+    // Then drain any extra publications the CLI does not expect (bounded).
     for _ in 0..128 {
         match tokio::time::timeout(std::time::Duration::from_millis(500), client.receive()).await {
             Ok(Ok(message)) => {
-                record(&message);
+                record(&mut lsp_uris, &message);
             }
             Ok(Err(e)) => panic!("transport error during drain: {e}"),
             Err(_) => break, // timeout: server has quiesced

@@ -1,39 +1,23 @@
-//! Server settings models for the LSP settings channel.
-//!
-//! These types mirror ruff-vscode's settings shape: an array of
-//! per-folder settings plus a global fallback, all sent up-front in
-//! `initializationOptions`. The array shape lets Zed (which does not
-//! support `workspace/configuration` pull) receive full per-folder
-//! settings, while VS Code can additionally use the pull mechanism.
-//!
-//! Only settings the server acts on are modeled. The VS Code extension
-//! handles `path`, `importStrategy`, and `logLevel`; the server ignores
-//! unknown keys.
+//! Editor settings, in ruff-vscode's shape: per-folder settings plus a
+//! global fallback, sent in `initializationOptions`. Zed cannot pull
+//! `workspace/configuration`, so this channel must carry everything.
+//! Unknown keys, such as the VS Code extension's `path`, are ignored.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-/// The server-level settings envelope sent by the client in
-/// `initializationOptions`, matching ruff-vscode's shape:
 /// `{ settings: ISettings[], globalSettings: ISettings }`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ServerSettings {
-    /// Per-workspace-folder settings. Each entry corresponds to one
-    /// workspace folder, in order. For single-root workspaces this
-    /// array has one element.
+    /// One entry per workspace folder, in order.
     pub settings: Vec<FolderSettings>,
     /// Global fallback used when no folder-specific entry matches.
-    #[serde(default)]
     pub global_settings: FolderSettings,
 }
 
-/// Per-folder settings, mirroring ruff-vscode's `ISettings`.
-///
-/// Every field is `Option<T>` so that "unset" (fall back to `ry.toml`
-/// or built-in default) is distinguishable from "set to the default
-/// value". This is the precedence rule:
-/// editor setting > `ry.toml` > built-in default.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Per-folder settings, mirroring ruff-vscode's `ISettings`. An unset
+/// field falls back to `ry.toml`, then to the built-in default.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct FolderSettings {
     /// Path to a `ry.toml`, overriding automatic discovery.
@@ -44,26 +28,20 @@ pub struct FolderSettings {
     pub min_confidence: Option<ry_checker::Confidence>,
     /// Mirrors `--baseline`.
     pub baseline: Option<String>,
-    /// Whether ry is enabled for this folder. When `false`, the server
-    /// analyzes the folder neither in the background nor on demand: it
-    /// publishes no diagnostics and returns no inlay hints for it.
+    /// `false` turns off diagnostics and inlay hints for the folder.
     pub enable: Option<bool>,
 }
 
-/// Lint-specific settings, matching ruff-vscode's `Lint` type.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Matches ruff-vscode's `Lint` type.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct LintSettings {
-    /// Rules to select (replaces the default set). An explicitly empty
-    /// list selects nothing, disabling default-enabled rules.
+    /// Replaces the default rule set. An empty list selects nothing.
     pub select: Option<Vec<String>>,
     /// Additional rules to enable on top of the defaults.
     pub extend_select: Option<Vec<String>>,
-    /// Rules to suppress.
     pub ignore: Option<Vec<String>>,
-    /// Rules to treat as errors.
     pub error: Option<Vec<String>>,
-    /// Rules to treat as warnings.
     pub warn: Option<Vec<String>>,
 }
 

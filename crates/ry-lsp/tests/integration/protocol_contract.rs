@@ -688,9 +688,9 @@ async fn workspace_folder_add_remove_convergence() {
 ///   5. diagnostics equal a fresh parse of N+1.
 ///
 /// The test-only scheduler/barrier seam (`ry_lsp::test_seam`) forces this
-/// ordering without any sleeps. The seam controls scheduling only; cache
-/// policy (version-stamped tree rejection) is production code in
-/// `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
+/// ordering without any sleeps. The seam controls scheduling only. The
+/// rejection is production code: `backend::parsed_file` keeps a parse only
+/// if the document's edit stamp has not changed.
 #[tokio::test]
 async fn version_stamped_tree_cache_rejects_stale_parse() {
     use ry_testkit::LspSession;
@@ -734,10 +734,9 @@ async fn version_stamped_tree_cache_rejects_stale_parse() {
     // update and the stale parse would not be detected.
     ry_lsp::test_seam::wait_landed(Seam::DidChange).await;
 
-    // Release the barrier: the version-1 parse finishes, its tree is
-    // rejected by `store_tree` (version 1 ≠ current version 2) and its
-    // `SourceFile` by `record_parse`, and the retry loop parses
-    // version 2 fresh.
+    // Release the barrier: the version-1 parse finishes, `parsed_file`
+    // discards it because the document's edit stamp moved, and the retry
+    // loop parses version 2 fresh.
     ry_lsp::test_seam::release(Seam::Parse);
 
     // Collect diagnostics for version 2. The didChange triggered
@@ -1038,12 +1037,12 @@ async fn baseline_reload_converges_to_new_value() {
     );
 }
 
-/// (#45): the publish/inlay-hint hot path performs ZERO
-/// baseline file reads. `baseline_disk_reads(path)` counts every disk read
-/// of the fixture's baseline by the context loader; a publish that touches
-/// it betrays a regression.
+/// Publication and inlay hints use the baseline loaded with the folder
+/// context at initialize. Emptying the file afterwards, with no
+/// didChangeWatchedFiles to trigger a reload, must not bring back the
+/// finding it suppresses.
 #[tokio::test]
-async fn publish_path_performs_no_baseline_disk_io() {
+async fn publish_uses_the_baseline_loaded_at_initialize() {
     use ry_testkit::LspSession;
 
     let fixture = FixtureProject::empty().unwrap();
@@ -1067,14 +1066,9 @@ async fn publish_path_performs_no_baseline_disk_io() {
     let mut live = LspSession::new(cr, cw);
     live.initialize(fixture.root()).await.unwrap();
 
-    // Snapshot AFTER initialize: the baseline is loaded once into the
-    // per-folder context during initialize and must not be re-read by
-    // any subsequent request.
-    let reads_before = ry_lsp::baseline_disk_reads(&fixture.path("baseline.json"));
-    assert!(
-        reads_before > 0,
-        "initialize must have loaded this fixture's baseline"
-    );
+    fixture
+        .write_file("baseline.json", r#"{"version": 1, "entries": []}"#)
+        .unwrap();
 
     // Exercise inlay hints (read path) and publish (diagnostic path).
     live.request(
@@ -1090,11 +1084,10 @@ async fn publish_path_performs_no_baseline_disk_io() {
     live.open(&main_uri, 1, "if (c(TRUE, FALSE)) print(1)\n")
         .await
         .unwrap();
-    let _ = live
+    let opened = live
         .published_diagnostics_after(&main_uri, mark)
         .await
         .unwrap();
-    // A second republish (didChange) to be thorough.
     let mark2 = live.publication_mark();
     live.change(
         &main_uri,
@@ -1103,22 +1096,21 @@ async fn publish_path_performs_no_baseline_disk_io() {
     )
     .await
     .unwrap();
-    let _ = live
+    let changed = live
         .published_diagnostics_after(&main_uri, mark2)
         .await
         .unwrap();
-
-    let reads_after = ry_lsp::baseline_disk_reads(&fixture.path("baseline.json"));
     let _ = live.shutdown().await;
     drop(live);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
 
-    assert_eq!(
-        reads_before,
-        reads_after,
-        "publish/inlay-hint path must perform zero baseline disk reads; got {} extra read(s)",
-        reads_after.saturating_sub(reads_before)
-    );
+    for publication in [opened, changed] {
+        assert_eq!(
+            harness::count_code(&publication, "RY002"),
+            0,
+            "{publication}"
+        );
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

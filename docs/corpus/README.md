@@ -6,32 +6,20 @@ independent classification (`true_positive` / `false_positive` / `uncertain`)
 and an `audit_group` label. Pinning identities — not aggregate counts — means
 removing one finding can never be silently mistaken for removing another.
 
-The `audit_group` field groups reviewed findings by how the audit explained
-each label. `posit-0.9.0.json` has 16 groups; most name a cause
-(`type-narrowing`, `test-fixture`, `ifelse-mode`, `ry001-null-union`,
-`ry111-constant-shadowing`), one an owner (`upstream-package`), and the
-largest, `manual-audit`, is the manually classified batch.
-`tidyverse-0.7.1.json` has 17 groups: 9 are batch ids
-(`P2`, `P4a`, `P4b`, `P4c`, `P7a`, `P7b`, `P8`, `plan-32-33`,
-`pr195-nse-stubs`), kept verbatim because the planning records that defined
-them were local-only and no longer exist; `upstream-ggplot2` and
-`upstream-glue` name upstream packages and `ifelse-mode`, `seq-defaulted`,
-`ry109-self-defaults`, `ry001-null-union`, `ry111-constant-shadowing`, and
-`test-fixture` (shared with the Posit ledger) causes.
+The `audit_group` field records why the audit gave each label. Most groups
+name a cause, such as `type-narrowing` or `test-fixture`. Others name an
+upstream owner, such as `upstream-package` or `upstream-glue`, or a review
+batch, such as `manual-audit` or `P2`.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
 | [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 88 | 37 / 33 / 0 (+18 unowned) | hermetic (strict CI gate) |
 | [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 388 | 89 / 299 / 0 | hermetic (strict CI gate) |
 
-The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its
-version and source revision describe the current regenerated diagnostics.
-
-Two historical ledgers were removed as generated artifacts: the 0.8.0
-audit transcript (1,142 identities, reconciliation `audit-transcript`) and
-the pre-change baseline (729 identities, hermetic, measured on the
-audited starting tree). Neither gated CI; both are re-derivable from the
-audit records summarized in [`pre-governance-measurement.md`](pre-governance-measurement.md).
+The `0.7.1` in the tidyverse ledger's filename is historical. The `ry` column
+gives the version that produced its diagnostics. The
+[pre-governance measurement](pre-governance-measurement.md) records the 0.9
+audit's starting point.
 
 ## Instruction counts
 
@@ -53,8 +41,6 @@ checker fixtures plus a deterministic sample of the vendored ecosystem sources.
 
 [`posit-messages-0.9.json`](posit-messages-0.9.json) records the message and
 severity for every distinct identity in the reviewed Posit findings.
-It previously also carried an optional structured fix; the autofix machinery was removed before 0.9.0 (see
-issue #89), so those payloads are gone.
 Each entry is keyed by the same stable `(package, code, path, line, column)`
 identity as `posit-0.9.0.json`; it is intentionally readable JSON rather than a
 digest or an ignored `.full.txt` report.
@@ -87,38 +73,25 @@ field selects how a delta is treated:
 In both modes, findings labeled `true_positive` are checked explicitly so a
 real bug disappearing is always surfaced.
 
-## The moving 0.9 ledger
-
-The audit response rebuilt `ry` from the audited starting commit, generated hermetic
-message-free root reports for all 62 pinned packages, and measured the
-pre-change baseline (see [`pre-governance-measurement.md`](pre-governance-measurement.md);
-the intermediate snapshot itself was removed as a generated artifact). After
-the RY032 cleanup produced a zero identity delta, that exact full run seeded
-`posit-0.9.0.json`, which — unlike those removed historical snapshots — is a
-strict gate.
+## Updating the ledgers
 
 Checker and LSP changes may alter diagnostics intentionally. Any such change must
-regenerate the reports, update `posit-0.9.0.json` in the same change, preserve
+regenerate the reports, update every affected ledger (`posit-0.9.0.json`,
+`tidyverse-0.7.1.json`) in the same change, preserve
 or manually review every new identity's label, and explain all missing/unowned
 identities. Never weaken `reconciliation: hermetic` to accept a delta.
 
-The tidyverse ledger’s `source_sha256` uses the same recipe over every
-non-`posit` `*.root.txt` report — all 32 `ecosystem/packages.txt` manifest
-entries — while the index’s “24 Packages” counts ledger packages-block
-entries: eight manifest packages (cli, curl, fs, jsonlite, rlang, scales,
-testthat, withr) have no block entry. Three of their reports (cli, rlang,
-testthat) contain 24 unowned findings in total; the remaining five
-(curl, fs, jsonlite, scales, withr) are empty. Package-aware call-head
-selection (#668) removes 13 unowned identities: 12 testthat false positives
-from qualified `rlang` predicates and one jsonlite RY111 for its deliberate
-`base::stop` wrapper.
-The ledger's #668 note records every removed identity; reviewed findings
-and their labels are unchanged.
-
-The Posit ledger’s `source_sha256` hashes the concatenated bytes of all
+The Posit ledger's `source_sha256` hashes the concatenated bytes of all
 `ecosystem/reports/posit.*.root.txt` files, sorted by filename. Recompute it
-after a full run; package, classification, and audit-group counts must match
+after a full run. Package, classification, and audit-group counts must match
 the reviewed identity list.
+
+The tidyverse ledger's `source_sha256` uses the same recipe over every
+non-`posit` `*.root.txt` report, one for each of the 32 entries in
+`ecosystem/packages.txt`. The table's 24 packages count only the ledger's
+`packages` entries. Eight manifest packages have no entry: the reports for
+cli, rlang, and testthat hold 24 unowned findings, and those for curl, fs,
+jsonlite, scales, and withr are empty.
 
 ## Running the corpora
 

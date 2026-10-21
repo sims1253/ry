@@ -37,7 +37,7 @@ f()
 # no-diag
 f <- function(x = NULL) {
   if (!is.character(x)) stop("x must be character")
-  x == "1"
+  x < "1"
 }
 f()
 

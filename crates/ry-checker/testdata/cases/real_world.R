@@ -54,3 +54,10 @@ x <- 1:10
 y <- x * 2 + 1
 ok <- y > 5
 sel <- which(ok)
+
+## case: a multi-line magrittr chain after library(magrittr)
+# no-diag
+library(magrittr)
+result <- c(1, 2, 3) %>%
+  mean() %>%
+  round(2)

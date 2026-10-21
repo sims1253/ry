@@ -657,9 +657,17 @@ bad <- 1 < 2
 # no-diag
 x <- "abc" < "xyz"
 
-## case: character == numeric warns
-# expect: RY033
-bad <- "hello" == 1
+## case: character == numeric compares formatted strings and does not warn
+# no-diag
+ok <- "hello" == 1
+
+## case: character != integer does not warn
+# no-diag
+ok <- "1" != 1L
+
+## case: logical == character does not warn
+# no-diag
+ok <- TRUE == "array"
 
 ## case: a length-1 %in% result is a valid scalar condition
 # no-diag
@@ -686,6 +694,27 @@ y <- f() + "bad"
 ## case: a loop over a character vector makes the loop variable character
 # expect: RY040
 for (s in c("a", "b")) { total <- s + 1 }
+
+## case: a magrittr pipe into a call desugars to a well-typed call
+# no-diag
+result <- c(1, 2, 3) %>% mean()
+
+## case: a two-step magrittr chain is well typed
+# no-diag
+a <- c(1, 2, 3) %>% mean() %>% round(2)
+
+## case: the native pipe desugars to a well-typed call
+# no-diag
+a <- c(1, 2, 3) |> mean()
+
+## case: a magrittr pipe into a bare function name is well typed
+# no-diag
+x <- 1L
+y <- x %>% abs
+
+## case: a magrittr pipe with a dot placeholder is well typed
+# no-diag
+result <- c(1, 2, 3) %>% round(., digits = 2)
 
 ## case: the %T>% tee pipe returns its left side
 # no-diag

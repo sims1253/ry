@@ -18,3 +18,5 @@ expression: rows
   diagnostics: []
 - case: vectorized arithmetic and which() are clean
   diagnostics: []
+- case: a multi-line magrittr chain after library(magrittr)
+  diagnostics: []

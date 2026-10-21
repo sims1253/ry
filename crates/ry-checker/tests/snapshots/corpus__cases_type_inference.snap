@@ -402,18 +402,18 @@ expression: rows
   diagnostics:
     - code: RY033
       line: 650
-      message: "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
+      message: "comparing `character` with `double`; R coerces the `double` value to character and compares lexicographically, which is rarely intended"
       severity: warning
 - case: numeric < numeric is fine
   diagnostics: []
 - case: character < character is fine
   diagnostics: []
-- case: character == numeric warns
-  diagnostics:
-    - code: RY033
-      line: 662
-      message: "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-      severity: warning
+- case: character == numeric compares formatted strings and does not warn
+  diagnostics: []
+- case: character != integer does not warn
+  diagnostics: []
+- case: logical == character does not warn
+  diagnostics: []
 - case: a length-1 %in% result is a valid scalar condition
   diagnostics: []
 - case: a parameter default types the parameter in the body
@@ -421,21 +421,31 @@ expression: rows
 - case: a user function returning character is a character operand
   diagnostics:
     - code: RY040
-      line: 679
+      line: 687
       message: "cannot apply arithmetic op to `character` and `integer`"
       severity: error
 - case: an explicit return() types the user function result
   diagnostics:
     - code: RY040
-      line: 684
+      line: 692
       message: "cannot apply arithmetic op to `double` and `character`"
       severity: error
 - case: a loop over a character vector makes the loop variable character
   diagnostics:
     - code: RY040
-      line: 688
+      line: 696
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
+- case: a magrittr pipe into a call desugars to a well-typed call
+  diagnostics: []
+- case: a two-step magrittr chain is well typed
+  diagnostics: []
+- case: the native pipe desugars to a well-typed call
+  diagnostics: []
+- case: a magrittr pipe into a bare function name is well typed
+  diagnostics: []
+- case: a magrittr pipe with a dot placeholder is well typed
+  diagnostics: []
 - case: the %T>% tee pipe returns its left side
   diagnostics: []
 - case: a 60-branch else-if chain is checked
@@ -445,23 +455,23 @@ expression: rows
 - case: the magrittr dot is unbound in a native pipe
   diagnostics:
     - code: RY000
-      line: 769
+      line: 798
       message: "syntax error: function '$' not supported in RHS call of a pipe"
       severity: error
     - code: RY010
-      line: 769
+      line: 798
       message: "variable `.` is not bound in this scope"
       severity: warning
 - case: the native underscore is unbound in a magrittr pipe
   diagnostics:
     - code: RY010
-      line: 773
+      line: 802
       message: "variable `_` is not bound in this scope"
       severity: warning
 - case: an unknown column through the magrittr dot is reported
   diagnostics:
     - code: RY060
-      line: 778
+      line: 807
       message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
       severity: error
 - case: a column extracted through the magrittr dot is double
@@ -469,13 +479,13 @@ expression: rows
 - case: two integer if branches join to integer
   diagnostics:
     - code: RY040
-      line: 789
+      line: 818
       message: "cannot apply arithmetic op to `integer` and `character`"
       severity: error
 - case: arithmetic on a list-or-function if result is an error
   diagnostics:
     - code: RY040
-      line: 795
+      line: 824
       message: "cannot apply arithmetic op to `union` and `double`"
       severity: error
 - case: an if without else joins its value with NULL
@@ -483,13 +493,13 @@ expression: rows
 - case: nested integer if expressions join to integer
   diagnostics:
     - code: RY040
-      line: 805
+      line: 834
       message: "cannot apply arithmetic op to `integer` and `character`"
       severity: error
 - case: unary minus on character is an error
   diagnostics:
     - code: RY020
-      line: 809
+      line: 838
       message: "cannot apply unary `-` to `character`"
       severity: error
 - case: "-c(\"col\") in j on a possible data.table is a column drop"
@@ -505,37 +515,37 @@ expression: rows
 - case: "-c(\"x\") on a base vector is an error"
   diagnostics:
     - code: RY020
-      line: 837
+      line: 866
       message: "cannot apply unary `-` to `character`"
       severity: error
 - case: "!\"x\" on a base vector is an error"
   diagnostics:
     - code: RY021
-      line: 842
+      line: 871
       message: "cannot apply `!` to `character`"
       severity: error
 - case: "-c(\"a\") in j on a base data.frame is an error"
   diagnostics:
     - code: RY020
-      line: 847
+      line: 876
       message: "cannot apply unary `-` to `character`"
       severity: error
 - case: "!list() on a base list is an error"
   diagnostics:
     - code: RY021
-      line: 852
+      line: 881
       message: "cannot apply `!` to `list`"
       severity: error
 - case: "-c(\"a\") in the i slot is an error"
   diagnostics:
     - code: RY020
-      line: 857
+      line: 886
       message: "cannot apply unary `-` to `character`"
       severity: error
 - case: "-c(\"a\") in [[ is an error"
   diagnostics:
     - code: RY020
-      line: 861
+      line: 890
       message: "cannot apply unary `-` to `character`"
       severity: error
 - case: "a named j = -c(\"a\") argument is a column drop"
@@ -543,7 +553,7 @@ expression: rows
 - case: "-c(\"a\") passed to the unused drop argument is an error"
   diagnostics:
     - code: RY020
-      line: 871
+      line: 900
       message: "cannot apply unary `-` to `character`"
       severity: error
 - case: ".SDcols = !c(\"a\") is a selection inversion"
@@ -553,61 +563,61 @@ expression: rows
 - case: "-c(\"a\") in the by slot is an error"
   diagnostics:
     - code: RY020
-      line: 885
+      line: 914
       message: "cannot apply unary `-` to `character`"
       severity: error
 - case: "!c(\"a\") in the by slot is an error"
   diagnostics:
     - code: RY021
-      line: 889
+      line: 918
       message: "cannot apply `!` to `character`"
       severity: error
 - case: unary minus in a callback inside j is an error
   diagnostics:
     - code: RY020
-      line: 894
+      line: 923
       message: "cannot apply unary `-` to `character`"
       severity: error
 - case: unary minus in a foreach body inside j is an error
   diagnostics:
     - code: RY020
-      line: 899
+      line: 928
       message: "cannot apply unary `-` to `character`"
       severity: error
 - case: "1:10 plus character is an error"
   diagnostics:
     - code: RY040
-      line: 904
+      line: 933
       message: "cannot apply arithmetic op to `integer` and `character`"
       severity: error
 - case: rep() result plus character is an error
   diagnostics:
     - code: RY040
-      line: 909
+      line: 938
       message: "cannot apply arithmetic op to `double` and `character`"
       severity: error
 - case: seq() result plus character is an error
   diagnostics:
     - code: RY040
-      line: 914
+      line: 943
       message: "cannot apply arithmetic op to `double` and `character`"
       severity: error
 - case: "a 1:10 function result plus character is an error"
   diagnostics:
     - code: RY040
-      line: 920
+      line: 949
       message: "cannot apply arithmetic op to `integer` and `character`"
       severity: error
 - case: calling a double value is an error
   diagnostics:
     - code: RY070
-      line: 925
+      line: 954
       message: "could not find function `x` (bound here as `double`)"
       severity: error
 - case: calling a character value is an error
   diagnostics:
     - code: RY070
-      line: 930
+      line: 959
       message: "could not find function `x` (bound here as `character`)"
       severity: error
 - case: calling a function is fine
@@ -617,13 +627,13 @@ expression: rows
 - case: calling a numeric literal is an error
   diagnostics:
     - code: RY070
-      line: 943
+      line: 972
       message: "cannot call a value of mode `double`"
       severity: error
 - case: calling NULL is an error
   diagnostics:
     - code: RY070
-      line: 947
+      line: 976
       message: "cannot call a value of mode `NULL`"
       severity: error
 - case: calling an index expression stays silent
@@ -631,13 +641,13 @@ expression: rows
 - case: $ on an integer vector is an error
   diagnostics:
     - code: RY061
-      line: 958
+      line: 987
       message: "$ operator is invalid for atomic vectors of mode `integer`"
       severity: error
 - case: $ on a character vector is an error
   diagnostics:
     - code: RY061
-      line: 963
+      line: 992
       message: "$ operator is invalid for atomic vectors of mode `character`"
       severity: error
 - case: $ on a list is fine
@@ -653,7 +663,7 @@ expression: rows
 - case: $<- on a plain integer is an error
   diagnostics:
     - code: RY061
-      line: 988
+      line: 1017
       message: "$ operator is invalid for atomic vectors of mode `integer`"
       severity: error
 - case: $ on a data.frame is fine
@@ -661,13 +671,13 @@ expression: rows
 - case: $ on an unknown value stays silent
   diagnostics:
     - code: RY010
-      line: 996
+      line: 1025
       message: "variable `some_unknown_thing` is not bound in this scope"
       severity: warning
 - case: $ on an all-atomic union is an error
   diagnostics:
     - code: RY061
-      line: 1002
+      line: 1031
       message: "$ operator is invalid for atomic vectors of mode `integer` or `character`"
       severity: error
 - case: $ on a union with a list member is fine
@@ -677,19 +687,19 @@ expression: rows
 - case: $ on an all-atomic joined return is an error
   diagnostics:
     - code: RY061
-      line: 1023
+      line: 1052
       message: "$ operator is invalid for atomic vectors of mode `logical` or `double`"
       severity: error
 - case: is.null(x) || is.na(x) on a parameter warns
   diagnostics:
     - code: RY032
-      line: 1027
+      line: 1056
       message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: length(x) && x == 1L on a parameter warns
   diagnostics:
     - code: RY032
-      line: 1031
+      line: 1060
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: is.na() on a reassigned scalar parameter is fine
@@ -707,67 +717,67 @@ expression: rows
 - case: "x %in% 'value' after is.null() warns"
   diagnostics:
     - code: RY032
-      line: 1059
+      line: 1088
       message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: length(x) > 0 does not prove x scalar
   diagnostics:
     - code: RY032
-      line: 1063
+      line: 1092
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: length(x) == 2L does not prove x scalar
   diagnostics:
     - code: RY032
-      line: 1067
+      line: 1096
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: a local length() does not prove x scalar
   diagnostics:
     - code: RY032
-      line: 1071
+      line: 1100
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: a length parameter does not prove x scalar
   diagnostics:
     - code: RY032
-      line: 1075
+      line: 1104
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: "other::length() does not prove x scalar"
   diagnostics:
     - code: RY032
-      line: 1079
+      line: 1108
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: a project length method breaks the length(x) == 1L guard
   diagnostics:
     - code: RY032
-      line: 1086
+      line: 1115
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: a project length method breaks the guard for is.na()
   diagnostics:
     - code: RY032
-      line: 1091
+      line: 1120
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: a classed parameter default breaks the length guard
   diagnostics:
     - code: RY032
-      line: 1097
+      line: 1126
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: an unclassed parameter default does not save the length guard
   diagnostics:
     - code: RY032
-      line: 1103
+      line: 1132
       message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
 - case: reassignment inside the guarded operand breaks the length guard
   diagnostics:
     - code: RY032
-      line: 1107
+      line: 1136
       message: "`&&` applied to a length-2 operand; R requires a single logical value and raises an error"
       severity: warning
 - case: length(x) == 1L proves x scalar without a length method
@@ -797,29 +807,29 @@ expression: rows
 - case: "`n1` does not bind n2"
   diagnostics:
     - code: RY010
-      line: 1173
+      line: 1202
       message: "variable `n2` is not bound in this scope"
       severity: warning
 - case: "a string \"`n1`\" assignment does not bind n1"
   diagnostics:
     - code: RY010
-      line: 1177
+      line: 1206
       message: "variable `n1` is not bound in this scope"
       severity: warning
 - case: "`n\\x31` does not bind n2"
   diagnostics:
     - code: RY010
-      line: 1181
+      line: 1210
       message: "variable `n2` is not bound in this scope"
       severity: warning
 - case: a length-2 condition inside abs() keeps its length
   diagnostics:
     - code: RY100
-      line: 1185
+      line: 1214
       message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
       severity: warning
     - code: RY002
-      line: 1185
+      line: 1214
       message: "`if` condition has length 2; R requires a length-1 condition"
       severity: warning
 - case: "1:\"a\" is not typed numeric"

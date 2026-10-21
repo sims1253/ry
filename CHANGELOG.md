@@ -109,6 +109,8 @@ All notable changes to ry are documented in this file.
   scripts (#568).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
+- Stop RY070 from reporting a call head bound to a NULL-or-function or
+  value-or-function join, such as an optional callback (#700).
 
 ## [0.11.0] - 2026-09-22
 

@@ -495,33 +495,6 @@
       "severity": "warning",
       "message": "unknown argument `z` to `intersect`"
     },
-    "dplyr::RY091::R/data-mask.R:112:7": {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 112,
-      "column": 7,
-      "severity": "warning",
-      "message": "missing required argument `expr` in call to `eval`"
-    },
-    "dplyr::RY091::R/data-mask.R:117:7": {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 117,
-      "column": 7,
-      "severity": "warning",
-      "message": "missing required argument `expr` in call to `eval`"
-    },
-    "dplyr::RY091::R/data-mask.R:131:7": {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 131,
-      "column": 7,
-      "severity": "warning",
-      "message": "missing required argument `expr` in call to `eval`"
-    },
     "dplyr::RY109::R/distinct.R:81:16": {
       "package": "dplyr",
       "code": "RY109",

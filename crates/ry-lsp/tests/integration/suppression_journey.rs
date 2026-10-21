@@ -163,7 +163,9 @@ async fn suppression_actions_follow_the_document_and_the_client_capabilities() {
             versioned: document_changes == Some(true),
             data: data_support == Some(true),
         };
-        let publish = harness::open_published(&mut journey.session, &journey.uri, 1, source).await;
+        let publish =
+            harness::open_published(&mut journey.session, &journey.uri, journey.version, source)
+                .await;
         let diagnostics = normalize_diagnostics(&publish);
 
         only_kinds(&mut journey, &diagnostics[0]).await;

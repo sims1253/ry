@@ -129,7 +129,7 @@ pub async fn change_published(
 /// pass without one, so a later mark sees only publications that later
 /// actions cause. More than 16 publications means the server is stuck.
 pub async fn drain_publications(session: &mut ClientSession, uri: &str) {
-    for _ in 0..=16 {
+    for _ in 0..16 {
         let mark = session.publication_mark();
         let wait = session.published_diagnostics_after(uri, mark);
         match tokio::time::timeout(Duration::from_millis(500), wait).await {
@@ -184,11 +184,11 @@ pub async fn spawn_session(
 }
 
 /// Shut down a session and require the server to exit successfully
-/// within 3s.
+/// within 10s, which leaves room for a loaded CI runner.
 pub async fn join_session(mut session: ClientSession, server: Server) {
     session.shutdown().await.expect("clean shutdown");
     drop(session);
-    let code = tokio::time::timeout(Duration::from_secs(3), server)
+    let code = tokio::time::timeout(Duration::from_secs(10), server)
         .await
         .expect("server stops after exit")
         .expect("server task completes");

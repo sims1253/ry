@@ -1,90 +1,27 @@
-//! #525: incremental disk refreshes must preserve the `index.max-files`
-//! budget.
+//! Watched-file refreshes keep the `index.max-files` budget: a new file is
+//! refused once its root is at the cap, and an indexed file still
+//! refreshes. `use2.R` reads the unbound `never_bound_here`, and a file
+//! created outside the editor defines it.
 //!
-//! Full discovery enforces `index.max-files` as a hard per-root budget,
-//! but the per-file refresh path used to insert unconditionally, so
-//! watched-file events could grow the index past the cap without bound.
-//! The commit now refuses a *new* entry once the owning root is at its
-//! budget (first-come-first-served, like the walk): refreshing an
-//! already-indexed path still lands, and nothing indexed is evicted.
-//!
-//! The observable is name resolution through a file the capped walk
-//! omits: `use2.R` reads the unbound name `never_bound_here` (one RY010),
-//! and a watched file appearing outside the editor defines it. Past the
-//! cap the definition must stay out and the RY010 must survive.
-//!
-//! There is deliberately no fresh-server oracle here: above the cap the
-//! walk keeps the first files in readdir order, which is
-//! filesystem-dependent, so a fresh server over the final tree may keep a
-//! different subset. These tests pin the live invariant instead — the
-//! index never grows past the cap — which is exactly what the fix
-//! guarantees and what fails without it. The index writer applies work in
-//! arrival order, so the no-op edit whose publication is asserted is
-//! published after the watched refresh before it decided.
+//! There is no fresh-server oracle: above the cap the walk keeps files in
+//! readdir order, which depends on the filesystem. The index writer applies
+//! work in arrival order, so a no-op edit after a watched event publishes
+//! the state after that event.
 
 use crate::harness;
 
 use harness::{
-    count_code, file_uri, has_ry040, join_session, notify_created, spawn_session, sync_barrier,
+    change_published, count_code, file_uri, has_ry040, join_session, notify_changed,
+    notify_created, open_published, spawn_session, sync_barrier,
 };
 use ry_testkit::FixtureProject;
-use serde_json::{Value, json};
+use serde_json::json;
 
 /// `use2.R` reads the unbound name: exactly one RY010 while no indexed
 /// file defines it.
 const USE2: &str = "x <- never_bound_here\n";
 /// A definition of that name which, once indexed, would clear the RY010.
 const NEWDEFS: &str = "never_bound_here <- function() 1L\n";
-
-/// Drive one fresh publication of the committed index with a no-op edit
-/// and return it. The edit's pass follows every event sent before it.
-async fn observe_current_index(
-    session: &mut harness::ClientSession,
-    use2_uri: &str,
-    version: i32,
-) -> Value {
-    observe_current_index_with(session, use2_uri, version, USE2).await
-}
-
-/// Drive one fresh publication of the committed index with a no-op edit
-/// carrying `text`, and return it. Same ordering as
-/// [`observe_current_index`], for observers whose buffer text differs.
-async fn observe_current_index_with(
-    session: &mut harness::ClientSession,
-    uri: &str,
-    version: i32,
-    text: &str,
-) -> Value {
-    let mark = session.publication_mark();
-    session
-        .change(uri, version, json!([{ "text": text }]))
-        .await
-        .unwrap();
-    session
-        .published_diagnostics_after(uri, mark)
-        .await
-        .unwrap()
-}
-
-/// Open `use2.R` and return its first publication: publications are gated
-/// on the initial index, so this also proves the initial scan settled.
-async fn open_use2_settled(session: &mut harness::ClientSession, use2_uri: &str) -> Value {
-    let mark = session.publication_mark();
-    session.open(use2_uri, 1, USE2).await.unwrap();
-    session
-        .published_diagnostics_after(use2_uri, mark)
-        .await
-        .unwrap()
-}
-
-/// Deliver the watched event for `uri`, created or changed.
-async fn notify_watched(session: &mut harness::ClientSession, uri: &str, created: bool) {
-    if created {
-        notify_created(session, uri).await;
-    } else {
-        harness::notify_changed(session, uri).await;
-    }
-}
 
 /// A watched creation past the cap must not grow the index: with two
 /// files indexed under `max-files = 2`, a third file's definitions stay
@@ -105,7 +42,7 @@ async fn create_past_cap_is_refused() {
     // observer opens before the over-budget file exists.
     fixture.write_file("use2.R", USE2).unwrap();
     let use2_uri = file_uri(&fixture.path("use2.R"));
-    let first = open_use2_settled(&mut session, &use2_uri).await;
+    let first = open_published(&mut session, &use2_uri, 1, USE2).await;
     assert_eq!(
         count_code(&first, "RY010"),
         1,
@@ -114,8 +51,8 @@ async fn create_past_cap_is_refused() {
 
     fixture.write_file("d.R", NEWDEFS).unwrap();
     let d_uri = file_uri(&fixture.path("d.R"));
-    notify_watched(&mut session, &d_uri, true).await;
-    let after = observe_current_index(&mut session, &use2_uri, 2).await;
+    notify_created(&mut session, &d_uri).await;
+    let after = change_published(&mut session, &use2_uri, 2, USE2).await;
     assert_eq!(
         count_code(&after, "RY010"),
         1,
@@ -148,7 +85,7 @@ async fn change_of_undiscovered_file_past_cap_is_refused() {
 
     fixture.write_file("use2.R", USE2).unwrap();
     let use2_uri = file_uri(&fixture.path("use2.R"));
-    let first = open_use2_settled(&mut session, &use2_uri).await;
+    let first = open_published(&mut session, &use2_uri, 1, USE2).await;
     assert_eq!(
         count_code(&first, "RY010"),
         1,
@@ -159,8 +96,8 @@ async fn change_of_undiscovered_file_past_cap_is_refused() {
     // admission would now pass, but the root is at its file budget.
     std::fs::write(fixture.path("d.R"), NEWDEFS).unwrap();
     let d_uri = file_uri(&fixture.path("d.R"));
-    notify_watched(&mut session, &d_uri, false).await;
-    let after = observe_current_index(&mut session, &use2_uri, 2).await;
+    notify_changed(&mut session, &d_uri).await;
+    let after = change_published(&mut session, &use2_uri, 2, USE2).await;
     assert_eq!(
         count_code(&after, "RY010"),
         1,
@@ -190,12 +127,7 @@ async fn refresh_of_indexed_file_at_cap_still_lands() {
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
     sync_barrier(&mut session, &use_uri).await;
 
-    let mark = session.publication_mark();
-    session.open(&use_uri, 1, "x <- f() + 1L\n").await.unwrap();
-    let first = session
-        .published_diagnostics_after(&use_uri, mark)
-        .await
-        .unwrap();
+    let first = open_published(&mut session, &use_uri, 1, "x <- f() + 1L\n").await;
     assert!(
         has_ry040(&first),
         "character f must win before the on-disk edit: {first}"
@@ -206,7 +138,7 @@ async fn refresh_of_indexed_file_at_cap_still_lands() {
     // refresh republishes, which is the observation — no gate needed.
     std::fs::write(fixture.path("a.R"), "f <- function() 1L\n").unwrap();
     let edit_mark = session.publication_mark();
-    harness::notify_changed(&mut session, &a_uri).await;
+    notify_changed(&mut session, &a_uri).await;
     let after = session
         .published_diagnostics_after(&use_uri, edit_mark)
         .await
@@ -230,7 +162,7 @@ const INNERDEFS: &str = "inner_marker <- function() 1L\n";
 /// the inner root.
 const KEEP: &str = "keep <- 1L\n";
 
-/// Nested roots must not consume each other's budget (#525): the outer
+/// Nested roots must not consume each other's budget: the outer
 /// root holds two of its four budgeted files and the inner root holds
 /// one of its own, so a new OUTER-owned file still lands — the inner
 /// entries share the path prefix but attribute to the inner root. A
@@ -259,7 +191,7 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
     // The initial scan settled (publications gate on it): both names
     // start unbound.
     let use2_uri = file_uri(&fixture.path("use2.R"));
-    let first = open_use2_settled(&mut session, &use2_uri).await;
+    let first = open_published(&mut session, &use2_uri, 1, USE2).await;
     assert_eq!(
         count_code(&first, "RY010"),
         1,
@@ -270,12 +202,7 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
     // never enters the index; opening it observes the inner scope.
     fixture.write_file("pkg/obs.R", OBSERVER_INNER).unwrap();
     let obs_uri = file_uri(&fixture.path("pkg/obs.R"));
-    let obs_mark = session.publication_mark();
-    session.open(&obs_uri, 1, OBSERVER_INNER).await.unwrap();
-    let obs_first = session
-        .published_diagnostics_after(&obs_uri, obs_mark)
-        .await
-        .unwrap();
+    let obs_first = open_published(&mut session, &obs_uri, 1, OBSERVER_INNER).await;
     assert_eq!(
         count_code(&obs_first, "RY010"),
         1,
@@ -286,8 +213,8 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
     // (one of four), which the inner observer proves.
     fixture.write_file("pkg/b.R", INNERDEFS).unwrap();
     let b_uri = file_uri(&fixture.path("pkg/b.R"));
-    notify_watched(&mut session, &b_uri, true).await;
-    let inner_after = observe_current_index_with(&mut session, &obs_uri, 2, OBSERVER_INNER).await;
+    notify_created(&mut session, &b_uri).await;
+    let inner_after = change_published(&mut session, &obs_uri, 2, OBSERVER_INNER).await;
     assert_eq!(
         count_code(&inner_after, "RY010"),
         0,
@@ -300,8 +227,8 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
     // sits at the cap.
     fixture.write_file("c.R", NEWDEFS).unwrap();
     let c_uri = file_uri(&fixture.path("c.R"));
-    notify_watched(&mut session, &c_uri, true).await;
-    let after = observe_current_index(&mut session, &use2_uri, 2).await;
+    notify_created(&mut session, &c_uri).await;
+    let after = change_published(&mut session, &use2_uri, 2, USE2).await;
     assert_eq!(
         count_code(&after, "RY010"),
         0,

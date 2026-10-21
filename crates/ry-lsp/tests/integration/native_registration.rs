@@ -1,5 +1,8 @@
-use ry_testkit::{AsyncJsonRpcClient, FixtureProject, file_uri};
-use serde_json::{Value, json};
+use crate::harness;
+
+use harness::{file_uri, join_session, notify_changed, spawn_session};
+use ry_testkit::FixtureProject;
+use serde_json::Value;
 
 fn unbound(message: &Value, name: &str) -> bool {
     message["params"]["diagnostics"]
@@ -26,110 +29,40 @@ async fn native_registration_edits_refresh_open_document_bindings() {
     let source = "native_entry_xyz\nother_missing\n";
     fixture.write_file("R/main.R", source).unwrap();
     fixture.write_file("src/init.c", "").unwrap();
-    let (client, server) = tokio::io::duplex(128 * 1024);
-    let (reader, writer) = tokio::io::split(server);
-    let server = tokio::spawn(ry_lsp::run_with(reader, writer));
-    let (reader, writer) = tokio::io::split(client);
-    let mut client = AsyncJsonRpcClient::new(reader, writer);
-    let root = file_uri(fixture.root()).unwrap();
-    let uri = file_uri(&fixture.path("R/main.R")).unwrap();
-    let id = client
-        .request(
-            "initialize",
-            json!({
-                "processId": null, "rootUri": root, "capabilities": {
-                    "workspace": {"didChangeWatchedFiles": {"dynamicRegistration": true}}
-                },
-                "workspaceFolders": [{"uri": root, "name": "example"}]
-            }),
-        )
-        .await
-        .unwrap();
-    client
-        .receive_until(|message| message["id"] == id, 20)
-        .await
-        .unwrap();
-    client.notify("initialized", json!({})).await.unwrap();
-    let watchers = client
-        .receive_until(
-            |message| message["method"] == "client/registerCapability",
-            20,
-        )
-        .await
-        .unwrap();
-    client
-        .send(&json!({"jsonrpc": "2.0", "id": watchers["id"], "result": null}))
-        .await
-        .unwrap();
+    let (mut session, server) =
+        spawn_session(&[fixture.root()], harness::watching_capabilities(), None).await;
+    let watchers = harness::answer_watcher_registration(&mut session).await;
     assert!(
-        watchers["params"]["registrations"]
-            .as_array()
-            .unwrap()
+        watchers
             .iter()
-            .any(|registration| {
-                registration["registerOptions"]["watchers"]
-                    .as_array()
-                    .is_some_and(|watchers| {
-                        watchers
-                            .iter()
-                            .any(|watcher| watcher["globPattern"] == "**/src/*.{c,cc,cpp,cxx}")
-                    })
-            }),
-        "{watchers}"
+            .any(|watcher| watcher["globPattern"] == "**/src/*.{c,cc,cpp,cxx}"),
+        "{watchers:?}"
     );
-    client
-        .notify(
-            "textDocument/didOpen",
-            json!({"textDocument": {
-                "uri": uri, "languageId": "r", "version": 1, "text": source
-            }}),
-        )
+
+    let uri = file_uri(&fixture.path("R/main.R"));
+    let init_uri = file_uri(&fixture.path("src/init.c"));
+    let mark = session.publication_mark();
+    session.open(&uri, 1, source).await.unwrap();
+    session
+        .notification_after(mark, "textDocument/publishDiagnostics", |message| {
+            unbound(message, "native_entry_xyz") && unbound(message, "other_missing")
+        })
         .await
         .unwrap();
-    tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        client.receive_until(
-            |message| {
-                message["method"] == "textDocument/publishDiagnostics"
-                    && unbound(message, "native_entry_xyz")
-                    && unbound(message, "other_missing")
-            },
-            50,
-        ),
-    )
-    .await
-    .unwrap()
-    .unwrap();
     let registration = r#"
 static const R_CallMethodDef calls[] = { {"native_entry_xyz", (DL_FUNC)&implementation, 0}, {NULL, NULL, 0} };
 void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, NULL); }
 "#;
     for (contents, missing) in [(registration, false), ("", true)] {
         fixture.write_file("src/init.c", contents).unwrap();
-        client
-            .notify(
-                "workspace/didChangeWatchedFiles",
-                json!({"changes": [{
-                    "uri": file_uri(&fixture.path("src/init.c")).unwrap(), "type": 2
-                }]}),
-            )
+        let mark = session.publication_mark();
+        notify_changed(&mut session, &init_uri).await;
+        session
+            .notification_after(mark, "textDocument/publishDiagnostics", |message| {
+                unbound(message, "native_entry_xyz") == missing && unbound(message, "other_missing")
+            })
             .await
             .unwrap();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            client.receive_until(
-                |message| {
-                    message["method"] == "textDocument/publishDiagnostics"
-                        && unbound(message, "native_entry_xyz") == missing
-                        && unbound(message, "other_missing")
-                },
-                50,
-            ),
-        )
-        .await
-        .unwrap()
-        .unwrap();
     }
-    drop(client);
-    server.abort();
+    join_session(session, server).await;
 }

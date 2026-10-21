@@ -1,24 +1,15 @@
-//! #487: nested R packages under one workspace folder must not share one `Project`.
-//!
-//! The CLI groups files by nearest-`DESCRIPTION` ancestor
-//! (`ry_workspace::group_by_package_root`): each package gets its own
-//! checker `Project`, so a top-level binding in one package never resolves
-//! in another. The LSP used to check a whole workspace folder through one
-//! folder-wide `ProjectCache` (and one folder-wide `loaded` union), leaking
-//! package-private bindings across packages: real RY010 findings were
-//! suppressed, and same-named functions could resolve to the wrong
-//! package's definition. These tests pin the CLI's isolation contract on
-//! the editor side: sibling packages, nested roots, and duplicate function
-//! names stay isolated, while files inside one package — and plain
-//! non-package scripts — keep sharing definitions.
+//! Each package (nearest `DESCRIPTION` ancestor) and each workspace root is
+//! checked on its own, as `ry check` groups files: a top-level binding in
+//! one never resolves in another. Files inside one package, and plain
+//! scripts outside any package, still share definitions.
 
 use crate::harness;
 
 use harness::{
-    Published, file_uri, join_session, published_from_cli_value, published_from_lsp, ry_binary,
-    spawn_session, sync_barrier,
+    Published, cli_diagnostics, file_uri, join_session, published_from_lsp, spawn_session,
+    sync_barrier,
 };
-use ry_testkit::{CliProcess, FixtureProject};
+use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -65,48 +56,6 @@ async fn open_and_quiesce(
 
 const DESC_A: &str = "Package: pkgA\nVersion: 0.0.1\n";
 const DESC_B: &str = "Package: pkgB\nVersion: 0.0.1\n";
-
-/// Two sibling packages in one folder: a private binding in A must stay
-/// unresolved in B. Before the fix the folder-wide project resolved it
-/// from A and the RY010 never fired.
-#[tokio::test]
-async fn sibling_packages_do_not_share_top_level_bindings() {
-    let fixture = FixtureProject::empty().unwrap();
-    fixture.write_file("pkgA/DESCRIPTION", DESC_A).unwrap();
-    fixture
-        .write_file("pkgA/R/a.R", "ry_review_private_a <- 1L\n")
-        .unwrap();
-    fixture.write_file("pkgB/DESCRIPTION", DESC_B).unwrap();
-    fixture
-        .write_file("pkgB/R/b.R", "x <- ry_review_private_a\n")
-        .unwrap();
-    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    sync_barrier(&mut session, &file_uri(&fixture.path("pkgB/R/b.R"))).await;
-
-    let burst = open_and_quiesce(
-        &mut session,
-        &fixture,
-        &[
-            ("pkgA/R/a.R", "ry_review_private_a <- 1L\n"),
-            ("pkgB/R/b.R", "x <- ry_review_private_a\n"),
-        ],
-    )
-    .await;
-    let a_uri = file_uri(&fixture.path("pkgA/R/a.R"));
-    let b_uri = file_uri(&fixture.path("pkgB/R/b.R"));
-    let a_diags = burst.get(&a_uri).cloned().unwrap_or_default();
-    let b_diags = burst.get(&b_uri).cloned().unwrap_or_default();
-    assert!(
-        a_diags.is_empty(),
-        "pkgA's own definition must stay clean, got: {a_diags:?}"
-    );
-    assert!(
-        mentions(&b_diags, "RY010", "ry_review_private_a"),
-        "pkgB must not resolve pkgA's private binding; expected RY010, got: {b_diags:?}"
-    );
-
-    join_session(session, server).await;
-}
 
 /// A package nested inside another package's tree resolves against its
 /// nearest `DESCRIPTION` root: the inner file must not see the outer
@@ -157,9 +106,7 @@ async fn nested_package_roots_isolate() {
 
 /// The same function name defined in both packages resolves per package:
 /// `pkgA`'s integer `ry_review_dup` keeps its caller clean while `pkgB`'s
-/// character `ry_review_dup` flags its own caller with RY040. Before the
-/// fix one pooled project let the later file's definition win for both
-/// callers, so `pkgA`'s caller was flagged too.
+/// character `ry_review_dup` flags its own caller with RY040.
 #[tokio::test]
 async fn duplicate_function_names_resolve_within_their_package() {
     let fixture = FixtureProject::empty().unwrap();
@@ -301,12 +248,9 @@ async fn non_package_scripts_keep_cross_file_visibility() {
     join_session(session, server).await;
 }
 
-/// A mixed folder — one package plus loose scripts — isolates in both
-/// directions: the scripts still share definitions among each other, but
-/// a loose script cannot resolve a sibling package's private binding
-/// (pre-fix the folder-wide project let it, while `ry check` never
-/// did). Pins the script side of the isolation contract against the CLI
-/// oracle, mirroring `nested_packages_match_cli_diagnostics`.
+/// In a folder with one package and loose scripts, the scripts share
+/// definitions with each other but cannot resolve the package's private
+/// binding, as in `ry check`.
 #[tokio::test]
 async fn mixed_folder_scripts_do_not_see_package_bindings() {
     let fixture = FixtureProject::empty().unwrap();
@@ -324,18 +268,8 @@ async fn mixed_folder_scripts_do_not_see_package_bindings() {
         )
         .unwrap();
 
-    let output = CliProcess::new(ry_binary())
-        .check(&fixture, fixture.root(), ["--output-format", "json"])
-        .unwrap();
-    assert!(
-        matches!(output.status.code(), Some(0 | 1)),
-        "CLI failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let cli: BTreeSet<Published> = serde_json::from_slice::<Vec<Value>>(&output.stdout)
-        .unwrap()
-        .iter()
-        .map(|value| published_from_cli_value(value, fixture.root()))
+    let cli: BTreeSet<Published> = cli_diagnostics(fixture.root(), fixture.root(), &[])
+        .into_iter()
         .collect();
     assert!(
         cli.iter().any(|diagnostic| diagnostic.code == "RY010"
@@ -389,8 +323,9 @@ async fn mixed_folder_scripts_do_not_see_package_bindings() {
     join_session(session, server).await;
 }
 
-/// CLI/LSP parity on the nested shape: the editor must publish exactly
-/// what `ry check` reports for the same folder.
+/// Two sibling packages: pkgB's read of pkgA's private binding is unbound,
+/// pkgA stays clean, and the editor publishes exactly what `ry check`
+/// reports.
 #[tokio::test]
 async fn nested_packages_match_cli_diagnostics() {
     let fixture = FixtureProject::empty().unwrap();
@@ -403,22 +338,18 @@ async fn nested_packages_match_cli_diagnostics() {
         .write_file("pkgB/R/b.R", "x <- ry_review_private_a\n")
         .unwrap();
 
-    let output = CliProcess::new(ry_binary())
-        .check(&fixture, fixture.root(), ["--output-format", "json"])
-        .unwrap();
-    assert!(
-        matches!(output.status.code(), Some(0 | 1)),
-        "CLI failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let cli: BTreeSet<Published> = serde_json::from_slice::<Vec<Value>>(&output.stdout)
-        .unwrap()
-        .iter()
-        .map(|value| published_from_cli_value(value, fixture.root()))
+    let cli: BTreeSet<Published> = cli_diagnostics(fixture.root(), fixture.root(), &[])
+        .into_iter()
         .collect();
     assert!(
-        cli.iter().any(|diagnostic| diagnostic.code == "RY010"),
+        cli.iter().any(|diagnostic| diagnostic.path == "pkgB/R/b.R"
+            && diagnostic.code == "RY010"
+            && diagnostic.message.contains("ry_review_private_a")),
         "the CLI must flag the cross-package read"
+    );
+    assert!(
+        cli.iter().all(|diagnostic| diagnostic.path != "pkgA/R/a.R"),
+        "pkgA's own definition stays clean: {cli:?}"
     );
 
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
@@ -451,4 +382,48 @@ async fn nested_packages_match_cli_diagnostics() {
     );
 
     join_session(session, server).await;
+}
+
+/// An inlay hint reflects its own root's document only, even when a
+/// document in another root binds the same name to a different type.
+#[tokio::test]
+async fn inlay_hint_does_not_cross_workspace_roots() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("root-a/R/a.R", "x <- 1L\n").unwrap();
+    fixture
+        .write_file("root-b/R/b.R", "x <- \"leak\"\n")
+        .unwrap();
+    let (root_a, root_b) = (fixture.path("root-a"), fixture.path("root-b"));
+    let (mut session, server) = spawn_session(&[&root_a, &root_b], json!({}), None).await;
+    let a_uri = file_uri(&fixture.path("root-a/R/a.R"));
+    session.open(&a_uri, 1, "x <- 1L\n").await.unwrap();
+    session
+        .open(
+            &file_uri(&fixture.path("root-b/R/b.R")),
+            1,
+            "x <- \"leak\"\n",
+        )
+        .await
+        .unwrap();
+    // The round trip guarantees root-b's buffer is stored before the probe.
+    sync_barrier(&mut session, &file_uri(&fixture.path("root-b/R/b.R"))).await;
+    let hints = session
+        .request(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": {"uri": a_uri},
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 1, "character": 0}}
+            }),
+        )
+        .await
+        .unwrap();
+    join_session(session, server).await;
+    let hints = hints.as_array().expect("hints for root-a's `x <- 1L`");
+    assert_eq!(hints.len(), 1, "one hint for `x`; got: {hints:?}");
+    let label = hints[0]["label"].as_str().expect("hint label is a string");
+    assert!(label.contains("integer"), "{label}");
+    assert!(
+        !label.contains("character"),
+        "root-b's binding leaked: {label}"
+    );
 }

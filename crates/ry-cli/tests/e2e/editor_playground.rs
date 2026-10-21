@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::path::Path;
-use std::process::Command;
+
+use crate::support::check;
 
 #[test]
 fn playground_diagnostics_match_readme() {
@@ -11,19 +12,16 @@ fn playground_diagnostics_match_readme() {
         .join("../../editors/example-project")
         .canonicalize()
         .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
-        .current_dir(&project)
-        .env("RY_NO_INSTALLED_LIBRARIES", "1")
-        .args(["check", ".", "--output-format", "json"])
-        .output()
-        .expect("run the CLI against the editor playground");
+    let output = check()
+        .cwd(&project)
+        .args([".", "--output-format", "json"])
+        .run();
     assert_eq!(
-        output.status.code(),
+        output.code(),
         Some(1),
-        "the playground intentionally contains errors: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "the playground intentionally contains errors: {output:?}"
     );
-    let diagnostics: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostics = output.json().as_array().unwrap().clone();
     let mut by_file: BTreeMap<String, Vec<&serde_json::Value>> =
         std::fs::read_dir(project.join("R"))
             .unwrap()

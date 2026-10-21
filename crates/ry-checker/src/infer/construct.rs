@@ -1,4 +1,5 @@
 use super::*;
+use crate::resolve::SpecialCallProvenance;
 
 impl Checker {
     /// The class-constructor stage of `infer_call`: `structure(x, class =
@@ -19,30 +20,18 @@ impl Checker {
         //   * `class = c("a", "b", ...)` attaches a class vector.
         // Non-literal or unparseable forms fall through to opaque
         // inference with `ClassVector::unknown()` so RY050 stays quiet.
-        // Spelling aliases do not prove which function object was captured;
-        // neither this model nor the base stub may lend them payload facts.
-        if lookup_name == "structure"
-            && (original_name != semantic_name
-                || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::")))
-        {
-            return Some(RType::unknown());
-        }
-        if lookup_name == "structure" && self.structure_namespace_unavailable(semantic_name, scope)
-        {
-            return Some(RType::unknown());
-        }
-        if lookup_name == "structure"
-            && !self.user_stubs.contains_key("base")
-            && self.resolves_to_base_lenient(semantic_name, scope)
-        {
-            if self.resolves_to_base(semantic_name, scope)
-                && !self.structure_bare_callee_unavailable(semantic_name, scope)
-            {
-                return Some(self.infer_structure_call(args, scope));
+        if lookup_name == "structure" {
+            match self.structure_provenance(original_name, original_callee, semantic_name, scope) {
+                SpecialCallProvenance::Proven => {
+                    return Some(self.infer_structure_call(args, scope));
+                }
+                SpecialCallProvenance::Ordinary => {}
+                // Do not borrow base-stub payload facts or force quoted
+                // arguments.
+                SpecialCallProvenance::Unknown | SpecialCallProvenance::AmbientUncertainty => {
+                    return Some(RType::unknown());
+                }
             }
-            // An unproven binding or search path may supply another callable.
-            // Do not borrow base-stub payload facts or force quoted arguments.
-            return Some(RType::unknown());
         }
         if matches!(lookup_name, "factor" | "new") {
             let package = if lookup_name == "factor" {
@@ -58,10 +47,9 @@ impl Checker {
                 package,
                 scope,
             ) {
-                crate::resolve::SpecialCallProvenance::Proven => {}
-                crate::resolve::SpecialCallProvenance::Ordinary => return None,
-                crate::resolve::SpecialCallProvenance::Unknown
-                | crate::resolve::SpecialCallProvenance::AmbientUncertainty => {
+                SpecialCallProvenance::Proven => {}
+                SpecialCallProvenance::Ordinary => return None,
+                SpecialCallProvenance::Unknown | SpecialCallProvenance::AmbientUncertainty => {
                     return Some(Self::infer_unknown_constructor(scope));
                 }
             }
@@ -256,6 +244,39 @@ impl Checker {
         }
     }
 
+    /// Whether `structure` is base's class constructor. Unlike
+    /// [`Self::special_call_provenance`], a parameter or another binding
+    /// that hides base leaves the call on the ordinary path.
+    fn structure_provenance(
+        &self,
+        original_name: &str,
+        original_callee: &Expr,
+        semantic_name: &str,
+        scope: &Scope,
+    ) -> SpecialCallProvenance {
+        // Spelling aliases and an unavailable namespace do not prove which
+        // function object was captured.
+        if original_name != semantic_name
+            || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::"))
+            || self.structure_namespace_unavailable(semantic_name, scope)
+        {
+            return SpecialCallProvenance::Unknown;
+        }
+        if self.user_stubs.contains_key("base")
+            || !self.resolves_to_base_lenient(semantic_name, scope)
+        {
+            return SpecialCallProvenance::Ordinary;
+        }
+        // An unproven binding or search path may supply another callable.
+        if self.resolves_to_base(semantic_name, scope)
+            && !self.structure_bare_callee_unavailable(semantic_name, scope)
+        {
+            SpecialCallProvenance::Proven
+        } else {
+            SpecialCallProvenance::Unknown
+        }
+    }
+
     fn structure_bare_callee_unavailable(&self, name: &str, scope: &Scope) -> bool {
         if name.contains("::") {
             return false;
@@ -301,25 +322,10 @@ impl Checker {
         scope: &Scope,
     ) -> bool {
         if lookup_name == "structure" {
-            // Spelling aliases and an unavailable namespace do not prove
-            // which function object was captured (the constructor stage
-            // returns `unknown` for both), so neither may lend a class.
-            if original_name != semantic_name
-                || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::"))
-            {
-                return false;
-            }
-            if self.structure_namespace_unavailable(semantic_name, scope) {
-                return false;
-            }
-            if !self.user_stubs.contains_key("base")
-                && self.resolves_to_base_lenient(semantic_name, scope)
-            {
-                return self.resolves_to_base(semantic_name, scope)
-                    && !self.structure_bare_callee_unavailable(semantic_name, scope)
-                    && self.structure_args_attach_known_class(args, scope);
-            }
-            return false;
+            return matches!(
+                self.structure_provenance(original_name, original_callee, semantic_name, scope),
+                SpecialCallProvenance::Proven
+            ) && self.structure_args_attach_known_class(args, scope);
         }
         if matches!(lookup_name, "factor" | "new") {
             let package = if lookup_name == "factor" {
@@ -341,7 +347,7 @@ impl Checker {
                     package,
                     scope,
                 ),
-                crate::resolve::SpecialCallProvenance::Proven
+                SpecialCallProvenance::Proven
             ) {
                 return false;
             }

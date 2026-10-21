@@ -1,6 +1,0 @@
----
-source: crates/ry-checker/tests/real_world.rs
-assertion_line: 79
-expression: "check_sorted(\"pipe_subset_nse\", src)"
----
-[]

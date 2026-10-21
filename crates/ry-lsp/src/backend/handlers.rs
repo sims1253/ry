@@ -272,8 +272,11 @@ impl LanguageServer for Backend {
         }
 
         // Skip the parse for paths that cannot get actions anyway.
-        if !self.state.lock().await.eligibility_for_path(&path) {
-            return Ok(None);
+        {
+            let state = self.state.lock().await;
+            if !state.eligibility_for_path(&path) || state.docs.at(&path).len() > 1 {
+                return Ok(None);
+            }
         }
         let Some((file, _)) = parsed_file(&self.state, &path).await else {
             return Ok(None);

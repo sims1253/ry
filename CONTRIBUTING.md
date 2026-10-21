@@ -120,12 +120,8 @@ Press `F5` in VS Code to launch an Extension Development Host with ry
 loaded. The `ry` binary must be on your `PATH`, or placed in
 `editors/code/bundled/bin/`.
 
-The Linux extension tests install a VSIX into a temporary extensions directory
-and open fresh trusted and untrusted profiles. Build `ry`, copy it into
-`editors/code/bundled/bin/ry`, then run `bun run vsce-package` and `bun run test`
-from `editors/code` (use `xvfb-run -a` on a headless machine).
-The [end-to-end testing guide](docs/testing.md) describes the diagnostic journey,
-saved evidence, and how to reproduce a run.
+To run the Linux extension tests, follow the
+[end-to-end testing guide](docs/testing.md#run-the-suite).
 
 ### The `--no-dependencies` rule
 

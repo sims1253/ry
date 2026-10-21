@@ -12,5 +12,4 @@ tests/testthat/test-axis-secondary.R:36:23 RY100
 tests/testthat/test-axis-secondary.R:37:23 RY100
 tests/testthat/test-axis-secondary.R:56:23 RY100
 tests/testthat/test-axis-secondary.R:57:23 RY100
-tests/testthat/test-geom-curve.R:17:8 RY040
 tests/testthat/test-utilities.R:108:25 RY091

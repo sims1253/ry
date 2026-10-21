@@ -1233,15 +1233,6 @@
       "severity": "warning",
       "message": "variable `vec_unique_count` is not bound in this scope"
     },
-    "ggplot2::RY040::tests/testthat/test-geom-curve.R:17:8": {
-      "package": "ggplot2",
-      "code": "RY040",
-      "path": "tests/testthat/test-geom-curve.R",
-      "line": 17,
-      "column": 8,
-      "severity": "error",
-      "message": "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
-    },
     "ggplot2::RY091::tests/testthat/test-utilities.R:108:25": {
       "package": "ggplot2",
       "code": "RY091",
@@ -1304,15 +1295,6 @@
       "column": 38,
       "severity": "warning",
       "message": "parameter `method.args` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
-    },
-    "glue::RY040::tests/testthat/test-glue.R:595:20": {
-      "package": "glue",
-      "code": "RY040",
-      "path": "tests/testthat/test-glue.R",
-      "line": 595,
-      "column": 20,
-      "severity": "error",
-      "message": "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
     },
     "glue::RY107::R/utils.R:32:7": {
       "package": "glue",

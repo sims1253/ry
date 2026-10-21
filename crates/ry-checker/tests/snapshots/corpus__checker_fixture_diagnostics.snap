@@ -715,6 +715,40 @@ expression: snapshots
         start: 270
   fixture: err_lapply_double_bracket.R
 - diagnostics:
+    - code: RY090
+      message: "unknown argument `z` to `f`"
+      severity: warning
+      span:
+        column: 15
+        end: 214
+        line: 5
+        start: 209
+    - code: RY090
+      message: "unknown argument `w` to `f`"
+      severity: warning
+      span:
+        column: 26
+        end: 247
+        line: 6
+        start: 242
+    - code: RY090
+      message: "unknown argument `q` to `f`"
+      severity: warning
+      span:
+        column: 20
+        end: 274
+        line: 7
+        start: 269
+    - code: RY099
+      message: value produced by this conditional expression is discarded; assign it or return it explicitly
+      severity: warning
+      span:
+        column: 12
+        end: 329
+        line: 10
+        start: 315
+  fixture: err_literal_condition_live_arms.R
+- diagnostics:
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"
       severity: warning
@@ -774,6 +808,24 @@ expression: snapshots
         line: 33
         start: 993
   fixture: err_missing_formal_member_and_chain_targets.R
+- diagnostics:
+    - code: RY091
+      message: "missing required argument `i` in call to `get_elem`"
+      severity: warning
+      span:
+        column: 66
+        end: 688
+        line: 22
+        start: 671
+    - code: RY091
+      message: "missing required argument `i` in call to `drop_neg`"
+      severity: warning
+      span:
+        column: 85
+        end: 703
+        line: 22
+        start: 690
+  fixture: err_missing_formal_single_bracket_subscript.R
 - diagnostics:
     - code: RY091
       message: "missing required argument `x` in call to `length`"
@@ -2333,6 +2385,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_list_named_columns.R
 - diagnostics: []
+  fixture: ok_literal_condition_dead_arms.R
+- diagnostics: []
   fixture: ok_local_standalone_errors.R
 - diagnostics: []
   fixture: ok_logical_mask_length.R
@@ -2610,6 +2664,48 @@ expression: snapshots
         line: 2
         start: 96
   fixture: ry002_if_length.R
+- diagnostics:
+    - code: RY010
+      message: "variable `fit.robust` is not bound in this scope"
+      severity: warning
+      span:
+        column: 12
+        end: 635
+        line: 12
+        start: 625
+    - code: RY090
+      message: "unknown argument `bogus` to `fit`"
+      severity: warning
+      span:
+        column: 14
+        end: 826
+        line: 23
+        start: 817
+    - code: RY091
+      message: "missing required argument `vi` in call to `fit`"
+      severity: warning
+      span:
+        column: 4
+        end: 839
+        line: 24
+        start: 833
+    - code: RY090
+      message: "unknown argument `bogus` to `fit.default`"
+      severity: warning
+      span:
+        column: 22
+        end: 872
+        line: 25
+        start: 863
+    - code: RY091
+      message: "missing required argument `vi` in call to `fit.default`"
+      severity: warning
+      span:
+        column: 4
+        end: 893
+        line: 26
+        start: 879
+  fixture: ry010_chained_assignment_targets.R
 - diagnostics:
     - code: RY010
       message: "variable `undefined_thing` is not bound in this scope"

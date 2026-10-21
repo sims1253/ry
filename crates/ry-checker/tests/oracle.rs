@@ -735,7 +735,9 @@ fn every_rule_has_a_claim_fixture() {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
-        let src = ry_workspace::read_r_source(&path).expect("read fixture");
+        let src = ry_workspace::read_r_source_decoded(&path)
+            .expect("read fixture")
+            .text;
         let fixture_claims = match claim_codes(&src) {
             Ok(codes) => codes,
             Err(error) => {
@@ -808,7 +810,9 @@ fn claim_fixtures_demonstrate_their_r_premise() {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
-        let src = ry_workspace::read_r_source(&path).expect("read fixture");
+        let src = ry_workspace::read_r_source_decoded(&path)
+            .expect("read fixture")
+            .text;
         let claims = match claim_codes(&src) {
             Ok(claims) if claims.is_empty() => continue,
             Ok(claims) => claims,

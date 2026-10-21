@@ -1,5 +1,6 @@
 use std::fs;
-use std::process::{Command, Output};
+
+use ry_testkit::{CliOutput, ry};
 
 fn stub(package: &str, functions: &str) -> String {
     format!(
@@ -12,20 +13,12 @@ fn stub(package: &str, functions: &str) -> String {
     )
 }
 
-fn validate(dir: &std::path::Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_ry"))
-        .args(["typeshed", "validate"])
-        .arg(dir)
-        .output()
-        .expect("failed to invoke ry")
+fn validate(dir: &std::path::Path) -> CliOutput {
+    ry!().args(["typeshed", "validate"]).arg(dir).run()
 }
 
-fn output_text(output: &Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
+fn output_text(output: &CliOutput) -> String {
+    output.stdout() + &output.stderr()
 }
 
 #[test]
@@ -47,90 +40,67 @@ fn validates_flat_and_nested_stub_layouts() {
     .unwrap();
 
     let output = validate(tmp.path());
-    assert!(output.status.success(), "{}", output_text(&output));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("Validated 2 stub files"));
+    assert!(output.success(), "{}", output_text(&output));
+    assert!(output.stdout().contains("Validated 2 stub files"));
 }
 
+/// Each invalid stub fails validation with a message that names the
+/// problem.
 #[test]
-fn rejects_bad_mode_and_names_file() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("bad.json");
-    fs::write(
-        &path,
-        stub(
+fn rejects_invalid_stubs() {
+    // (file stem and package, functions, expected message)
+    let cases = [
+        (
             "bad",
             r#""f": {"params": [], "return": {"mode": "imaginary", "length": "1"}}"#,
+            "invalid mode `imaginary`",
         ),
-    )
-    .unwrap();
-
-    let output = validate(tmp.path());
-    let text = output_text(&output);
-    assert!(!output.status.success(), "{text}");
-    assert!(text.contains(&path.display().to_string()), "{text}");
-    assert!(text.contains("invalid mode `imaginary`"), "{text}");
+        (
+            "aliases",
+            r#""first": {"params": [], "return": "arg0", "aliases": ["shared"]},
+               "second": {"params": [], "return": "arg0", "aliases": ["shared"]}"#,
+            "duplicate function name `shared`",
+        ),
+        (
+            "canonical",
+            r#""first": {"params": [], "return": "arg0", "aliases": ["second"]},
+               "second": {"params": [], "return": "arg0"}"#,
+            "duplicate function name `second`",
+        ),
+        (
+            "unknown",
+            r#""f": {"params": [], "return": "arg0", "checker_hint": true}"#,
+            "unknown field `checker_hint`",
+        ),
+    ];
+    for (package, functions, message) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(format!("{package}.json"));
+        fs::write(&path, stub(package, functions)).unwrap();
+        let output = validate(tmp.path());
+        let text = output_text(&output);
+        assert!(!output.success(), "{text}");
+        assert!(text.contains(&path.display().to_string()), "{text}");
+        assert!(text.contains(message), "{text}");
+    }
 }
 
 #[test]
 fn rejects_package_name_mismatch() {
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("actual.json");
     fs::write(
-        &path,
+        tmp.path().join("actual.json"),
         stub("different", r#""f": {"params": [], "return": "arg0"}"#),
     )
     .unwrap();
 
     let output = validate(tmp.path());
     let text = output_text(&output);
-    assert!(!output.status.success(), "{text}");
+    assert!(!output.success(), "{text}");
     assert!(
         text.contains("package `different` does not match"),
         "{text}"
     );
-}
-
-#[test]
-fn rejects_duplicate_name_after_alias_expansion() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("aliases.json");
-    fs::write(
-        &path,
-        stub(
-            "aliases",
-            r#"
-    "first": {"params": [], "return": "arg0", "aliases": ["shared"]},
-    "second": {"params": [], "return": "arg0", "aliases": ["shared"]}
-"#,
-        ),
-    )
-    .unwrap();
-
-    let output = validate(tmp.path());
-    let text = output_text(&output);
-    assert!(!output.status.success(), "{text}");
-    assert!(text.contains("duplicate function name `shared`"), "{text}");
-}
-
-#[test]
-fn rejects_alias_colliding_with_canonical_function_name() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("canonical.json"),
-        stub(
-            "canonical",
-            r#"
-    "first": {"params": [], "return": "arg0", "aliases": ["second"]},
-    "second": {"params": [], "return": "arg0"}
-"#,
-        ),
-    )
-    .unwrap();
-
-    let output = validate(tmp.path());
-    let text = output_text(&output);
-    assert!(!output.status.success(), "{text}");
-    assert!(text.contains("duplicate function name `second`"), "{text}");
 }
 
 #[test]
@@ -141,14 +111,13 @@ fn quiet_prints_summary_only() {
         stub("wrong", r#""f": {"params": [], "return": "arg0"}"#),
     )
     .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+    let output = ry!()
         .args(["typeshed", "validate", "--quiet"])
         .arg(tmp.path())
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(output.stderr.is_empty(), "{}", output_text(&output));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("1 errors"));
+        .run();
+    assert!(!output.success());
+    assert!(output.stderr().is_empty(), "{}", output_text(&output));
+    assert!(output.stdout().contains("1 errors"));
 }
 
 #[test]
@@ -168,24 +137,6 @@ fn function_key_order_does_not_affect_validation() {
 
     let output = validate(tmp.path());
     let text = output_text(&output);
-    assert!(output.status.success(), "{text}");
+    assert!(output.success(), "{text}");
     assert!(text.contains("0 errors."), "{text}");
-}
-
-#[test]
-fn rejects_unknown_schema_fields_through_normative_parser() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("unknown.json"),
-        stub(
-            "unknown",
-            r#""f": {"params": [], "return": "arg0", "checker_hint": true}"#,
-        ),
-    )
-    .unwrap();
-
-    let output = validate(tmp.path());
-    let text = output_text(&output);
-    assert!(!output.status.success(), "{text}");
-    assert!(text.contains("unknown field `checker_hint`"), "{text}");
 }

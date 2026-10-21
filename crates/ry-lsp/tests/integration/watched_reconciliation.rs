@@ -12,11 +12,11 @@
 use crate::harness;
 
 use harness::{
-    ClientSession, Published, file_uri, join_session, normalize_diagnostics,
-    published_from_cli_value, spawn_watching_session, sync_barrier,
+    ClientSession, Server, cli_diagnostics, file_uri, join_session, normalize_diagnostics,
+    spawn_watching_session, sync_barrier,
 };
 use ry_lsp::test_seam::Seam;
-use ry_testkit::{CliProcess, FixtureProject, rpc_receive_timeout};
+use ry_testkit::{FixtureProject, rpc_receive_timeout};
 use serde_json::{Value, json};
 
 /// Await the next publication for `uri` whose diagnostics satisfy
@@ -63,26 +63,8 @@ fn has_ry010_for_a_at_line(diagnostics: &[Value], line: u64) -> bool {
     })
 }
 
-/// `ry check --output-format json` on the fixture tree: the fresh-analysis
-/// oracle the convergence assertions are measured against.
-fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
-    let output = CliProcess::new(harness::ry_binary())
-        .check(fixture, fixture.root(), ["--output-format", "json"])
-        .unwrap();
-    assert!(
-        matches!(output.status.code(), Some(0 | 1)),
-        "CLI failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let values: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    values
-        .into_iter()
-        .map(|value| published_from_cli_value(&value, fixture.root()))
-        .collect()
-}
-
 fn cli_flags(fixture: &FixtureProject, name: &str) -> bool {
-    cli_diagnostics(fixture)
+    cli_diagnostics(fixture.root(), fixture.root(), &[])
         .iter()
         .any(|p| p.path.ends_with(name) && p.code == "RY010")
 }
@@ -90,17 +72,13 @@ fn cli_flags(fixture: &FixtureProject, name: &str) -> bool {
 struct Settled {
     fixture: FixtureProject,
     session: ClientSession,
-    server: tokio::task::JoinHandle<()>,
+    server: Server,
     a_uri: String,
     b_uri: String,
     c_uri: String,
 }
 
 impl Settled {
-    fn uri(&self, name: &str) -> String {
-        file_uri(&self.fixture.path(name))
-    }
-
     async fn watched(&mut self, uri: &str) {
         self.session
             .notify(
@@ -264,7 +242,7 @@ async fn event_burst_converges() {
 
 /// Shutdown requested while the writer is busy with a scan and a watched
 /// refresh is queued behind it: the response arrives once the writer
-/// stopped, and no publication follows it.
+/// stopped, no publication follows it, and `exit` still ends the server.
 #[tokio::test]
 async fn shutdown_with_queued_work_publishes_nothing_afterwards() {
     let mut settled = settled("x <- never_bound_here\n").await;
@@ -301,20 +279,10 @@ async fn shutdown_with_queued_work_publishes_nothing_afterwards() {
 
     settled.session.notify("exit", Value::Null).await.unwrap();
     drop(settled.session);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), settled.server).await;
-}
-
-/// Ending the session right after a burst, with work still queued,
-/// terminates cleanly.
-#[tokio::test]
-async fn teardown_with_queued_work_terminates() {
-    let mut settled = settled("x <- never_bound_here\n").await;
-    settled.fixture.write_file("a.R", "x <- 1L\n").unwrap();
-    for name in ["a.R", "b.R", "c.R", "main.R"] {
-        let uri = settled.uri(name);
-        settled.watched(&uri).await;
-    }
-    join_session(settled.session, settled.server).await;
+    tokio::time::timeout(std::time::Duration::from_secs(3), settled.server)
+        .await
+        .expect("server stops after exit")
+        .expect("server task completes");
 }
 
 /// Two edits to a closed file in its own `DESCRIPTION` package, queued

@@ -1,21 +1,10 @@
-//! ry language server. Publishes diagnostics for R files.
+//! ry language server. Publishes the diagnostics `ry check` produces and
+//! offers inlay hints and suppression quick fixes. It has no navigation
+//! features. Request handling lives in [`backend`].
 //!
-//! This crate is a v1 LSP server built on top of `tower-lsp`. It supports:
-//!   * `initialize` / `initialized` handshake
-//!   * `textDocument/didOpen` (publishes diagnostics)
-//!   * `textDocument/didChange` (incremental edits re-check and republish)
-//!   * `textDocument/didClose` (clears diagnostics)
-//!   * Document diagnostics via `textDocument/publishDiagnostics`
-//!   * `textDocument/inlayHint`, `codeAction`
-//!   * Graceful shutdown via `shutdown` / `exit`
-//!
-//! The server publishes the diagnostics `ry check` produces; it offers no
-//! navigation features. Request handling lives in [`backend`].
-//!
-//! CRITICAL INVARIANT: the LSP protocol uses stdout for JSON-RPC framing.
-//! Any tracing or log output that lands on stdout will corrupt the stream
-//! and crash the client. All `tracing` output is routed to stderr via
-//! the CLI's `tracing_subscriber` initialization before `run()` is called.
+//! The protocol uses stdout for JSON-RPC framing, so log output on stdout
+//! corrupts the stream. The CLI routes all `tracing` output to stderr
+//! before it calls [`run`].
 
 /// Test-only scheduling gates. Production code parks at a [`Seam`] only
 /// after a test armed it; an unarmed seam is a single atomic swap.
@@ -114,8 +103,6 @@ mod positions;
 mod settings;
 
 use backend::Backend;
-#[cfg(feature = "test-util")]
-pub use backend::baseline_disk_reads;
 use std::future::Future;
 use std::pin::Pin;
 use std::process::ExitCode;
@@ -127,24 +114,17 @@ use tower_lsp::jsonrpc::Request;
 use tower_lsp::{LspService, Server};
 use tower_service::Service;
 
-/// Entry point for the LSP server. Reads from stdin, writes to stdout.
-///
-/// IMPORTANT: the caller (the CLI) MUST install a `tracing_subscriber`
-/// that routes output to stderr BEFORE calling this function. Any log
-/// output on stdout will corrupt the JSON-RPC stream and break the
-/// client. See `crates/ry-cli/src/main.rs`'s `Cmd::Server` arm.
+/// Serve the protocol over stdin and stdout. The caller must route
+/// `tracing` output to stderr first.
 pub async fn run() -> ExitCode {
     run_with(tokio::io::stdin(), tokio::io::stdout()).await
 }
 
-/// Run the language server over caller-provided streams.
+/// Serve the protocol over caller-provided streams. Integration tests use
+/// in-memory streams instead of a subprocess.
 ///
-/// Production uses stdio through [`run`]. Integration tests use this seam with
-/// in-memory duplex streams so large protocol matrices exercise the same
-/// [`LspService`] without paying subprocess startup costs.
-///
-/// Returns once the client sends `exit` or closes the input stream. The exit
-/// code follows the LSP spec: `exit` without a prior `shutdown` is a failure.
+/// Returns once the client sends `exit` or closes the input stream. Per the
+/// LSP spec, `exit` without a prior `shutdown` is a failure.
 pub async fn run_with<R, W>(reader: R, writer: W) -> ExitCode
 where
     R: tokio::io::AsyncRead + Unpin,

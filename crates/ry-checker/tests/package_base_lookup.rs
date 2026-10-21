@@ -30,10 +30,8 @@ fn check_package(namespace: Option<&str>, files: &[(&str, &str)]) -> Vec<String>
     let context = ry_workspace::resolve_workspace_context(
         dir.path(),
         &Config::default(),
-        ry_workspace::ResolutionEnvironment {
-            files: parsed.iter().map(|(_, file)| file).collect(),
-            user_stubs: &Default::default(),
-        },
+        parsed.iter().map(|(_, file)| file).collect(),
+        &Default::default(),
     )
     .unwrap();
     let mut project = Project::new();

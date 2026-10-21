@@ -529,10 +529,11 @@ pub(crate) fn run_dump_types(
         // `ry check` prints one summary line per degraded scope; keep the
         // note on stderr here too so a dump over the same project reports
         // the same precision loss without polluting the JSON on stdout.
-        for (path, reason) in &group.degraded_scopes {
+        for (path, reason) in &group.context.degraded_scopes {
             eprintln!("{}", reason.notice(path));
         }
-        let captured = pipeline::check_project_with_facts_capture(group.check_input, false, vec![]);
+        let input = pipeline::CheckInput::new(&parsed, &group.indices, &user_stubs, group.context);
+        let captured = pipeline::check_project_with_facts_capture(input, false, vec![]);
         for (path, records) in captured.scopes {
             records_by_path.insert(path, records);
         }

@@ -46,10 +46,8 @@ fn qualified_project_calls_follow_package_identity_across_metadata_edits() {
         ry_workspace::resolve_workspace_context(
             dir.path(),
             &ry_config::Config::default(),
-            ry_workspace::ResolutionEnvironment {
-                files: files.iter().map(|(_, file)| file).collect(),
-                user_stubs: &Default::default(),
-            },
+            files.iter().map(|(_, file)| file).collect(),
+            &Default::default(),
         )
         .unwrap()
     };

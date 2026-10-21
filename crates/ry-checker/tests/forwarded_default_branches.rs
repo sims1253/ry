@@ -55,10 +55,8 @@ fn check_package(caller: &str, test_calls: &str) -> Vec<(String, Vec<ry_checker:
     let context = ry_workspace::resolve_workspace_context(
         dir.path(),
         &Config::default(),
-        ry_workspace::ResolutionEnvironment {
-            files: vec![&functions_file, &caller_file, &test_file],
-            user_stubs: &Default::default(),
-        },
+        vec![&functions_file, &caller_file, &test_file],
+        &Default::default(),
     )
     .unwrap();
     let mut project = Project::new();

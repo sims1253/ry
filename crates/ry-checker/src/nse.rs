@@ -4,8 +4,6 @@ use crate::resolve::SchemaProvider;
 
 impl Checker {
     /// Apply schema semantics declared by the resolved package signature.
-    /// Resolution itself preserves package attachment, qualification,
-    /// importFrom, and meta-package attachment.
     pub(crate) fn infer_schema_call(
         &mut self,
         name: &str,
@@ -143,9 +141,7 @@ impl Checker {
                         _ => possible_group_spec = true,
                     }
                 }
-                let add = args
-                    .iter()
-                    .find(|arg| arg.name.as_deref().map(semantic_argument_name) == Some(".add"));
+                let add = named_arg(args, ".add");
                 let retain_groups = source_grouped
                     && add.is_some_and(|arg| matches!(arg.value, Expr::Logical(true, _)));
                 let uncertain_groups = source_grouped
@@ -237,24 +233,15 @@ impl Checker {
     }
 
     /// Build the mask for `x[i, j]` index arguments on a data.table-shaped
-    /// receiver (a `data.table` class, or the opaque value a data.table
-    /// call types as; see `table_index_receiver`). Reuses the dplyr mask
-    /// machinery so both mask families resolve free names the same way: a
-    /// known schema's columns shadow lexical bindings and scope functions,
-    /// and an unenumerable schema keeps bare symbols opaque instead of
-    /// borrowing a scope function's type. On top of the shared
-    /// pronouns, data.table's j position also binds `.SD` and friends;
-    /// `.SD`'s columns depend on `by` and `.SDcols`, so only the table
-    /// shape is retained.
+    /// receiver (see `table_index_receiver`), with the dplyr mask rules:
+    /// known columns shadow lexical bindings and scope functions. The j
+    /// position also binds `.SD`, whose columns depend on `by` and
+    /// `.SDcols`, so only the table shape is kept.
     ///
-    /// When the schema cannot prove a name absent (unknown, incomplete,
-    /// or an opaque receiver), the mask's columns-first flag marks bare
-    /// value-position symbols as column candidates before scope
-    /// functions. A receiver that is opaque without any table evidence
-    /// may equally be an atomic vector whose type degraded
-    /// (`c(if (p) 1L, 2L)`), so its mask additionally stays eager for
-    /// names: symbols that resolve nowhere keep RY010 like ordinary
-    /// vector subsetting.
+    /// When the schema cannot prove a name absent, bare value-position
+    /// symbols are column candidates before scope functions. An opaque
+    /// receiver with no table evidence may be a degraded atomic vector
+    /// (`c(if (p) 1L, 2L)`), so names that resolve nowhere keep RY010.
     pub(crate) fn table_index_mask_scope(&self, base_scope: &Scope, table: &RType) -> Scope {
         let mut scope = self.dplyr_data_mask_scope(base_scope, table);
         scope.insert(
@@ -493,6 +480,17 @@ fn collect_ordered_tidy_selection(
     }
 }
 
+/// The argument whose semantic name is `name`.
+pub(crate) fn named_arg<'a>(args: &'a [Arg], name: &str) -> Option<&'a Arg> {
+    args.iter()
+        .find(|arg| arg.name.as_deref().map(semantic_argument_name) == Some(name))
+}
+
+/// Whether `ty` has a complete column schema and no groups.
+fn complete_ungrouped(ty: &RType) -> bool {
+    ty.columns.as_ref().is_some_and(|schema| schema.complete) && !ty.class.contains("grouped_df")
+}
+
 fn schema_mutated_type(
     mut data_type: RType,
     named: &[(&str, RType)],
@@ -501,25 +499,15 @@ fn schema_mutated_type(
     mutate_controls: bool,
 ) -> RType {
     let source = data_type.clone();
-    if let Some(keep) = args.iter().find(|arg| {
-        mutate_controls && arg.name.as_deref().map(semantic_argument_name) == Some(".keep")
-    }) {
+    if mutate_controls && let Some(keep) = named_arg(args, ".keep") {
         match &keep.value {
             Expr::String(value, _) if value == "all" => {}
             Expr::String(value, _) if value == "none" => {
-                let complete = data_type
-                    .columns
-                    .as_ref()
-                    .is_some_and(|schema| schema.complete)
-                    && !data_type.class.contains("grouped_df");
                 let mut schema = ColumnSchema {
-                    complete,
+                    complete: complete_ungrouped(&data_type),
                     ..ColumnSchema::default()
                 };
-                if let Some(by) = args
-                    .iter()
-                    .find(|arg| arg.name.as_deref().map(semantic_argument_name) == Some(".by"))
-                {
+                if let Some(by) = named_arg(args, ".by") {
                     if let Some(columns) = selected_columns_from_source(&source, &by.value) {
                         schema.columns = columns;
                     } else {
@@ -555,8 +543,7 @@ fn schema_transmuted_type(
     let source_type = data_type.clone();
     let source = data_type.columns.clone();
     data_type.columns = Some(Arc::new(ColumnSchema {
-        complete: source.as_ref().is_some_and(|schema| schema.complete)
-            && !data_type.class.contains("grouped_df"),
+        complete: complete_ungrouped(&source_type),
         ..ColumnSchema::default()
     }));
     for arg in masked_args {
@@ -684,18 +671,11 @@ fn schema_aggregate_type(
     args: &[Arg],
 ) -> RType {
     let mut schema = ColumnSchema {
-        complete: data_type
-            .columns
-            .as_ref()
-            .is_some_and(|source| source.complete)
-            && !data_type.class.contains("grouped_df")
+        complete: complete_ungrouped(&data_type)
             && !masked_output_is_dynamic(masked_args, &data_type),
         ..ColumnSchema::default()
     };
-    if let Some(by) = args
-        .iter()
-        .find(|arg| arg.name.as_deref().map(semantic_argument_name) == Some(".by"))
-    {
+    if let Some(by) = named_arg(args, ".by") {
         if let Some(columns) = selected_columns_from_source(&data_type, &by.value) {
             schema.columns.extend(columns);
         } else {

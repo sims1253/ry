@@ -7,7 +7,7 @@
 //! *shape* of an expression rather than by the inferred type of a value, so
 //! their false-positive surface is bounded by the syntax they match.
 //!
-//! `tests/recall_rules.rs` pins both the positive and the negative
+//! `testdata/cases/recall_rules.R` pins both the positive and the negative
 //! direction of each rule.
 //!
 //! One of the original sketches is deliberately **not** implemented.

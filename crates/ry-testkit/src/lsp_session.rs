@@ -221,6 +221,14 @@ where
         .await
     }
 
+    pub async fn close(&mut self, uri: &str) -> io::Result<()> {
+        self.notify(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": uri}}),
+        )
+        .await
+    }
+
     /// Mark the currently routed transcript. Pair with
     /// `published_diagnostics_after` to require a publication caused by a
     /// later action rather than reusing an already-routed one.

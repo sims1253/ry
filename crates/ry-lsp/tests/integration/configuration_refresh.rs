@@ -1,26 +1,14 @@
-//! Configuration-refresh and enable behavior for the LSP.
-//!
-//! `did_change_configuration_refreshes_cached_filters` verifies that a
-//! `workspace/didChangeConfiguration` raising `ry.minConfidence` changes the
-//! next published diagnostics without any file edit or restart. The cached
-//! per-folder severity filter, min-confidence, and excludes are recomputed
-//! outside the publish loop on every configuration change; without that
-//! refresh a stale cached value would persist until a filesystem rebuild or
-//! server restart.
-//!
-//! `enable_false_skips_diagnostics_for_the_folder` verifies that a folder
-//! whose settings set `enable: false` is skipped: opening a file there
-//! publishes an empty diagnostics set instead of check results.
-//! `enable_false_skips_inlay_hints_for_the_folder` verifies the on-demand
-//! half: `textDocument/inlayHint` returns null there instead of hints.
+//! Configuration changes reach the next publication without a file edit
+//! or restart, and `enable: false` turns off diagnostics and inlay hints
+//! for its folder.
 
 use ry_lsp::test_seam::Seam;
-use ry_testkit::{FixtureProject, file_uri};
+use ry_testkit::FixtureProject;
 use serde_json::json;
 
 use crate::harness;
 
-use harness::{count_code, spawn_session};
+use harness::{count_code, file_uri, join_session, notify_changed, spawn_session};
 
 // ════════════════════════════════════════════════════════════════════════════
 // didChangeConfiguration refreshes the cached filter values
@@ -35,20 +23,13 @@ async fn did_change_configuration_refreshes_cached_filters() {
         .write_file("R/diag.R", "z <- length(xx = 1L)\n")
         .unwrap();
 
-    let (mut session, _server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
-    let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
+    let diag_uri = file_uri(&fixture.path("R/diag.R"));
 
     // Open and capture the initial publication: RY090 must be present.
-    let mark0 = session.publication_mark();
-    session
-        .open(&diag_uri, 1, "z <- length(xx = 1L)\n")
-        .await
-        .unwrap();
-    let initial = session
-        .published_diagnostics_after(&diag_uri, mark0)
-        .await
-        .unwrap();
+    let initial =
+        harness::open_published(&mut session, &diag_uri, 1, "z <- length(xx = 1L)\n").await;
     assert!(
         count_code(&initial, "RY090") >= 1,
         "RY090 should be present at the default confidence; got: {:?}",
@@ -78,10 +59,11 @@ async fn did_change_configuration_refreshes_cached_filters() {
         "RY090 should be suppressed after raising minConfidence; got: {:?}",
         after["params"]["diagnostics"]
     );
+    join_session(session, server).await;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PR #79 round 3: the pull-based counterpart. A client advertising
+// The pull-based counterpart. A client advertising
 // `workspace.configuration = true` is answered via `workspace/configuration`
 // requests; the per-folder settings pulled that way must reach each folder
 // context and refresh its cached values.
@@ -95,7 +77,7 @@ async fn did_change_configuration_pull_applies_per_folder_settings() {
         .write_file("R/diag.R", "z <- length(xx = 1L)\n")
         .unwrap();
 
-    let (mut session, _server) = spawn_session(
+    let (mut session, server) = spawn_session(
         &[fixture.root()],
         json!({ "workspace": { "configuration": true } }),
         None,
@@ -109,19 +91,12 @@ async fn did_change_configuration_pull_applies_per_folder_settings() {
         .await
         .unwrap();
 
-    let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
+    let diag_uri = file_uri(&fixture.path("R/diag.R"));
 
     // Open and capture the initial publication: RY090 must be present at
     // the default confidence (the initial pull returned empty settings).
-    let mark0 = session.publication_mark();
-    session
-        .open(&diag_uri, 1, "z <- length(xx = 1L)\n")
-        .await
-        .unwrap();
-    let initial = session
-        .published_diagnostics_after(&diag_uri, mark0)
-        .await
-        .unwrap();
+    let initial =
+        harness::open_published(&mut session, &diag_uri, 1, "z <- length(xx = 1L)\n").await;
     assert!(
         count_code(&initial, "RY090") >= 1,
         "RY090 should be present at the default confidence; got: {:?}",
@@ -155,17 +130,15 @@ async fn did_change_configuration_pull_applies_per_folder_settings() {
         .await
         .unwrap();
 
-    // The pull must have reached the owning folder context and refreshed
-    // its cached min_confidence, suppressing RY090 — without a file edit
-    // or restart. The pre-fix pull stored only into the server-wide
-    // `folder_settings`/`global_settings` and recomputed each context from
-    // its unchanged `folder_settings`, so the cached value stayed stale.
+    // The pull must reach the owning folder context and refresh its cached
+    // min_confidence, suppressing RY090 without a file edit or restart.
     assert_eq!(
         count_code(&after, "RY090"),
         0,
         "RY090 should be suppressed after the pull raises minConfidence; got: {:?}",
         after["params"]["diagnostics"]
     );
+    join_session(session, server).await;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -190,16 +163,9 @@ async fn enable_false_skips_diagnostics_for_the_folder() {
     )
     .await;
 
-    let diag_uri = file_uri(&fixture.path("R/diag.R")).unwrap();
-    let mark = session.publication_mark();
-    session
-        .open(&diag_uri, 1, "z <- length(xx = 1L)\n")
-        .await
-        .unwrap();
-    let publish = session
-        .published_diagnostics_after(&diag_uri, mark)
-        .await
-        .unwrap();
+    let diag_uri = file_uri(&fixture.path("R/diag.R"));
+    let publish =
+        harness::open_published(&mut session, &diag_uri, 1, "z <- length(xx = 1L)\n").await;
 
     let count = publish["params"]["diagnostics"]
         .as_array()
@@ -209,9 +175,7 @@ async fn enable_false_skips_diagnostics_for_the_folder() {
         count, 0,
         "enable: false must publish an empty diagnostics set; got: {publish}"
     );
-    let _ = session.shutdown().await;
-    drop(session);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
+    join_session(session, server).await;
 }
 
 #[tokio::test]
@@ -231,7 +195,7 @@ async fn enable_false_skips_inlay_hints_for_the_folder() {
     )
     .await;
 
-    let hint_uri = file_uri(&fixture.path("R/hint.R")).unwrap();
+    let hint_uri = file_uri(&fixture.path("R/hint.R"));
     session.open(&hint_uri, 1, "x <- 1L\n").await.unwrap();
 
     let result = session
@@ -253,9 +217,7 @@ async fn enable_false_skips_inlay_hints_for_the_folder() {
         serde_json::Value::Null,
         "enable: false must return null instead of inlay hints; got: {result}"
     );
-    let _ = session.shutdown().await;
-    drop(session);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
+    join_session(session, server).await;
 }
 
 #[tokio::test]
@@ -281,7 +243,7 @@ async fn config_reload_retains_valid_settings_on_failure() {
         fixture
             .write_file(config_name, "ignore = ['RY002']\n")
             .unwrap();
-        let config_uri = file_uri(&fixture.path(config_name)).unwrap();
+        let config_uri = file_uri(&fixture.path(config_name));
         let source = "if (c(TRUE, FALSE)) print(1)\n";
         let source_name = if mode == "ancestor" {
             "nested/main.R"
@@ -296,13 +258,8 @@ async fn config_reload_retains_valid_settings_on_failure() {
         };
         let (mut session, server) =
             spawn_session(&[&workspace_root], json!({}), options.clone()).await;
-        let uri = file_uri(&fixture.path(source_name)).unwrap();
-        let mark = session.publication_mark();
-        session.open(&uri, 1, source).await.unwrap();
-        let initial = session
-            .published_diagnostics_after(&uri, mark)
-            .await
-            .unwrap();
+        let uri = file_uri(&fixture.path(source_name));
+        let initial = harness::open_published(&mut session, &uri, 1, source).await;
         assert_eq!(count_code(&initial, "RY002"), 0, "{mode}: {initial}");
 
         let mut latest = initial;
@@ -322,9 +279,10 @@ async fn config_reload_retains_valid_settings_on_failure() {
             }
             harness::sync_barrier(&mut session, &uri).await;
             let mark = session.publication_mark();
-            session.notify("workspace/didChangeWatchedFiles", json!({
-                "changes": [{"uri": config_uri, "type": if content.is_some() { 2 } else { 3 }}]
-            })).await.unwrap();
+            match content {
+                Some(_) => notify_changed(&mut session, &config_uri).await,
+                None => harness::notify_deleted(&mut session, &config_uri).await,
+            }
             let after = session
                 .published_diagnostics_after(&uri, mark)
                 .await
@@ -360,9 +318,7 @@ async fn config_reload_retains_valid_settings_on_failure() {
             fixture.write_file(config_name, content).unwrap();
             let (mut cold, server) =
                 spawn_session(&[&workspace_root], json!({}), options.clone()).await;
-            let mark = cold.publication_mark();
-            cold.open(&uri, 1, source).await.unwrap();
-            let publish = cold.published_diagnostics_after(&uri, mark).await.unwrap();
+            let publish = harness::open_published(&mut cold, &uri, 1, source).await;
             assert_eq!(
                 publish["params"]["diagnostics"], latest["params"]["diagnostics"],
                 "{mode}, {content:?}: cold config"
@@ -385,7 +341,7 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
             .unwrap();
         let source = "x <- never_bound_here\n";
         let path = fixture.write_file("main.R", source).unwrap();
-        let uri = file_uri(&path).unwrap();
+        let uri = file_uri(&path);
         let (mut session, server) = spawn_session(&[fixture.root()], json!({"workspace": {
             "configuration": true,
             "didChangeWatchedFiles": {"dynamicRegistration": true, "relativePatternSupport": relative}
@@ -427,12 +383,7 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
                 )
             );
         }
-        let mark = session.publication_mark();
-        session.open(&uri, 1, source).await.unwrap();
-        let initial_diagnostics = session
-            .published_diagnostics_after(&uri, mark)
-            .await
-            .unwrap();
+        let initial_diagnostics = harness::open_published(&mut session, &uri, 1, source).await;
         assert_eq!(count_code(&initial_diagnostics, "RY010"), 0);
 
         for (contents, expected) in [
@@ -442,13 +393,7 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
         ] {
             std::fs::write(&initial, contents).unwrap();
             let mark = session.publication_mark();
-            session
-                .notify(
-                    "workspace/didChangeWatchedFiles",
-                    json!({"changes":[{"uri":file_uri(&initial).unwrap(),"type":2}]}),
-                )
-                .await
-                .unwrap();
+            notify_changed(&mut session, &file_uri(&initial)).await;
             let after = session
                 .published_diagnostics_after(&uri, mark)
                 .await
@@ -497,13 +442,7 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
         assert_eq!(count_code(&after, "RY010"), 1);
         std::fs::write(&replacement, "ignore = [\"RY010\"]\n").unwrap();
         let mark = session.publication_mark();
-        session
-            .notify(
-                "workspace/didChangeWatchedFiles",
-                json!({"changes":[{"uri":file_uri(&replacement).unwrap(),"type":2}]}),
-            )
-            .await
-            .unwrap();
+        notify_changed(&mut session, &file_uri(&replacement)).await;
         let after = session
             .published_diagnostics_after(&uri, mark)
             .await
@@ -514,13 +453,11 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Typeshed stub reload (#494)
+// Typeshed stub reload
 //
-// Bug being pinned: removing the LAST custom typeshed directory left the
-// old stub map active until restart — the reload treated an
-// intentionally empty result the same as a failed one. A warm session
-// must converge with a fresh server on the same config; only a reload
-// where every configured directory failed may retain the old stubs.
+// Removing the last custom typeshed directory empties the stub map, like a
+// fresh server on the same config. Only a reload where every configured
+// directory failed keeps the old stubs.
 // ════════════════════════════════════════════════════════════════════════════
 
 /// The stub types `my_func()` as returning a length-one list, so
@@ -546,15 +483,10 @@ async fn stub_reload_converges_when_last_typeshed_directory_is_removed() {
     let source = "library(localdep)\nif (my_func()) print(1)\n";
     fixture.write_file("main.R", source).unwrap();
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let uri = file_uri(&fixture.path("main.R")).unwrap();
-    let config_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+    let uri = file_uri(&fixture.path("main.R"));
+    let config_uri = file_uri(&fixture.path("ry.toml"));
 
-    let mark = session.publication_mark();
-    session.open(&uri, 1, source).await.unwrap();
-    let initial = session
-        .published_diagnostics_after(&uri, mark)
-        .await
-        .unwrap();
+    let initial = harness::open_published(&mut session, &uri, 1, source).await;
     assert_eq!(count_code(&initial, "RY001"), 1, "{initial}");
 
     // Drive the watched-file reload channel through the interesting
@@ -578,13 +510,7 @@ async fn stub_reload_converges_when_last_typeshed_directory_is_removed() {
         fixture.write_file("ry.toml", config).unwrap();
         harness::sync_barrier(&mut session, &uri).await;
         let mark = session.publication_mark();
-        session
-            .notify(
-                "workspace/didChangeWatchedFiles",
-                json!({"changes":[{"uri":config_uri,"type":2}]}),
-            )
-            .await
-            .unwrap();
+        notify_changed(&mut session, &config_uri).await;
         let after = session
             .published_diagnostics_after(&uri, mark)
             .await
@@ -600,9 +526,7 @@ async fn stub_reload_converges_when_last_typeshed_directory_is_removed() {
     // Warm/cold convergence: a fresh server on the final config
     // (no typeshed directories) must agree with the warm session.
     let (mut cold, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let mark = cold.publication_mark();
-    cold.open(&uri, 1, source).await.unwrap();
-    let publish = cold.published_diagnostics_after(&uri, mark).await.unwrap();
+    let publish = harness::open_published(&mut cold, &uri, 1, source).await;
     assert_eq!(
         count_code(&publish, "RY001"),
         0,
@@ -628,27 +552,16 @@ async fn configuration_pull_covers_a_folder_added_before_it() {
         .respond_to_request("workspace/configuration", json!([{}, {}]))
         .await
         .unwrap();
-    let main_uri = file_uri(&fixture.path("main.R")).unwrap();
-    let mark = session.publication_mark();
-    session.open(&main_uri, 1, "w <- 1L\n").await.unwrap();
-    session
-        .published_diagnostics_after(&main_uri, mark)
-        .await
-        .unwrap();
+    let main_uri = file_uri(&fixture.path("main.R"));
+    harness::open_published(&mut session, &main_uri, 1, "w <- 1L\n").await;
 
     // Park a full scan, then queue a folder addition and a configuration
     // change behind it.
     ry_lsp::test_seam::arm(Seam::Scan);
-    let fake = format!("{}/DESCRIPTION", file_uri(fixture.root()).unwrap());
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": fake, "type": 2}]}),
-        )
-        .await
-        .unwrap();
+    let fake = format!("{}/DESCRIPTION", file_uri(fixture.root()));
+    notify_changed(&mut session, &fake).await;
     ry_lsp::test_seam::wait_arrived(Seam::Scan).await;
-    let added_uri = file_uri(added.root()).unwrap();
+    let added_uri = file_uri(added.root());
     session
         .notify(
             "workspace/didChangeWorkspaceFolders",

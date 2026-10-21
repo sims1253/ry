@@ -1,38 +1,34 @@
-//! #528: project diagnostics for unopened files must be republished
-//! when a watched-file event fixes them, even with zero documents open.
-//!
-//! The server publishes project diagnostics for closed files (the Problems
-//! panel shows them while another file is open), but the publish pass only
-//! ran when an open document scheduled it. With no documents open, a
-//! watched-file event that fixed an indexed file refreshed the parse but
-//! never republished: republishing zero open documents only cleared
-//! paths that left the index — a still-indexed, still-eligible fixed file kept its pre-fix
-//! squiggles until some unrelated document opened.
-//!
-//! The test below pins the fixed contract: open `main.R` (clean) so the
-//! project pass publishes RY010 for the never-opened `util.R`, close
-//! everything, fix `util.R` on disk, forward the watched event, and
-//! require an (empty) publication for `util.R`. Without the fix the final
-//! await times out and the test fails.
+//! With no document open, a watched event republishes the closed files it
+//! touches, checked against current resolution context: configured
+//! globals, `load()` bindings, and report groups.
 
 use crate::harness;
 
 use harness::{
-    file_uri, join_session, normalize_diagnostics, spawn_session, spawn_watching_session,
-    sync_barrier,
+    file_uri, join_session, normalize_diagnostics, notify_changed, notify_created, open_published,
+    spawn_session, spawn_watching_session, sync_barrier,
 };
 use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 
-fn has_ry010(publish: &Value) -> bool {
-    normalize_diagnostics(publish)
-        .iter()
-        .any(|diagnostic| diagnostic["code"] == json!("RY010"))
+fn has_ry010_for(publish: &Value, name: &str) -> bool {
+    normalize_diagnostics(publish).iter().any(|diagnostic| {
+        diagnostic["code"] == json!("RY010")
+            && diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains(name))
+    })
 }
 
 #[tokio::test]
-async fn watched_fix_with_no_open_documents_republishes_the_closed_file() {
+async fn watched_events_with_no_open_documents_republish_closed_files() {
     let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file(
+            "ry.toml",
+            "globals = [\"my_global\"]\n[reports]\nenabled = true\n",
+        )
+        .unwrap();
     fixture.write_file("main.R", "w <- 1L\n").unwrap();
     fixture
         .write_file("util.R", "x <- never_bound_here\n")
@@ -42,15 +38,10 @@ async fn watched_fix_with_no_open_documents_republishes_the_closed_file() {
     let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
     sync_barrier(&mut session, &main_uri).await;
 
-    // Opening clean `main.R` drives a project pass that also publishes
-    // RY010 for the never-opened `util.R`: the stale squiggle the bug
-    // would leave behind.
+    // Opening clean `main.R` runs a pass that also publishes RY010 for the
+    // never-opened `util.R`. Publication waits for the initial index.
     let mark = session.publication_mark();
-    session.open(&main_uri, 1, "w <- 1L\n").await.unwrap();
-    let main_publish = session
-        .published_diagnostics_after(&main_uri, mark)
-        .await
-        .unwrap();
+    let main_publish = open_published(&mut session, &main_uri, 1, "w <- 1L\n").await;
     assert!(
         normalize_diagnostics(&main_publish).is_empty(),
         "main.R must be clean: {main_publish}"
@@ -60,42 +51,93 @@ async fn watched_fix_with_no_open_documents_republishes_the_closed_file() {
         .await
         .unwrap();
     assert!(
-        has_ry010(&stale),
-        "the project pass must publish RY010 for closed util.R: {stale}"
+        has_ry010_for(&stale, "never_bound_here"),
+        "the pass must publish RY010 for closed util.R: {stale}"
     );
-
-    // Close everything: `util.R`'s squiggle legitimately stays (project
-    // diagnostics for unopened files), tracked in `published_uris`.
-    session
-        .notify(
-            "textDocument/didClose",
-            json!({"textDocument": {"uri": main_uri}}),
-        )
-        .await
-        .unwrap();
+    // The closed `util.R` keeps its diagnostics.
+    session.close(&main_uri).await.unwrap();
     sync_barrier(&mut session, &main_uri).await;
 
-    // Fix `util.R` on disk and forward the watched event with zero
-    // open documents. The refresh lands, and the server must
-    // republish the fixed path through the debounce.
     std::fs::write(fixture.path("util.R"), "x <- 1L\n").unwrap();
-    let fix_mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": util_uri, "type": 2}]}),
-        )
-        .await
-        .unwrap();
-    // Without the fix no publication for `util.R` ever arrives and
-    // this await times out, failing the test.
+    let mark = session.publication_mark();
+    notify_changed(&mut session, &util_uri).await;
     let fixed = session
-        .published_diagnostics_after(&util_uri, fix_mark)
+        .published_diagnostics_after(&util_uri, mark)
         .await
         .unwrap();
     assert!(
         normalize_diagnostics(&fixed).is_empty(),
-        "the watched fix must clear util.R's RY010 with no documents open: {fixed}"
+        "the watched fix must clear util.R's RY010: {fixed}"
+    );
+
+    // A created file resolves the configured global without a rescan.
+    fixture.write_file("new.R", "y <- my_global\n").unwrap();
+    let new_uri = file_uri(&fixture.path("new.R"));
+    let mark = session.publication_mark();
+    notify_created(&mut session, &new_uri).await;
+    let created = session
+        .published_diagnostics_after(&new_uri, mark)
+        .await
+        .unwrap();
+    assert!(
+        !has_ry010_for(&created, "my_global"),
+        "the created file must resolve the configured global: {created}"
+    );
+
+    // `ordinary.rda` binds `a` (checked in R). Only the use of `a` before
+    // the `load()` line is unbound, and moving `load()` above both uses
+    // must move its bindings too.
+    std::fs::write(
+        fixture.path("data.rda"),
+        include_bytes!("../../../ry-testkit/testdata/complete-package/data/ordinary.rda"),
+    )
+    .unwrap();
+    fixture
+        .write_file("loader.R", "a\nload(\"data.rda\")\na\n")
+        .unwrap();
+    let loader_uri = file_uri(&fixture.path("loader.R"));
+    let mark = session.publication_mark();
+    notify_created(&mut session, &loader_uri).await;
+    let created = session
+        .published_diagnostics_after(&loader_uri, mark)
+        .await
+        .unwrap();
+    let ry010_lines: Vec<_> = normalize_diagnostics(&created)
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == json!("RY010"))
+        .map(|diagnostic| diagnostic["range"]["start"]["line"].clone())
+        .collect();
+    assert_eq!(ry010_lines, [json!(0)], "{created}");
+    assert!(has_ry010_for(&created, "`a`"), "{created}");
+
+    std::fs::write(fixture.path("loader.R"), "load(\"data.rda\")\na\na\n").unwrap();
+    let mark = session.publication_mark();
+    notify_changed(&mut session, &loader_uri).await;
+    let moved = session
+        .published_diagnostics_after(&loader_uri, mark)
+        .await
+        .unwrap();
+    assert!(
+        normalize_diagnostics(&moved)
+            .iter()
+            .all(|diagnostic| diagnostic["code"] != json!("RY010")),
+        "moving load() above the uses must clear the stale span entry: {moved}"
+    );
+
+    // A report is its own resolution group, which must contain the report.
+    fixture
+        .write_file("memo.qmd", "```{r}\nz <- my_global\n```\n")
+        .unwrap();
+    let memo_uri = file_uri(&fixture.path("memo.qmd"));
+    let mark = session.publication_mark();
+    notify_created(&mut session, &memo_uri).await;
+    let report = session
+        .published_diagnostics_after(&memo_uri, mark)
+        .await
+        .unwrap();
+    assert!(
+        !has_ry010_for(&report, "my_global"),
+        "the created report must resolve the configured global: {report}"
     );
 
     join_session(session, server).await;
@@ -115,13 +157,7 @@ async fn closing_the_last_document_before_its_pass_publishes_nothing_more() {
 
     let mark = session.publication_mark();
     session.open(&util_uri, 1, source).await.unwrap();
-    session
-        .notify(
-            "textDocument/didClose",
-            json!({"textDocument": {"uri": util_uri}}),
-        )
-        .await
-        .unwrap();
+    session.close(&util_uri).await.unwrap();
     // A pass may legitimately publish while the buffer is open; the
     // close's clear is the last word.
     let mut mark = mark;

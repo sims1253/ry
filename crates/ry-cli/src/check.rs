@@ -390,7 +390,7 @@ impl WatchState {
         overrides: config::CliOverrides,
         baseline_from_cli: bool,
     ) -> Self {
-        let scoped_policy = scoped_policy(&cfg, config_root.as_deref(), &overrides);
+        let scoped_policy = scoped_policy(&cfg, &overrides);
         Self {
             search_start: search_start.to_path_buf(),
             config_root,
@@ -482,11 +482,7 @@ impl WatchState {
                         self.cfg = cfg;
                         self.format = format;
                         self.filter = ry_checker::filter_from_config(&self.cfg);
-                        self.scoped_policy = scoped_policy(
-                            &self.cfg,
-                            self.config_root.as_deref(),
-                            &self.overrides,
-                        );
+                        self.scoped_policy = scoped_policy(&self.cfg, &self.overrides);
                         self.user_stubs = load_user_stubs(&self.cfg.typeshed);
                         self.reload_baseline();
                     }
@@ -550,7 +546,6 @@ impl WatchState {
 /// Per-path rule tables; explicit CLI rule flags keep precedence over them.
 fn scoped_policy(
     cfg: &config::Config,
-    config_root: Option<&std::path::Path>,
     overrides: &config::CliOverrides,
 ) -> ry_checker::ScopedRulePolicy {
     let protected = overrides
@@ -560,7 +555,7 @@ fn scoped_policy(
         .chain(&overrides.ignore)
         .cloned()
         .collect::<Vec<_>>();
-    ry_checker::ScopedRulePolicy::new(cfg, config_root, &protected)
+    ry_checker::ScopedRulePolicy::new(cfg, &protected)
 }
 
 /// Resolve `path` against the working directory and fold `.` and `..`
@@ -877,7 +872,7 @@ fn run_check_once(
     // `post_demotion` then runs on the collected result below.
     for group in groups {
         let files: Vec<_> = group
-            .source_indices
+            .indices
             .iter()
             .map(|&index| Arc::clone(&parsed[index]))
             .collect();
@@ -890,7 +885,12 @@ fn run_check_once(
                 .into_iter()
                 .map(|diagnostic| (PathBuf::from(&diagnostic.path), diagnostic)),
         );
-        let checked = check_project(group.check_input, adopted.records);
+        for (path, reason) in &group.context.degraded_scopes {
+            degraded.insert(format!("{} ({})", path.display(), reason.description()));
+        }
+        let input =
+            pipeline::CheckInput::new(&parsed, &group.indices, &ctx.user_stubs, group.context);
+        let checked = check_project(input, adopted.records);
         debug_assert_eq!(files.len(), checked.len());
         for (file, (path, diagnostics)) in files.iter().zip(checked) {
             let filter = ctx
@@ -903,9 +903,6 @@ fn run_check_once(
                 repo_root: ctx.repo_root,
             };
             all_diagnostics.extend(post.pre_demotion(diagnostics, &path, Some(file.as_ref())));
-        }
-        for (path, reason) in group.degraded_scopes {
-            degraded.insert(format!("{} ({})", path.display(), reason.description()));
         }
     }
     // File-level synthetic findings have no unambiguous source comment to

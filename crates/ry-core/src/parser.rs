@@ -52,14 +52,7 @@ impl RParser {
         src: &str,
         old_tree: Option<&Tree>,
     ) -> Result<(SourceFile, Tree), ParseError> {
-        let tree = self
-            .parser
-            .parse(src, old_tree)
-            .ok_or_else(|| ParseError::TreeSitter {
-                line: 0,
-                col: 0,
-                message: "parser returned no tree".into(),
-            })?;
+        let tree = self.parse_tree(src, old_tree)?;
         let root = tree.root_node();
         // Check nesting before recursive lowering (and eventual AST drop).
         let lexical = collect_lexical(root, src)?;
@@ -110,6 +103,36 @@ impl RParser {
             },
             tree,
         ))
+    }
+
+    /// R's lexer skips a `#` comment byte by byte up to the newline, so a
+    /// NUL inside a comment is harmless to R (#698), while tree-sitter's
+    /// comment token stops at the NUL and leaves a spurious ERROR. A
+    /// comment node that ends on a NUL is therefore still inside the
+    /// comment as R sees it: tree-sitter re-parses a copy with those
+    /// NULs blanked up to the newline. The copy keeps every byte offset,
+    /// so the tree lines up with `src`. NULs that tree-sitter does not
+    /// lex as comment text (code, strings) stay, as R rejects them too.
+    fn parse_tree(&mut self, src: &str, old_tree: Option<&Tree>) -> Result<Tree, ParseError> {
+        let mut tree = self.parse_bytes(src.as_bytes(), old_tree)?;
+        if !src.contains('\0') {
+            return Ok(tree);
+        }
+        let mut masked = src.as_bytes().to_vec();
+        while blank_nuls_after_comments(tree.root_node(), &mut masked) {
+            tree = self.parse_bytes(&masked, None)?;
+        }
+        Ok(tree)
+    }
+
+    fn parse_bytes(&mut self, src: &[u8], old_tree: Option<&Tree>) -> Result<Tree, ParseError> {
+        self.parser
+            .parse(src, old_tree)
+            .ok_or_else(|| ParseError::TreeSitter {
+                line: 0,
+                col: 0,
+                message: "parser returned no tree".into(),
+            })
     }
 
     fn span(&self, n: Node) -> Span {
@@ -1062,6 +1085,31 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
         special_operators: special,
         function_bodies: bodies,
     })
+}
+
+/// Blank (to a space) every NUL between the end of a `comment` node that
+/// stops on a NUL and the next newline; returns whether anything changed.
+/// Each call blanks at least one NUL or returns false, so the caller's
+/// re-parse loop is bounded by the NUL count.
+fn blank_nuls_after_comments(root: tree_sitter::Node, src: &mut [u8]) -> bool {
+    let mut changed = false;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "comment" && src.get(node.end_byte()) == Some(&0) {
+            for byte in src[node.end_byte()..]
+                .iter_mut()
+                .take_while(|byte| **byte != b'\n')
+            {
+                if *byte == 0 {
+                    *byte = b' ';
+                    changed = true;
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.children(&mut cursor));
+    }
+    changed
 }
 
 /// A node's span without a `&self` receiver (the free-function twin of

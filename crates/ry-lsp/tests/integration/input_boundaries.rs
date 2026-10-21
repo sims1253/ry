@@ -1,12 +1,12 @@
 use crate::harness;
 
 use harness::{
-    file_uri, join_session, normalize_diagnostics, ry_binary, spawn_session, sync_barrier,
+    change_published, cli_diagnostics, file_uri, join_session, normalize_diagnostics,
+    sorted_diagnostics, spawn_session, sync_barrier,
 };
 use ry_lsp::test_seam::Seam;
 use ry_testkit::FixtureProject;
-use serde_json::{Value, json};
-use std::process::Command;
+use serde_json::json;
 
 #[tokio::test]
 async fn first_diagnostics_wait_for_initial_workspace_bindings() {
@@ -78,175 +78,89 @@ async fn removing_all_folders_during_initial_index_releases_diagnostics() {
     join_session(session, server).await;
 }
 
-fn cli(fixture: &FixtureProject, target: &str) -> Vec<Value> {
-    let output = Command::new(ry_binary())
-        .current_dir(fixture.root())
-        .args(["check", "--output-format", "json", target])
-        .output()
-        .unwrap();
-    assert!(
-        matches!(output.status.code(), Some(0 | 1)),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap()
-}
-
+/// An unopened sibling that is not clean UTF-8 is analyzed from its
+/// decoded disk bytes with an RY000 encoding flag, as in `ry check`.
+/// Opening it with client-decoded text clears the flag, and opening or
+/// closing it leaves the diagnostics of the file that uses it unchanged.
 #[tokio::test]
-async fn latin1_sibling_survives_open_and_close() {
-    let fixture = FixtureProject::empty().unwrap();
+async fn non_utf8_siblings_are_flagged_and_survive_open_and_close() {
     let source = "value <- make_label() + 1\n";
-    fixture.write_file("main.R", source).unwrap();
-    fixture
-        .write_file("helper.R", b"make_label <- function() \"caf\xe9\"\n")
-        .unwrap();
-    assert!(cli(&fixture, ".").iter().any(|d| d["code"] == "RY040"));
-    let uri = file_uri(&fixture.path("main.R"));
-    let helper_uri = file_uri(&fixture.path("helper.R"));
-    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let mark = session.publication_mark();
-    session.open(&uri, 1, source).await.unwrap();
-    let first = session
-        .published_diagnostics_after(&uri, mark)
-        .await
-        .unwrap();
-    let expected = normalize_diagnostics(&first);
-    assert!(expected.iter().any(|d| d["code"] == "RY040"), "{first}");
-    for (version, open) in [(2, true), (3, false)] {
-        if open {
-            session
-                .open(&helper_uri, 1, "make_label <- function() \"café\"\n")
-                .await
-                .unwrap();
-        } else {
-            session
-                .notify(
-                    "textDocument/didClose",
-                    json!({"textDocument":{"uri":helper_uri}}),
-                )
-                .await
-                .unwrap();
-        }
-        sync_barrier(&mut session, &uri).await;
+    // (helper bytes on disk, helper text the client decodes, whether
+    // `main.R` reports RY040)
+    let cases: [(&[u8], &str, bool); 2] = [
+        (
+            b"make_label <- function() \"caf\xe9\"\n",
+            "make_label <- function() \"café\"\n",
+            true,
+        ),
+        (
+            b"\xef\xbb\xbfmake_label <- function() 1\n",
+            "make_label <- function() 1\n",
+            false,
+        ),
+    ];
+    for (bytes, decoded, main_ry040) in cases {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("main.R", source).unwrap();
+        fixture.write_file("helper.R", bytes).unwrap();
+        assert_eq!(
+            cli_diagnostics(fixture.root(), ".", &[])
+                .iter()
+                .any(|d| d.path == "main.R" && d.code == "RY040"),
+            main_ry040,
+            "{decoded}"
+        );
+        assert!(
+            cli_diagnostics(fixture.root(), "helper.R", &[])
+                .iter()
+                .any(|d| d.code == "RY000"),
+            "the CLI must flag the helper: {decoded}"
+        );
+        let main_uri = file_uri(&fixture.path("main.R"));
+        let helper_uri = file_uri(&fixture.path("helper.R"));
+        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
         let mark = session.publication_mark();
-        session
-            .change(&uri, version, json!([{"text":source}]))
+        session.open(&main_uri, 1, source).await.unwrap();
+        let published = session
+            .quiesce_diagnostics(&main_uri, mark, std::time::Duration::from_millis(60))
             .await
             .unwrap();
-        let publish = session
-            .published_diagnostics_after(&uri, mark)
+        let expected = sorted_diagnostics(&published[&main_uri]);
+        assert_eq!(
+            expected.iter().any(|d| d["code"] == "RY040"),
+            main_ry040,
+            "{expected:?}"
+        );
+        let helper = published.get(&helper_uri).map(Vec::as_slice).unwrap_or(&[]);
+        assert!(
+            helper.iter().any(|d| d["code"] == "RY000"),
+            "the unopened helper must carry the encoding flag: {helper:?}"
+        );
+
+        let mark = session.publication_mark();
+        session.open(&helper_uri, 1, decoded).await.unwrap();
+        let republished = session
+            .quiesce_diagnostics(&helper_uri, mark, std::time::Duration::from_millis(60))
             .await
             .unwrap();
-        assert_eq!(normalize_diagnostics(&publish), expected);
+        let helper = republished
+            .get(&helper_uri)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        assert!(
+            helper.iter().all(|d| d["code"] != "RY000"),
+            "an opened buffer is client-decoded text and carries no disk flag: {helper:?}"
+        );
+        sync_barrier(&mut session, &main_uri).await;
+        let reopened = change_published(&mut session, &main_uri, 2, source).await;
+        assert_eq!(normalize_diagnostics(&reopened), expected);
+
+        session.close(&helper_uri).await.unwrap();
+        sync_barrier(&mut session, &main_uri).await;
+        let closed = change_published(&mut session, &main_uri, 3, source).await;
+        assert_eq!(normalize_diagnostics(&closed), expected);
+        join_session(session, server).await;
     }
-    join_session(session, server).await;
-}
-
-/// The decode-time encoding flag (#376) must reach the LSP through the
-/// same on-disk index the CLI uses: an unopened Latin-1 sibling is
-/// published with an RY000 encoding diagnostic, and opening it with
-/// client-decoded text (which is genuinely Unicode) clears the flag.
-#[tokio::test]
-async fn unopened_latin1_sibling_is_flagged_in_both_frontends() {
-    let fixture = FixtureProject::empty().unwrap();
-    let source = "value <- make_label() + 1\n";
-    fixture.write_file("main.R", source).unwrap();
-    fixture
-        .write_file("helper.R", b"make_label <- function() \"caf\xe9\"\n")
-        .unwrap();
-    assert!(
-        cli(&fixture, "helper.R")
-            .iter()
-            .any(|d| d["code"] == "RY000"),
-        "the CLI must flag the non-UTF-8 sibling"
-    );
-    let main_uri = file_uri(&fixture.path("main.R"));
-    let helper_uri = file_uri(&fixture.path("helper.R"));
-    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let mark = session.publication_mark();
-    session.open(&main_uri, 1, source).await.unwrap();
-    let published = session
-        .quiesce_diagnostics(&main_uri, mark, std::time::Duration::from_millis(60))
-        .await
-        .unwrap();
-    let helper = published.get(&helper_uri).map(Vec::as_slice).unwrap_or(&[]);
-    assert!(
-        helper.iter().any(|d| d["code"] == "RY000"),
-        "the unopened Latin-1 sibling must carry the encoding flag: {helper:?}"
-    );
-
-    let mark = session.publication_mark();
-    session
-        .open(&helper_uri, 1, "make_label <- function() \"café\"\n")
-        .await
-        .unwrap();
-    let republished = session
-        .quiesce_diagnostics(&helper_uri, mark, std::time::Duration::from_millis(60))
-        .await
-        .unwrap();
-    let helper = republished
-        .get(&helper_uri)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    assert!(
-        helper.iter().all(|d| d["code"] != "RY000"),
-        "an opened buffer is client-supplied Unicode and must not be flagged: {helper:?}"
-    );
-    join_session(session, server).await;
-}
-
-/// The leading-BOM flag (#474) rides the same on-disk index path as the
-/// non-UTF-8 flag (#376): an unopened BOM-prefixed sibling is published
-/// with an RY000 in the LSP exactly like in the CLI, and opening it
-/// with client-supplied buffer text (the client owns decoding) clears
-/// the disk-derived flag.
-#[tokio::test]
-async fn unopened_bom_sibling_is_flagged_in_both_frontends() {
-    let fixture = FixtureProject::empty().unwrap();
-    let source = "value <- make_label() + 1\n";
-    fixture.write_file("main.R", source).unwrap();
-    fixture
-        .write_file("helper.R", b"\xef\xbb\xbfmake_label <- function() 1\n")
-        .unwrap();
-    assert!(
-        cli(&fixture, "helper.R")
-            .iter()
-            .any(|d| d["code"] == "RY000"),
-        "the CLI must flag the BOM-prefixed sibling"
-    );
-    let main_uri = file_uri(&fixture.path("main.R"));
-    let helper_uri = file_uri(&fixture.path("helper.R"));
-    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let mark = session.publication_mark();
-    session.open(&main_uri, 1, source).await.unwrap();
-    let published = session
-        .quiesce_diagnostics(&main_uri, mark, std::time::Duration::from_millis(60))
-        .await
-        .unwrap();
-    let helper = published.get(&helper_uri).map(Vec::as_slice).unwrap_or(&[]);
-    assert!(
-        helper.iter().any(|d| d["code"] == "RY000"),
-        "the unopened BOM sibling must carry the encoding flag: {helper:?}"
-    );
-
-    let mark = session.publication_mark();
-    session
-        .open(&helper_uri, 1, "make_label <- function() 1\n")
-        .await
-        .unwrap();
-    let republished = session
-        .quiesce_diagnostics(&helper_uri, mark, std::time::Duration::from_millis(60))
-        .await
-        .unwrap();
-    let helper = republished
-        .get(&helper_uri)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    assert!(
-        helper.iter().all(|d| d["code"] != "RY000"),
-        "an opened buffer is client-supplied text and carries no disk-derived flag: {helper:?}"
-    );
-    join_session(session, server).await;
 }
 
 #[tokio::test]
@@ -269,19 +183,14 @@ async fn environment_paths_are_anchored_globs_in_both_frontends() {
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
     for (index, path) in paths.iter().enumerate() {
         let expected_unbound = index >= 3;
-        let findings = cli(&fixture, path);
+        let findings = cli_diagnostics(fixture.root(), path, &[]);
         assert_eq!(
-            findings.iter().any(|d| d["code"] == "RY010"),
+            findings.iter().any(|d| d.code == "RY010"),
             expected_unbound,
             "{path}: {findings:?}"
         );
         let uri = file_uri(&fixture.path(path));
-        let mark = session.publication_mark();
-        session.open(&uri, 1, "profile_binding\n").await.unwrap();
-        let publish = session
-            .published_diagnostics_after(&uri, mark)
-            .await
-            .unwrap();
+        let publish = harness::open_published(&mut session, &uri, 1, "profile_binding\n").await;
         assert_eq!(
             normalize_diagnostics(&publish)
                 .iter()

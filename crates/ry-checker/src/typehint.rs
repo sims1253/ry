@@ -68,12 +68,7 @@ pub fn read_records_at(
     native_path: &Path,
     scope: &ScopedPaths,
 ) -> Vec<DeclarationRecord> {
-    if !scope.matches(native_path)
-        || !file.parse_errors.is_empty()
-        || !file.syntax_violations.is_empty()
-        || !file.invalid_utf8.is_empty()
-        || file.leading_bom
-    {
+    if !scope.matches(native_path) || crate::box_imports::rejected_by_r(file) {
         return Vec::new();
     }
 
@@ -186,7 +181,7 @@ pub fn read_records_at(
         }
         let clauses = grouped.entry(key).or_default();
         // The extra entry records overflow without retaining an unbounded
-        // number of annotations from a generated or hostile source file.
+        // number of annotations.
         if clauses.len() <= MAX_CLAUSES_PER_FUNCTION {
             let clause = if full_end > end {
                 Clause::Invalid {
@@ -226,10 +221,9 @@ pub fn read_records_at(
             });
             let (source_span, budget_error) = group_extent(&clauses);
             if conflicting && budget_error.is_none() {
-                // Each comment is a faithful claim in its own source span.
-                // Selecting one combined signature would silently choose a
-                // side; the shared resolver sees distinct exact signatures
-                // and emits an explicit conflict instead.
+                // Each comment is a claim in its own span. The shared
+                // resolver reports distinct exact signatures as a conflict
+                // instead of choosing one.
                 clauses
                     .into_iter()
                     .map(|clause| build_record(file, target, clause.span(), None, vec![clause]))
@@ -292,9 +286,8 @@ fn parse_clause(raw: &str, span: Span) -> Clause<'_> {
             )),
         };
     }
-    // Preserve the exact unsupported expression and its byte span. The
-    // upstream provider evaluates dim/not expressions at runtime; ry
-    // neither evaluates them nor silently drops them from an Exact record.
+    // Keep the unsupported expression and its span. typehint evaluates
+    // dim/not expressions at runtime. ry neither evaluates nor drops them.
     Clause::Claim {
         span,
         argument,

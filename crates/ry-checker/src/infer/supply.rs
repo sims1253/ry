@@ -1,91 +1,48 @@
 //! Supplied-vs-defaulted state for function formals, and RY108
 //! (seq-defaulted-forward).
 //!
-//! A defaulted formal has two runtime identities R keeps apart and ry's
-//! types do not model: *supplied* (the caller passed an argument) and
-//! *defaulted* (the caller omitted it and evaluation falls back to the
-//! default expression). `missing(p)` is exactly the query that tells them
-//! apart — it stays correct after the promise is forced, and collapses to
-//! `FALSE` only once the name is reassigned or consumed as a loop
-//! variable; a superassignment `p <<- v` leaves it intact (all verified
-//! against R 4.6.1). Forcing the formal does not choose an identity: a
-//! defaulted `to` evaluated inside the method is indistinguishable from a
-//! caller-supplied one, which is the confusion the rules in this module
-//! report.
+//! A defaulted formal has two runtime identities: *supplied* (the caller
+//! passed an argument) and *defaulted* (evaluation falls back to the
+//! default expression). `missing(p)` tells them apart. It stays correct
+//! after the promise is forced and becomes `FALSE` only once the name is
+//! reassigned or used as a loop variable. `p <<- v` leaves it intact
+//! (R 4.6.1). Forcing the formal does not choose an identity, so a
+//! defaulted `to` read inside a method looks like a supplied one.
 //!
-//! The distinction is a capability several argument rules could reuse
-//! (RY090/RY091/RY092/RY098 all reason about formals), so it lives here as
-//! a small flow analysis over one formal rather than inside a rule:
+//! The analysis walks one formal's body:
 //!
-//! * [`SupplyPoint::alive`] is the per-point state: `None` when every
-//!   path reaching the point rebound the name (no live promise to read),
-//!   otherwise the [`Supply`] fact for the paths where the promise is
-//!   still readable. A read reports when the live promise is untested
-//!   *or proven defaulted* — reading a proven-defaulted value forwards
-//!   the default (the bug), so `if (missing(p)) seq(x, p, ...)` fires.
-//!   Merging is path-correlated: a path that rebound the name contributes
-//!   no live promise, which is what keeps
-//!   `if (missing(p)) p <- fallback` from poisoning the supplied
-//!   fall-through.
-//! * A `missing(p)` test at an `if` refines exactly like a type
-//!   narrowing: the then-arm gets the asserted fact, the else-arm (and,
-//!   with no `else`, the fall-through) the negation, and a diverging arm
-//!   (`return`, `stop()`, `UseMethod`) contributes nothing to the
-//!   continuation. `&&`/`||`/`!` compositions decode positionally; cached
-//!   tests (`m <- missing(p)`, `m <- !missing(p)` — `seq.Date`'s `mTo`)
-//!   decode with their polarity until reassigned. A test the walker
-//!   cannot decode (inside a call, a comparison) still proves the
-//!   author's awareness, which silences safely.
-//! * `p <- value` rebinds the name: the value side is walked first (R
-//!   evaluates it before the assignment), then the promise is dead —
-//!   matching `missing(p)` collapsing to `FALSE` after a rebinding.
-//!   `p <<- value` (statement or expression) keeps the local promise.
-//! * `for (p in ...)` consumes the promise unconditionally: R assigns
-//!   the loop variable even on a zero-trip loop (`for (p in NULL)`
-//!   leaves `missing(p)` `FALSE`), so the promise is dead after the
-//!   loop.
+//! * [`SupplyPoint::alive`] is `None` when every path rebound the name,
+//!   otherwise the [`Supply`] fact for paths where the promise is still
+//!   readable. A read reports when that fact is untested or proven
+//!   defaulted, so `if (missing(p)) seq(x, p, ...)` fires. A path that
+//!   rebound the name contributes no live promise to a merge, which keeps
+//!   `if (missing(p)) p <- fallback` from poisoning the fall-through.
+//! * A `missing(p)` test at an `if` refines like a type narrowing. A
+//!   diverging arm (`return`, `stop()`, `UseMethod`) contributes nothing to
+//!   the continuation. `&&`, `||`, and `!` decode positionally. Cached
+//!   tests (`m <- missing(p)`, `seq.Date`'s `mTo`) decode until reassigned.
+//!   A test the walker cannot decode still shows the author's awareness
+//!   and silences the formal.
+//! * `p <- value` walks the value, then kills the promise.
+//! * `for (p in ...)` kills the promise even on a zero-trip loop:
+//!   R assigns the loop variable anyway.
 //!
-//! Documented concessions, in two classes. Recall-only (a guarded or
-//! buggy read stays quiet): reads inside a nested closure's body or
-//! parameter defaults are not analyzed at all — a closure defined before
-//! a guard and called after it would otherwise fire on its
-//! definition-site state although R never calls it on the defaulted
-//! path; loop bodies whose iterator may be empty discard their exit
-//! state (a guard inside such a body may not run), except
-//! `repeat`/`while (TRUE)` and syntactically nonempty literal iterators,
-//! where the body provably runs at least once and the first-iteration
-//! exit approximates the post-loop state (a `break` before the body's
-//! last statement included); `while` exit states ignore
-//! `break`-mid-body paths; and a supply test's own condition is walked
-//! silently, so `p > 0 || missing(p)` (the left operand forces the
-//! promise unconditionally) stays quiet. Statically sound over-firing
-//! (the defaulted value is reachable on some path, so a report is never
-//! unproven, but runtimes that settle the unknown input can make the
-//! guarded code clean): a loop body under an unknown `while` condition
-//! may never run, so a guard inside it does not protect the post-loop
-//! read; and the else-fact of a compound guard `A && missing(p)` (or its
-//! De Morgan dual) cannot prove the `!missing(p)` disjunct when `A` is
-//! unknown, so a read after such a guard reports even on runtimes where
-//! `A`'s value made the guard total.
+//! Known gaps that stay quiet: reads inside nested closures, `break` paths
+//! out of `while`, and reads in a supply test's own condition
+//! (`p > 0 || missing(p)`). A loop whose iterator may be empty is still
+//! walked for reads, but its exit state is discarded, since a guard in
+//! its body may never run. Known gaps that
+//! over-fire on some runtimes: a guard inside a loop under an unknown
+//! `while` condition, and the else-fact of `A && missing(p)` when `A` is
+//! unknown.
 //!
-//! RY108 applies the capability to the seq generic. `seq.hms`
-//! (tidyverse/hms#231, pre-fix `R/hms.R:301`) cast and forwarded `to` —
-//! which has a default — unconditionally, so `seq(hms(1), length.out = 3)`
-//! re-entered `seq.default` with the *defaulted* `to` treated as a
-//! supplied endpoint plus `...`-carried `length.out`: three identical
-//! values, or "too many arguments" once `by` is forwarded too. `from` is
-//! deliberately not analyzed: `seq.default` consumes `from` on every
-//! path, so a defaulted `from` never competes with `...`-carried
-//! specifiers — the upstream fix still casts `from` unconditionally.
-//! `by` and `length.out` are excluded for the complementary reason: a
-//! defaulted, forwarded `by` or `length.out` collides with a
-//! `...`-carried competitor *loudly* ("too many arguments"), while the
-//! `to` collision with `length.out` is silently wrong (`seq(1, 1,
-//! length.out = 3)` is `1 1 1`), and ry reports silent wrongness, not
-//! errors R already raises. That fix and `seq.Date`/`seq.POSIXt` guard
-//! every `to` use behind `missing(to)`, which the flow analysis
-//! recognizes; a `to` without a default (`seq.Date`) has nothing to
-//! confuse and stays silent.
+//! RY108 checks the seq generic's `to`. A method that forwards a
+//! defaulted `to` makes `seq(x, length.out = 3)` reach `seq.default` with
+//! `to` as a supplied endpoint, which returns repeated values
+//! (`seq(1, 1, length.out = 3)` is `1 1 1`). `from` is not analyzed
+//! because `seq.default` consumes it on every path. `by` and `length.out`
+//! are not analyzed because a forwarded default for them makes R raise
+//! "too many arguments" itself.
 
 use super::*;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
@@ -98,22 +55,19 @@ pub(crate) enum Supply {
     Untested,
     /// The caller supplied the argument. Reads are safe.
     Supplied,
-    /// The caller omitted the argument: the value IS the default. A read
-    /// here forwards the default, which is exactly the bug.
+    /// The caller omitted the argument, so a read forwards the default.
     Defaulted,
 }
 
 impl Supply {
-    /// The fact that survives both inputs being possible. Only equal
-    /// facts merge to a fact; `Supplied` and `Defaulted` meet at
-    /// `Untested`, which is also the absorbing element.
+    /// The fact that holds on both inputs. Unequal facts meet at
+    /// `Untested`.
     fn merge(self, other: Self) -> Self {
         if self == other { self } else { Self::Untested }
     }
 
-    /// The more specific of two facts: a non-`Untested` fact refines an
-    /// `Untested` one. Used where both operands of `&&` must hold (both
-    /// `||` operands must fail), so either proof settles the arm.
+    /// The more specific of two facts. Used where both operands of `&&`
+    /// must hold, so either proof settles the arm.
     fn refine(self, other: Self) -> Self {
         if self == Self::Untested { other } else { self }
     }
@@ -124,12 +78,8 @@ impl Supply {
     }
 }
 
-/// The per-point state of one formal: whether the promise is still
-/// readable, and with what supply fact, plus the cached `missing()` tests
-/// in scope. `alive == None` means every path reaching the point rebound
-/// the name. Branch merges keep the path-correlated combination: rebound
-/// paths contribute no live promise, and cached tests survive only when
-/// both paths bound the same polarity.
+/// The per-point state of one formal. `alive == None` means every path
+/// reaching the point rebound the name.
 #[derive(Clone, Debug)]
 struct SupplyPoint {
     alive: Option<Supply>,
@@ -147,31 +97,21 @@ impl SupplyPoint {
     }
 }
 
-/// What an `if`/`while` condition proves about the formal's supply.
-enum SupplyTest {
-    /// The condition decodes to a `missing()` test (direct or cached):
-    /// (then-arm fact, else-arm fact).
-    Decoded { then: Supply, else_: Supply },
-    /// The condition mentions a supply test in a shape the walker cannot
-    /// decode (`isTRUE(missing(p))`, a comparison). The author
-    /// demonstrated awareness; silence is the safe reading.
-    Mention,
-}
-
 /// Outcome of decomposing one condition subtree.
 enum AtomOutcome {
-    Test {
-        then: Supply,
-        else_: Supply,
-    },
+    /// A decoded `missing()` test (direct or cached): the then-arm and
+    /// else-arm facts.
+    Test { then: Supply, else_: Supply },
     /// The subtree contains no supply test for this formal.
     NoInfo,
+    /// A supply test in a shape the walker cannot decode
+    /// (`isTRUE(missing(p))`, a comparison). The author showed awareness,
+    /// so silence is the safe reading.
     Mention,
 }
 
 impl AtomOutcome {
-    /// The (then, else) supply facts, with `NoInfo` as the fully
-    /// untested pair so the compositions are uniform lattice operations.
+    /// The (then, else) supply facts. `NoInfo` is the untested pair.
     fn facts(self) -> (Supply, Supply) {
         match self {
             AtomOutcome::Test { then, else_ } => (then, else_),
@@ -179,9 +119,9 @@ impl AtomOutcome {
         }
     }
 
-    /// `a && b`: the then-arm requires both operands true (either proof
-    /// settles it); the else-arm is `!a || !b`, where knowledge from only
-    /// one disjunct does not survive the other being unknown.
+    /// `a && b`: either proof settles the then-arm. The else-arm is
+    /// `!a || !b`, where one disjunct's fact does not survive the other
+    /// being unknown.
     fn combine_and(self, rhs: Self) -> Self {
         match (self, rhs) {
             (AtomOutcome::Mention, _) | (_, AtomOutcome::Mention) => AtomOutcome::Mention,
@@ -213,12 +153,8 @@ impl AtomOutcome {
         }
     }
 
-    /// The facts with the arms exchanged: what the assertion-true path
-    /// knew becomes the assertion-false path's knowledge. Applying the
-    /// positive-polarity combinator and swapping under odd negation is
-    /// De Morgan — `!(A || B)`'s true-path is `!A && !B` — which is how
-    /// a negated composition decodes without duplicating the lattice
-    /// operations for each polarity.
+    /// The facts with the arms exchanged. Swapping under negation applies
+    /// De Morgan: the true path of `!(A || B)` is `!A && !B`.
     fn swapped(self) -> Self {
         match self {
             AtomOutcome::Test { then, else_ } => AtomOutcome::Test {
@@ -230,16 +166,10 @@ impl AtomOutcome {
     }
 }
 
-/// The first reference to `formal` in `body` that would evaluate while the
-/// value may still be a defaulted one the author has not tested — the use
-/// that cannot tell a supplied argument from a defaulted one, including a
-/// read *inside* a proven-defaulted branch. `None` means every use is
-/// guarded by a `missing()` test, reads a rebinding, or is defused
-/// (`substitute(p)` and the promise-capture helpers).
-///
-/// A pure query: it records no diagnostics and does not touch scope, so
-/// any rule can run it over a definition's body (RY108 does; the argument
-/// rules are future consumers).
+/// The first read of `formal` in `body` that may evaluate an untested or
+/// proven-defaulted value. `None` means every use is guarded by a
+/// `missing()` test, reads a rebinding, or is defused (`substitute(p)`).
+/// Records no diagnostics and leaves scope alone.
 pub(crate) fn first_unguarded_defaulted_use(
     checker: &Checker,
     body: &[Stmt],
@@ -277,12 +207,10 @@ impl FormalSupplyWalk<'_, '_> {
     fn walk_stmt(&mut self, statement: &Stmt, point: &mut SupplyPoint) {
         match statement {
             Stmt::Assign { target, value, .. } => {
-                // The statement form of `p <<- v` (and `v ->> p`) lowers
-                // to Assign carrying a SuperAssign wrapper around the
-                // value: R evaluates the value and assigns in an
-                // enclosing frame, so the local promise survives
-                // (`missing(p)` stays TRUE). The wrapper's left operand is
-                // the target restated, never evaluated.
+                // The statement `p <<- v` lowers to Assign with a
+                // SuperAssign wrapper around the value. R assigns in an
+                // enclosing frame, so the local promise survives. The
+                // wrapper's left operand restates the target.
                 if let Expr::BinOp {
                     op: BinOpKind::SuperAssign,
                     rhs,
@@ -305,17 +233,13 @@ impl FormalSupplyWalk<'_, '_> {
                 let shadows = name == self.formal;
                 let mut inner = point.clone();
                 if shadows {
-                    // The loop variable rebinds the formal name on every
-                    // iteration, so reads inside the body see the
-                    // iterator, never the promise.
+                    // Reads inside the body see the loop variable.
                     inner.alive = None;
                 }
                 self.walk_stmts(body, &mut inner);
                 if shadows {
                     // R assigns the loop variable even on a zero-trip
-                    // loop (`for (p in NULL)` leaves `missing(p)` FALSE),
-                    // so the promise is dead after the loop whatever the
-                    // iterator.
+                    // loop (`for (p in NULL)` leaves `missing(p)` FALSE).
                     point.alive = None;
                 } else if iterator_provably_nonempty(iter) {
                     // The body runs at least once, so its first-iteration
@@ -324,44 +248,29 @@ impl FormalSupplyWalk<'_, '_> {
                     point.alive = inner.alive;
                     point.proxies = inner.proxies;
                 }
-                // Otherwise the iterator may be empty and the body may
-                // never run: keep the entry state.
             }
             Stmt::While { cond, body, .. } => {
+                let (then_alive, else_alive) = self.condition_arms(cond, point);
+                let mut inner = point.clone();
+                inner.alive = then_alive;
+                self.walk_stmts(body, &mut inner);
                 // `repeat body` lowers to While with a constant-true
-                // condition, which the main walker treats the same way
-                // (`always_true`): the body provably runs at least once.
-                let always_true = matches!(cond, Expr::Logical(true, _));
-                match self.classify_condition(cond, point) {
-                    Some(SupplyTest::Decoded { then, else_ }) => {
-                        self.walk_cond_silently(cond, point);
-                        let mut inner = point.clone();
-                        inner.alive = self.arm_state(point, then);
-                        self.walk_stmts(body, &mut inner);
-                        // Leaving the loop requires the condition to fail;
-                        // `break`-mid-body paths are approximated by this
-                        // exit state.
-                        point.alive = self.arm_state(point, else_);
-                    }
-                    Some(SupplyTest::Mention) => {
-                        self.walk_cond_silently(cond, point);
-                        let mut inner = point.clone();
-                        inner.alive = self.arm_state(point, Supply::Supplied);
-                        self.walk_stmts(body, &mut inner);
-                        point.alive = self.arm_state(point, Supply::Supplied);
-                    }
-                    None => {
-                        self.walk_expr(cond, point);
-                        let mut inner = point.clone();
-                        self.walk_stmts(body, &mut inner);
-                        if always_true {
-                            point.alive = inner.alive;
-                            point.proxies = inner.proxies;
-                        }
-                    }
+                // condition: the body runs at least once, so its exit
+                // approximates the post-loop state. Otherwise leaving the
+                // loop requires the condition to fail. Both ignore
+                // `break`-mid-body paths.
+                if matches!(cond, Expr::Logical(true, _)) {
+                    point.alive = inner.alive;
+                    point.proxies = inner.proxies;
+                } else {
+                    point.alive = else_alive;
                 }
             }
-            Stmt::FunctionDef { params, body, .. } => self.walk_closure(params, body, point),
+            // A nested closure's body and parameter defaults evaluate when
+            // the closure is called, not here, so the definition-site
+            // supply state would misclassify both directions. Reads only
+            // inside closures stay silent.
+            Stmt::FunctionDef { .. } => {}
             Stmt::Return { value, .. } => {
                 if let Some(value) = value {
                     self.walk_expr(value, point);
@@ -370,10 +279,9 @@ impl FormalSupplyWalk<'_, '_> {
         }
     }
 
-    /// `target <- value`: R evaluates the value first, then rebinds. A
-    /// plain name target is not evaluated (so `to <- v` is not a read of
-    /// `to`); a complex target's substructure is, and complex assignment
-    /// replaces the promise with the modified value.
+    /// `target <- value`: R evaluates the value first, then rebinds. A plain
+    /// name target is not a read. A complex target is read and replaces
+    /// the promise.
     fn walk_assign(&mut self, target: &Expr, value: &Expr, point: &mut SupplyPoint) {
         self.walk_expr(value, point);
         match target {
@@ -381,8 +289,7 @@ impl FormalSupplyWalk<'_, '_> {
                 if name == self.formal {
                     point.alive = None;
                 } else {
-                    // Record `m <- missing(p)` / `m <- !missing(p)` as a
-                    // cached test; any other binding drops the cache.
+                    // Any other binding drops a cached test.
                     let cached = match value {
                         Expr::UnaryOp {
                             op: UnaryOpKind::Not,
@@ -442,16 +349,16 @@ impl FormalSupplyWalk<'_, '_> {
         cond: &Expr,
         point: &mut SupplyPoint,
     ) -> (Option<Supply>, Option<Supply>) {
-        match self.classify_condition(cond, point) {
-            None => {
+        match self.atom(cond, true, point) {
+            AtomOutcome::NoInfo => {
                 self.walk_expr(cond, point);
                 (point.alive, point.alive)
             }
-            Some(SupplyTest::Decoded { then, else_ }) => {
+            AtomOutcome::Test { then, else_ } => {
                 self.walk_cond_silently(cond, point);
                 (self.arm_state(point, then), self.arm_state(point, else_))
             }
-            Some(SupplyTest::Mention) => {
+            AtomOutcome::Mention => {
                 self.walk_cond_silently(cond, point);
                 let silent = self.arm_state(point, Supply::Supplied);
                 (silent, silent)
@@ -510,7 +417,7 @@ impl FormalSupplyWalk<'_, '_> {
                     self.walk_expr(&argument.value, point);
                 }
             }
-            Expr::Function { params, body, .. } => self.walk_closure(params, body, point),
+            Expr::Function { .. } => {}
             Expr::Block { body, .. } => self.walk_stmts(body, point),
             Expr::If {
                 cond, then, else_, ..
@@ -526,9 +433,8 @@ impl FormalSupplyWalk<'_, '_> {
         }
     }
 
-    /// With no `else`, a non-diverging then-arm merges with the fall-through's
-    /// else-fact: `lim <- if (missing(p)) e` keeps a proven-defaulted promise
-    /// alive. A diverging then-arm leaves only the fall-through state.
+    /// With no `else`, the then-arm merges with the fall-through, so
+    /// `lim <- if (missing(p)) e` keeps a proven-defaulted promise alive.
     fn walk_expr_if(
         &mut self,
         cond: &Expr,
@@ -554,44 +460,21 @@ impl FormalSupplyWalk<'_, '_> {
         );
     }
 
-    /// A nested closure's body and parameter defaults are not analyzed.
-    /// They evaluate when the closure is CALLED, not here, so the
-    /// definition-site supply state would misclassify both directions: a
-    /// closure defined before a guard and called after it would fire
-    /// although R never calls it on the defaulted path, and a default
-    /// like `function(x = to)` forces the promise at call time. Reads
-    /// that only ever happen inside closures therefore stay silent; the
-    /// enclosing method's own reads still report.
-    fn walk_closure(&mut self, _params: &[Param], _body: &[Stmt], _point: &mut SupplyPoint) {}
-
-    /// Walk a condition that contains a supply test without reporting its
-    /// argument reads.
+    /// Walk a condition that contains a supply test without reporting reads.
     fn walk_cond_silently(&mut self, cond: &Expr, point: &mut SupplyPoint) {
         let mut silent = point.clone();
         silent.alive = Some(Supply::Supplied);
         self.walk_expr(cond, &mut silent);
     }
 
-    /// The arm-entry state for a decoded fact: a dead promise stays dead
-    /// (a `missing()` test after a rebinding is constantly FALSE, so the
-    /// tested arm is unreachable and the other arm inherits the local).
+    /// The arm-entry state for a decoded fact. A dead promise stays dead,
+    /// because `missing()` after a rebinding is always FALSE.
     fn arm_state(&self, point: &SupplyPoint, supply: Supply) -> Option<Supply> {
         point.alive.is_some().then_some(supply)
     }
 
-    // -- Condition classification -------------------------------------
-
-    fn classify_condition(&self, cond: &Expr, point: &SupplyPoint) -> Option<SupplyTest> {
-        match self.atom(cond, true, point) {
-            AtomOutcome::Test { then, else_ } => Some(SupplyTest::Decoded { then, else_ }),
-            AtomOutcome::Mention => Some(SupplyTest::Mention),
-            AtomOutcome::NoInfo => None,
-        }
-    }
-
-    /// Decompose `expr` under `polarity` (whether the enclosing condition
-    /// asserts the subtree's truth). `point` supplies the proxy bindings
-    /// in scope at the condition.
+    /// Decompose `expr` under `polarity`, which says whether the enclosing
+    /// condition asserts the subtree's truth.
     fn atom(&self, expr: &Expr, polarity: bool, point: &SupplyPoint) -> AtomOutcome {
         match expr {
             Expr::UnaryOp {
@@ -609,10 +492,8 @@ impl FormalSupplyWalk<'_, '_> {
                 }
             }
             Expr::Ident { name, .. } => match point.proxies.get(name).copied() {
-                // The binding holds `missing(p)` when not negated and
-                // `!missing(p)` when negated; the condition asserts the
-                // binding's value, so the two flags XOR to the supply the
-                // then-arm sees.
+                // The polarity and the cached negation XOR to the
+                // then-arm's fact.
                 Some(negated) => self.missing_atom(polarity != negated),
                 None => AtomOutcome::NoInfo,
             },
@@ -622,11 +503,8 @@ impl FormalSupplyWalk<'_, '_> {
                 rhs,
                 ..
             } => {
-                // The operands appear positively inside the composition
-                // (polarity only flips through `!`), so they decompose at
-                // their own truth and the positive combinator applies; an
-                // assertion that NEGATES the composition then takes the
-                // De Morgan dual by exchanging the arms.
+                // Decompose the operands positively, then swap the arms
+                // when the composition is negated.
                 let combined = self
                     .atom(lhs, true, point)
                     .combine_and(self.atom(rhs, true, point));
@@ -656,8 +534,7 @@ impl FormalSupplyWalk<'_, '_> {
         }
     }
 
-    /// The test outcome for a `missing(p)` fact, under `polarity`: the
-    /// then-arm sees the asserted fact, the else-arm the negation.
+    /// The test outcome for `missing(p)` under `polarity`.
     fn missing_atom(&self, polarity: bool) -> AtomOutcome {
         AtomOutcome::Test {
             then: if polarity {
@@ -735,10 +612,8 @@ impl FormalSupplyWalk<'_, '_> {
     }
 }
 
-/// Whether a `for` iterator is syntactically provably nonempty: a
-/// literal-only `a:b` sequence, or a single non-`NA` literal (length 1).
-/// Anything else may be empty, and the loop body's effects then may never
-/// run.
+/// Whether a `for` iterator is a literal `a:b` sequence or a single
+/// non-`NA` literal, so the body runs at least once.
 fn iterator_provably_nonempty(iter: &Expr) -> bool {
     match iter {
         Expr::Integer(..) | Expr::Double(..) | Expr::String(..) => true,
@@ -771,10 +646,9 @@ fn merge_live_arms(
     }
 }
 
-/// Merge two branch-end states into the state that survives both paths:
-/// a path with no live promise contributes none (its reads see a local),
-/// live paths merge their supply facts, and a cached test survives only
-/// when both paths bound the same polarity.
+/// Merge two branch-end states. A path with no live promise contributes
+/// none, and a cached test survives only when both paths bound the same
+/// polarity.
 fn merge_points(a: &SupplyPoint, b: &SupplyPoint) -> SupplyPoint {
     let mut proxies = HashMap::new();
     for (name, polarity) in &a.proxies {
@@ -793,14 +667,8 @@ fn merge_points(a: &SupplyPoint, b: &SupplyPoint) -> SupplyPoint {
 
 impl Checker {
     /// RY108: an S3 `seq.<class>` method whose `to` formal has a non-NULL
-    /// default uses `to` without a `missing(to)` guard.
-    ///
-    /// The seq generic forwards `...`-carried specifiers into the method,
-    /// so a call like `seq(x, length.out = n)` enters the method with the
-    /// defaulted `to` plus `length.out`; forwarding or casting that `to`
-    /// unconditionally hands `seq.default` a defaulted endpoint it cannot
-    /// distinguish from a supplied one. Only `to` is analyzed (see the
-    /// module docs); `seq.int` is not an S3 method of the generic.
+    /// default uses `to` without a `missing(to)` guard. `seq.int` is not
+    /// an S3 method of the generic.
     pub(crate) fn check_seq_defaulted_forward(
         &mut self,
         method_name: &str,
@@ -862,8 +730,8 @@ mod tests {
 
     #[test]
     fn fires_on_the_hms_bug_shape() {
-        // tidyverse/hms#231 pre-fix R/hms.R:301: the unconditional cast
-        // forces the defaulted `to` before any missing() test.
+        // The unconditional cast forces the defaulted `to` before any
+        // missing() test.
         assert!(fires(
             "as_hms <- function(x) x\n\
              seq.hms <- function(from = hms(1), to = hms(1), by = NULL, ...) {\n\
@@ -1020,9 +888,8 @@ mod tests {
 
     #[test]
     fn stays_silent_for_the_fixed_hms_shape() {
-        // The 6fec3ad fix: every `to` use sits behind a
-        // `if (missing(to)) return(...)` early exit, so the continuation
-        // is proven supplied.
+        // Every `to` use sits behind an `if (missing(to)) return(...)`
+        // early exit, so the continuation is proven supplied.
         assert!(!fires(
             "as_hms <- function(x) x\n\
              seq.hms <- function(from = hms(1), to = hms(1), by = NULL, ...) {\n\
@@ -1257,10 +1124,8 @@ mod tests {
     #[test]
     fn closure_bodies_and_defaults_are_not_analyzed() {
         // A closure defined before the guard and called after it never
-        // runs on the defaulted path (R: 1 2 3), so its body must not
-        // fire; suppression also covers unguarded closures and closure
-        // parameter defaults (`function(x = to)`), a documented recall
-        // concession.
+        // runs on the defaulted path (R: 1 2 3). Unguarded closures and
+        // closure parameter defaults (`function(x = to)`) stay quiet too.
         assert!(!fires(
             "seq.widget <- function(from = 1, to = 9, ...) {\n\
              \x20 helper <- function() seq(from, to, ...)\n\

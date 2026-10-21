@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -231,10 +231,7 @@ pub(crate) fn run_check(
         return Ok(discovery_exit_code(&cfg));
     }
 
-    // The reloadable inputs of every pass. In watch mode the loop below
-    // refreshes them whenever a non-R input changes; the file set
-    // stays a parameter of `run_check_once` because watch iterations
-    // change it too.
+    // Watch mode reloads these when a config input changes.
     let mut state = WatchState::new(
         &search_start,
         config_root,
@@ -248,16 +245,16 @@ pub(crate) fn run_check(
         baseline_from_cli,
     );
 
-    // Snapshot the watched inputs before the initial pass reads them, like
-    // every poll does before its re-check: an edit landing during that
-    // pass, or right after the "watching" line, then differs on the first
-    // poll instead of becoming the recorded state.
-    let mut stamps: HashMap<PathBuf, SystemTime> = HashMap::new();
-    if watch {
-        sync_stamps(&all_paths, &mut stamps);
-        state.sync_static_stamps();
-        state.sync_meta_stamps(&search_roots, &all_paths);
-    }
+    // Snapshot the watched inputs before a pass reads them, so an edit
+    // landing during the pass differs on the next poll.
+    let (mut config_stamps, mut source_stamps) = if watch {
+        (
+            state.config_inputs(),
+            state.source_inputs(&search_roots, &all_paths),
+        )
+    } else {
+        Default::default()
+    };
 
     let min_confidence = min_confidence.into();
     let mut result = run_check_once(
@@ -270,10 +267,15 @@ pub(crate) fn run_check(
     result.discovery_errors = scan.read_errors.len();
     if let Some(path) = write_baseline.as_deref() {
         config::write_baseline_file(path, &result.diagnostics, state.config_root())?;
-        // The run's own baseline write is not an edit to react to; any other
-        // static input edited during the check still is.
+        // The run's own baseline write is not an edit to react to.
         if watch {
-            state.refresh_static_stamp(path);
+            let identity = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+            let written = identity(path);
+            for (watched, stamp) in &mut config_stamps {
+                if identity(watched) == written {
+                    *stamp = mtime(watched);
+                }
+            }
         }
     }
     result.print_summary(state.format(), statistics);
@@ -295,16 +297,15 @@ pub(crate) fn run_check(
     loop {
         std::thread::sleep(poll_interval);
 
-        // Reload the config-anchored inputs first so the rescan below
-        // already runs under a changed discovery config (new excludes,
-        // fixture flags, index caps). Every touch between two polls
-        // coalesces into one reload and one re-check, the same debouncing
-        // the R-file mtime loop below provides.
-        let inputs_changed = state.poll_static_inputs();
+        // Reload before the rescan so discovery runs under the new config.
+        let config_changed = state.config_inputs() != config_stamps;
+        if config_changed {
+            state.reload();
+            // The reload can move the baseline and the stub dirs.
+            config_stamps = state.config_inputs();
+        }
 
-        // Re-scan for new/deleted files via shared bounded discovery.
-        // Truncation was already reported on the initial scan, so the
-        // poll keeps stderr quiet.
+        // Truncation was already reported on the initial scan.
         let current = rescan(
             &search_roots,
             state.config_root(),
@@ -312,91 +313,51 @@ pub(crate) fn run_check(
             false,
             false,
         );
-
-        // Poll the package-metadata dependencies AFTER the rescan: the
-        // dependency set is derived from the discovered paths, so it must
-        // follow a config reload's effect on discovery, and a file set
-        // change and the metadata paths it admits are observed by one
-        // poll instead of a lagging second one. The snapshot records the
-        // values as they stand before the re-check below reads them, so
-        // a metadata edit landing DURING the check still differs on the
-        // next poll rather than being swallowed by a fresh post-check
-        // read. The derivation itself runs only when an input moved
-        // (config reload, file-set change) — an idle poll stats the
-        // cached candidates as-is.
-        let membership_changed = current.paths != all_paths;
-        let meta_changed = state.poll_meta_inputs(
-            &search_roots,
-            &current.paths,
-            inputs_changed || membership_changed,
-        );
-
-        // Check for any file modification or file set change.
-        let mut changed = inputs_changed || meta_changed || membership_changed;
-        if !changed {
-            for p in &current.paths {
-                if let Ok(meta) = std::fs::metadata(p)
-                    && let Ok(mtime) = meta.modified()
-                {
-                    let prev = stamps.get(p).copied();
-                    if prev != Some(mtime) {
-                        changed = true;
-                        stamps.insert(p.clone(), mtime);
-                        break;
-                    }
-                }
-            }
+        let sources = state.source_inputs(&search_roots, &current.paths);
+        if !config_changed && sources == source_stamps {
+            continue;
         }
-
-        if changed {
-            all_paths = current.paths;
-            // A root that stopped being readable dropped files out of
-            // the set; say so instead of letting them vanish silently.
-            report_read_errors(&current.read_errors);
-            // Re-sync stamps for any new files.
-            sync_stamps(&all_paths, &mut stamps);
-            // Clear screen for a clean view of the new diagnostics.
-            // Using ANSI escape sequences rather than `clear` command
-            // for portability (no external process spawn).
-            eprint!("\x1b[2J\x1b[H");
-            let result = run_check_once(&all_paths, None, &state.check_context(min_confidence))?;
-            result.print_summary(state.format(), statistics);
-        }
+        source_stamps = sources;
+        all_paths = current.paths;
+        // A root that stopped being readable dropped files out of the set.
+        report_read_errors(&current.read_errors);
+        // Clear the screen with ANSI escapes instead of spawning `clear`.
+        eprint!("\x1b[2J\x1b[H");
+        let result = run_check_once(&all_paths, None, &state.check_context(min_confidence))?;
+        result.print_summary(state.format(), statistics);
     }
 }
 
-/// The reloadable inputs of one watch session: everything a check pass
-/// reads *besides* the R file set. Watch mode polls the mtimes of the
-/// files these inputs come from and re-derives the affected state when
-/// one changes, so mid-watch edits take effect without a restart.
-/// The inputs split into two classes with different refresh disciplines:
-///
-/// * Static, config-anchored inputs (`ry.toml` candidates, the effective
-///   baseline, stub files under the typeshed dirs): fixed by the CLI
-///   roots and the merged config. A change reloads the
-///   config-derived state.
-/// * Package-metadata dependencies (DESCRIPTION/NAMESPACE along the
-///   ancestor chains of the roots and of the discovered R files, each
-///   chain stopping at the first absorbing ancestor — see
-///   [`package_meta_paths`]): the candidate set is cached and
-///   re-derived only when an input to the derivation moves (the file
-///   set, the discovery config) or an observed change may have moved an
-///   absorbing boundary; every other poll stats the cached candidates
-///   as-is. A change needs no config reload — the re-check itself
-///   re-reads the metadata — only a pass.
-///
-/// The LSP classifies the same inputs as resolution changes
-/// (`did_change_watched_files`); the CLI mirrors that classification
-/// with mtime polling instead of file events.
+/// `(path, mtime)` pairs, sorted by path. A missing path stamps `None`, so
+/// creating or deleting a watched file counts as a change.
+type Stamps = Vec<(PathBuf, Option<SystemTime>)>;
+
+fn stamps(mut paths: Vec<PathBuf>) -> Stamps {
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .map(|path| {
+            let stamp = mtime(&path);
+            (path, stamp)
+        })
+        .collect()
+}
+
+fn mtime(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+}
+
+/// Everything a check pass reads besides the R files and package metadata.
+/// Watch mode reloads it when one of its files changes.
 struct WatchState {
     /// Anchor for config re-discovery (first CLI path, or `.`).
     search_start: PathBuf,
-    /// Directory containing the active `ry.toml`, if one was found.
-    /// Doubles as the baseline-relative repo root and the resolution
-    /// fallback, exactly like the one-shot path's `config_root`.
+    /// Directory of the active `ry.toml`. Also the baseline-relative repo
+    /// root and the resolution fallback.
     config_root: Option<PathBuf>,
-    /// Merged config (disk config + CLI overrides), filter, stubs, and
-    /// baseline of the current pass.
     cfg: config::Config,
     filter: ry_checker::SeverityFilter,
     scoped_policy: ry_checker::ScopedRulePolicy,
@@ -404,39 +365,21 @@ struct WatchState {
     color_choice: crate::ColorChoice,
     user_stubs: Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
     baseline: Option<config::Baseline>,
-    /// Retained CLI overrides, re-merged over every reloaded disk
-    /// config so flags keep winning over `ry.toml` edits.
+    /// Re-merged over every reloaded config so flags keep winning.
     overrides: config::CliOverrides,
-    /// Whether the effective baseline came from `--baseline`: startup
-    /// aborts on its load errors, and reloads report them loudly too.
+    /// Startup aborts on `--baseline` load errors, so reloads report them
+    /// too.
     baseline_from_cli: bool,
-    /// Last-good policy: a broken `ry.toml` or baseline
-    /// mid-watch keeps the previous inputs with one warning per episode
-    /// instead of killing the session or spamming every poll. Cleared
-    /// when the file parses again, with a recovery note.
+    /// A broken `ry.toml` or baseline keeps the last good inputs and warns
+    /// once until the file loads again.
     config_broken: bool,
     baseline_broken: bool,
-    /// (path, mtime) snapshot of the config-anchored inputs; `None` is a
-    /// missing path, so creation and deletion trigger like edits do.
-    static_stamps: Vec<(PathBuf, Option<SystemTime>)>,
-    /// Derived package-metadata dependency paths of the current pass:
-    /// the sorted candidate set [`package_meta_paths`] returned for the
-    /// current roots, file set, and discovery config. Cached across
-    /// polls because the set can only move when one of those inputs
-    /// moves — an idle poll stats these paths instead of re-deriving
-    /// them (a HashSet rebuild plus two joins per candidate).
-    meta_paths: Vec<PathBuf>,
-    /// (path, mtime) snapshot of the package-metadata dependencies
-    /// derived from the current roots and discovered file set. `None` is
-    /// a missing path, so creating a nearer DESCRIPTION or a NAMESPACE
-    /// for a package that had none registers like an edit.
-    meta_stamps: Vec<(PathBuf, Option<SystemTime>)>,
 }
 
 impl WatchState {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        search_start: &std::path::Path,
+        search_start: &Path,
         config_root: Option<PathBuf>,
         cfg: config::Config,
         filter: ry_checker::SeverityFilter,
@@ -447,7 +390,7 @@ impl WatchState {
         overrides: config::CliOverrides,
         baseline_from_cli: bool,
     ) -> Self {
-        let scoped_policy = scoped_policy(&cfg, config_root.as_deref(), &overrides);
+        let scoped_policy = scoped_policy(&cfg, &overrides);
         Self {
             search_start: search_start.to_path_buf(),
             config_root,
@@ -462,9 +405,6 @@ impl WatchState {
             baseline_from_cli,
             config_broken: false,
             baseline_broken: false,
-            static_stamps: Vec::new(),
-            meta_paths: Vec::new(),
-            meta_stamps: Vec::new(),
         }
     }
 
@@ -472,7 +412,7 @@ impl WatchState {
         &self.cfg
     }
 
-    fn config_root(&self) -> Option<&std::path::Path> {
+    fn config_root(&self) -> Option<&Path> {
         self.config_root.as_deref()
     }
 
@@ -480,8 +420,6 @@ impl WatchState {
         self.format
     }
 
-    /// Borrow the current inputs as one pass's context. Rebuilt per
-    /// pass because a reload may have replaced everything it borrows.
     fn check_context(&self, min_confidence: ry_checker::Confidence) -> CheckContext<'_> {
         CheckContext {
             filter: &self.filter,
@@ -496,129 +434,32 @@ impl WatchState {
         }
     }
 
-    /// Record the current snapshot of the config-anchored inputs.
-    fn sync_static_stamps(&mut self) {
-        self.static_stamps = snapshot_static_inputs(
-            &config_candidates(&self.search_start),
-            self.cfg.baseline.as_deref(),
-            &self.cfg.typeshed,
-        );
+    /// The `ry.toml` candidates, the effective baseline, and the stub files.
+    /// A change reloads the config. Candidates are watched even when absent
+    /// so a nearer `ry.toml` created mid-watch wins, as in a fresh run.
+    fn config_inputs(&self) -> Stamps {
+        let mut paths = config::config_candidates(&self.search_start);
+        paths.extend(self.cfg.baseline.clone());
+        paths.extend(stub_files(&self.cfg.typeshed));
+        stamps(paths)
     }
 
-    /// Re-record one static input's stamp, leaving the others as they were.
-    fn refresh_static_stamp(&mut self, path: &std::path::Path) {
-        let identity = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-        let target = identity(path);
-        for (watched, stamp) in &mut self.static_stamps {
-            if identity(watched) == target {
-                *stamp = std::fs::metadata(&*watched)
-                    .and_then(|meta| meta.modified())
-                    .ok();
-            }
-        }
+    /// The R files and the package metadata they resolve against. A change
+    /// re-runs the check without a reload.
+    fn source_inputs(&self, search_roots: &[PathBuf], discovered: &[PathBuf]) -> Stamps {
+        let mut paths = discovered.to_vec();
+        paths.extend(package_meta_paths(
+            search_roots,
+            discovered,
+            self.config_root(),
+        ));
+        stamps(paths)
     }
 
-    /// Derive the package-metadata dependency set together with its
-    /// snapshot in one step: the single derive/snapshot pairing, shared
-    /// by the initial sync ([`WatchState::sync_meta_stamps`]) and the
-    /// poll's `rederive` path so the two cannot drift apart.
-    fn derive_meta_state(
-        &self,
-        search_roots: &[PathBuf],
-        discovered: &[PathBuf],
-    ) -> (Vec<PathBuf>, Vec<(PathBuf, Option<SystemTime>)>) {
-        let paths = package_meta_paths(search_roots, discovered, self.config_root());
-        let stamps = snapshot_meta_paths(&paths);
-        (paths, stamps)
-    }
-
-    /// Derive the package-metadata dependency paths for `discovered`
-    /// (the file set the next pass will check) and the CLI roots, and
-    /// record their snapshot.
-    fn sync_meta_stamps(&mut self, search_roots: &[PathBuf], discovered: &[PathBuf]) {
-        (self.meta_paths, self.meta_stamps) = self.derive_meta_state(search_roots, discovered);
-    }
-
-    /// Compare the config-anchored inputs against the snapshot; on any
-    /// difference reload the affected state, refresh the stamp set (a
-    /// reload can change *which* paths are watched), and report that the
-    /// caller must re-run the pass. Pure R-file edits leave the snapshot
-    /// untouched, so R-only iterations skip the reload entirely.
-    fn poll_static_inputs(&mut self) -> bool {
-        let current = snapshot_static_inputs(
-            &config_candidates(&self.search_start),
-            self.cfg.baseline.as_deref(),
-            &self.cfg.typeshed,
-        );
-        if current == self.static_stamps {
-            return false;
-        }
-        self.reload();
-        self.sync_static_stamps();
-        true
-    }
-
-    /// Compare the package-metadata dependencies against the snapshot.
-    /// `rederive` is set by the caller when an input to the derivation
-    /// may have moved — the file set changed or the discovery config
-    /// reloaded (the CLI roots are fixed for the session); every other
-    /// poll stats the cached [`WatchState::meta_paths`] members only,
-    /// skipping the HashSet and join work of a fresh derivation. On any
-    /// difference — an mtime edit, a creation/deletion (`None` swapping
-    /// with a stamp), or the dependency set itself moving — install the
-    /// just-captured snapshot and report that a pass is needed. The
-    /// installed values are the pre-check ones, so a metadata edit that
-    /// lands while the re-check runs still differs on the next poll
-    /// instead of being swallowed by re-reading after the check. Each
-    /// poll derives at most once: the `rederive` path derives set and
-    /// snapshot together ([`WatchState::derive_meta_state`]), and a
-    /// difference installs that fresh pair directly — the set was
-    /// derived from the disk state of THIS poll, so any absorbing
-    /// boundary move is already reflected and deriving again at the
-    /// tail would rebuild an identical set. Only the cached path
-    /// re-derives after a difference: a cached set may have missed a
-    /// boundary move (a boundary DESCRIPTION created or deleted — see
-    /// [`package_meta_paths`]), so the next poll must watch the
-    /// boundary as it now stands. That re-derivation does NOT refresh
-    /// the stamps: if the boundary did move, the next poll sees the set
-    /// difference against the pre-check snapshot and settles with one
-    /// extra pass.
-    fn poll_meta_inputs(
-        &mut self,
-        search_roots: &[PathBuf],
-        discovered: &[PathBuf],
-        rederive: bool,
-    ) -> bool {
-        if rederive {
-            // One derivation per poll: install the fresh set either
-            // way (the inputs that produced the cached one moved), and
-            // the fresh snapshot only on a difference.
-            let (paths, current) = self.derive_meta_state(search_roots, discovered);
-            self.meta_paths = paths;
-            if current == self.meta_stamps {
-                return false;
-            }
-            self.meta_stamps = current;
-            return true;
-        }
-        let current = snapshot_meta_paths(&self.meta_paths);
-        if current == self.meta_stamps {
-            return false;
-        }
-        self.meta_stamps = current;
-        self.meta_paths = package_meta_paths(search_roots, discovered, self.config_root());
-        true
-    }
-
-    /// Re-derive every reloadable input from disk: re-discover and
-    /// re-merge the config, rebuild the filter, reload the baseline
-    /// and the stubs. Failures keep the last-good inputs with a
-    /// warn-once episode (never a per-poll spam, never a dead
-    /// session); recovery prints one note when the file parses again.
-    /// A machine-readable `output_format` is also a failure here: the
-    /// startup path rejects non-human formats for watch mode, so a
-    /// mid-watch switch to one keeps the last-good human format
-    /// instead of interleaving JSON with the loop's screen clears.
+    /// Re-discover and re-merge the config, then rebuild everything derived
+    /// from it. Failures keep the last good inputs. A machine-readable
+    /// `output_format` counts as a failure because startup rejects it for
+    /// watch mode.
     fn reload(&mut self) {
         match config::Config::discover(&self.search_start) {
             Ok(found) => {
@@ -641,11 +482,7 @@ impl WatchState {
                         self.cfg = cfg;
                         self.format = format;
                         self.filter = ry_checker::filter_from_config(&self.cfg);
-                        self.scoped_policy = scoped_policy(
-                            &self.cfg,
-                            self.config_root.as_deref(),
-                            &self.overrides,
-                        );
+                        self.scoped_policy = scoped_policy(&self.cfg, &self.overrides);
                         self.user_stubs = load_user_stubs(&self.cfg.typeshed);
                         self.reload_baseline();
                     }
@@ -659,16 +496,10 @@ impl WatchState {
         }
     }
 
-    /// Reload the effective baseline after a config reload. A broken
-    /// baseline keeps the last-good entries with a warn-once episode.
-    /// A config-level baseline whose file is gone is not "broken":
-    /// like a fresh run (which warns and continues without it), the
-    /// reload settles to no baseline with the same one-shot warning —
-    /// keeping stale acceptances would contradict the fresh-run
-    /// contract the method's `None` arm already honors for a removed
-    /// key. Only a `--baseline` file that vanishes keeps the previous
-    /// entries, since startup treats that flag as load-bearing enough
-    /// to abort on.
+    /// Reload the effective baseline. A broken baseline keeps the last good
+    /// entries. A deleted config-level baseline settles to no baseline, as a
+    /// fresh run does. A deleted `--baseline` keeps the previous entries
+    /// because startup aborts on it.
     fn reload_baseline(&mut self) {
         match self.cfg.baseline.as_deref() {
             Some(path) => match config::load_baseline(path) {
@@ -680,12 +511,8 @@ impl WatchState {
                     self.baseline = Some(value);
                 }
                 Err(error) => {
-                    // A config-level baseline whose file is gone settles
-                    // to no baseline (see the method docs). `path.exists`
-                    // is the missing test rather than downcasting the
-                    // miette report: `load_baseline` wraps the I/O error
-                    // in a message report, so the chain carries no
-                    // `std::io::Error` to match on.
+                    // `load_baseline` wraps the I/O error in a message
+                    // report, so test for the missing file directly.
                     if !path.exists() && !self.baseline_from_cli {
                         if self.baseline.take().is_some() {
                             eprintln!("ry: warning: {error}");
@@ -719,7 +546,6 @@ impl WatchState {
 /// Per-path rule tables; explicit CLI rule flags keep precedence over them.
 fn scoped_policy(
     cfg: &config::Config,
-    config_root: Option<&std::path::Path>,
     overrides: &config::CliOverrides,
 ) -> ry_checker::ScopedRulePolicy {
     let protected = overrides
@@ -729,104 +555,19 @@ fn scoped_policy(
         .chain(&overrides.ignore)
         .cloned()
         .collect::<Vec<_>>();
-    ry_checker::ScopedRulePolicy::new(cfg, config_root, &protected)
+    ry_checker::ScopedRulePolicy::new(cfg, &protected)
 }
 
-/// Candidate `ry.toml` paths for the upward discovery walk from
-/// `search_start` (file roots start at their parent). Watched even
-/// when absent so a newly created config triggers a reload, and wide
-/// enough that a nearer config appearing mid-watch wins on the next
-/// re-discovery, exactly as a fresh run would resolve it.
-fn config_candidates(search_start: &std::path::Path) -> Vec<PathBuf> {
-    // Anchor EXACTLY like `Config::discover` — `..` components kept —
-    // because discovery's upward walk (`Path::parent`) steps over dots
-    // rather than folding them: from `<cwd>/../project` it probes
-    // `<cwd>/..` and then `<cwd>` itself before climbing past both,
-    // directories the folded start `<parent-of-cwd>/project` never
-    // visits. Watching a folded chain could omit the very `ry.toml`
-    // discovery selects, leaving the active config unwatched.
-    let abs = discover_start(search_start);
-    let mut dir: &std::path::Path = if abs.is_file() {
-        abs.parent().unwrap_or(std::path::Path::new("."))
-    } else {
-        abs.as_path()
-    };
-    let mut candidates = Vec::new();
-    loop {
-        candidates.push(dir.join(config::CONFIG_FILENAME));
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => break,
-        }
-    }
-    candidates
-}
-
-/// Resolve `path` against the process working directory, keeping every
-/// lexical component as given (`..` stays `..`). This is `ry_config`'s
-/// `Config::discover` anchor verbatim; the config-candidate walk must
-/// start from it — not from the folded [`absolutize`] form — so
-/// discovery and `poll_static_inputs` step over the same directories
-/// in the same order.
-///
-/// Deliberately a local copy rather than a shared `ry_config` helper:
-/// the anchor is three lines with no behavior of its own, exposing it
-/// would widen ry-config's public surface for a single caller outside
-/// the crate, and a shared home intrusive enough to justify that would
-/// couple the crates for a walk this small. Drift is guarded by test
-/// instead: `config_candidates_mirror_discovery_for_dotdot_inputs`
-/// pins the candidate walk to the config discovery actually selects
-/// for dotted directory and file inputs, so a change to discovery's
-/// anchoring fails that test rather than silently diverging the
-/// watched set.
-fn discover_start(path: &std::path::Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    }
-}
-
-/// Resolve `path` against the process working directory and normalize
-/// it lexically (drop `.` components, fold `..` against the stack)
-/// without touching the filesystem — watched metadata candidates may
-/// not exist yet, so `canonicalize` is not an option. Used for the
-/// package-metadata chains, NOT for the config candidates (see
-/// [`discover_start`]): there the walk must mirror discovery's
-/// dot-preserving steps exactly. Folding keeps a relative CLI input
-/// (`ry check pkg/R/use.R` from a parent directory) walking the same
-/// ancestor chain an absolute one would — the raw walk would otherwise
-/// fall out of the path at the empty component
-/// `Path::new("pkg").parent()` yields and terminate at the working
-/// directory.
-///
-/// Known limitations, accepted — each costs a missed auto-refresh at
-/// worst, never a spurious pass and never a wrong result (the pass
-/// that does run reads the same files a fresh check would, and the
-/// next unrelated edit or a restart picks the change up):
-/// * Folding is lexical, so a `..` that crosses a symlinked component
-///   (`a/symlink/../pkg/DESCRIPTION`) yields a path the OS never
-///   resolves to that file — the kernel resolves `..` against the link
-///   TARGET's parent, not against `a`, while the one-shot walks
-///   (`Path::ancestors` in `enclosing_package_root`,
-///   `Config::discover`) keep the components as given and therefore
-///   read through the link.
-/// * If [`discover_start`]'s `std::env::current_dir()` fails and the
-///   `.` fallback engages, a relative input folds against an empty
-///   stack: leading `..` components drop out, and the watched
-///   candidates can diverge from the anchoring a working
-///   `current_dir()` would have produced — the same missed-watch class
-///   the config-candidate anchoring avoids, at a severity the next
-///   edit or restart still heals.
-///
-/// Canonicalizing the deepest existing ancestor instead would stat up
-/// the tree on every derivation and churn snapshot entries as creations
-/// make ever-deeper prefixes canonicalizable, so the lexical form
-/// stands.
-fn absolutize(path: &std::path::Path) -> PathBuf {
-    let joined = discover_start(path);
+/// Resolve `path` against the working directory and fold `.` and `..`
+/// lexically. `canonicalize` is not an option because watched metadata may
+/// not exist yet. Folding keeps a relative input walking the same ancestors
+/// as an absolute one, where `Path::new("pkg").parent()` would stop the walk
+/// at the empty path. A `..` across a symlink folds to a path the kernel does
+/// not resolve, which costs at most a missed refresh.
+fn absolutize(path: &Path) -> PathBuf {
+    let joined = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(path);
     let mut normalized = PathBuf::new();
     for component in joined.components() {
         match component {
@@ -840,84 +581,31 @@ fn absolutize(path: &std::path::Path) -> PathBuf {
     normalized
 }
 
-/// DESCRIPTION/NAMESPACE paths that affect resolution of the watched
-/// roots and the files discovery actually returns. Inputs are resolved
-/// to absolute paths first (see [`absolutize`]); each chain then walks
-/// from the root itself (a file root's parent, a discovered file's
-/// parent) up to the first ABSORBING ancestor and contributes its
-/// DESCRIPTION/NAMESPACE candidates, watched even when absent, so
-/// turning a folder into a package mid-watch (creating DESCRIPTION),
-/// adding a NAMESPACE to a package that had none, or deleting either
-/// triggers a re-check.
+/// DESCRIPTION and NAMESPACE paths that affect how the roots and the
+/// discovered files resolve, sorted and deduplicated. Absent files are
+/// included so creating one triggers a re-check.
 ///
-/// An ancestor absorbs a chain when one of:
-/// * it is already covered by an earlier chain, whose own walk
-///   continued as far up as it needed to;
-/// * it holds an existing DESCRIPTION — a package boundary. A fresh
-///   one-shot groups every file by its NEAREST existing DESCRIPTION
-///   ancestor (`ry_workspace::enclosing_package_root` stops there), so
-///   nothing above that boundary can change how any file below it
-///   resolves;
-/// * it is the config root — the directory holding the active
-///   `ry.toml`, which the config-candidate walk already anchors and
-///   which is the fallback resolution root for files outside any
-///   package.
-///
-/// Absorbing ancestors are included before the walk stops (their own
-/// metadata is a resolution input); with no absorber anywhere the chain
-/// runs to the filesystem top, exactly as far as the one-shot grouping
-/// walk itself would. The accepted trade applies to the CONFIG ROOT
-/// absorber only: a package root created above it is not watched even
-/// though a fresh check would honor it (the grouping walk climbs past
-/// the config root) — the price of keeping unrelated ancestors (/,
-/// /tmp, $HOME) out of the set. Above a DESCRIPTION boundary the stop
-/// loses nothing: the nearest-boundary rule (`enclosing_package_root`
-/// stops at the first existing DESCRIPTION) hides a higher root from a
-/// fresh check too. Deleting an absorbing DESCRIPTION IS watched
-/// (it is a candidate in the set), and the next poll re-derives the
-/// set, so a moved boundary self-heals.
-///
-/// The per-file chains are what cover packages nested *below* a
-/// watched root: a fresh one-shot resolves each file against its
-/// nearest DESCRIPTION ancestor, so every directory on that walk is a
-/// resolution input, including directories that only *could* become
-/// the package root (a nearer DESCRIPTION created there changes the
-/// file's grouping without touching any source byte).
-///
-/// The set stays bounded by relevant files and their ancestors up to
-/// the first absorbing boundary: no recursive scan happens here, the
-/// discovered paths come from the loop's existing bounded discovery,
-/// and directories with no discovered file below them (a sibling
-/// package with no R sources) never enter the set. The result is
-/// sorted and deduplicated, so the stamp snapshots derived from it are
-/// order-stable.
+/// Each chain starts at a root (a file root's parent) or a discovered
+/// file's parent and walks up to the first absorbing ancestor, inclusive:
+/// a directory an earlier chain covered, one with an existing DESCRIPTION,
+/// or the config root. A fresh check groups each file by its nearest
+/// DESCRIPTION (`enclosing_package_root`), so nothing above that boundary
+/// changes resolution. Stopping at the config root keeps `/`, `/tmp`, and
+/// `$HOME` out of the set, at the cost of not noticing a package root
+/// created above it.
 fn package_meta_paths(
     search_roots: &[PathBuf],
     discovered: &[PathBuf],
-    config_anchor: Option<&std::path::Path>,
+    config_anchor: Option<&Path>,
 ) -> Vec<PathBuf> {
     let anchor = config_anchor.map(absolutize);
     let mut paths = Vec::new();
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    // One collector for both halves of the derivation. `seen` and
-    // `paths` are shared state of the same set, so both live in the
-    // closure; a `false` return means the directory was already covered
-    // and the caller's walk stops. `contains` before `insert` keeps the
-    // already-covered common case allocation-free.
-    let mut push_dir = |dir: &std::path::Path| -> bool {
-        if seen.contains(dir) {
-            return false;
-        }
-        seen.insert(dir.to_path_buf());
-        paths.push(dir.join("DESCRIPTION"));
-        paths.push(dir.join("NAMESPACE"));
-        true
-    };
-    let mut chains: Vec<&std::path::Path> = search_roots
+    let mut chains: Vec<&Path> = search_roots
         .iter()
         .map(|root| {
             if root.is_file() {
-                root.parent().unwrap_or(std::path::Path::new("."))
+                root.parent().unwrap_or(Path::new("."))
             } else {
                 root.as_path()
             }
@@ -926,12 +614,10 @@ fn package_meta_paths(
     chains.extend(discovered.iter().filter_map(|file| file.parent()));
     for start in chains {
         let mut dir: PathBuf = absolutize(start);
-        loop {
-            if !push_dir(&dir) {
-                break; // already covered by an earlier chain
-            }
-            let absorbed = dir.join("DESCRIPTION").is_file() || Some(&dir) == anchor.as_ref();
-            if absorbed {
+        while seen.insert(dir.clone()) {
+            paths.push(dir.join("DESCRIPTION"));
+            paths.push(dir.join("NAMESPACE"));
+            if dir.join("DESCRIPTION").is_file() || Some(&dir) == anchor.as_ref() {
                 break;
             }
             match dir.parent() {
@@ -941,97 +627,33 @@ fn package_meta_paths(
         }
     }
     paths.sort();
-    paths.dedup();
     paths
 }
 
-/// (path, mtime) over the package-metadata dependencies. Missing paths
-/// contribute `None` so creation and deletion register. Order-stable by
-/// construction: [`package_meta_paths`] returns a sorted, deduplicated
-/// set, so repeated derivations produce the same snapshot order no
-/// matter what order `discovered` arrived in.
-fn snapshot_meta_paths(meta_paths: &[PathBuf]) -> Vec<(PathBuf, Option<SystemTime>)> {
-    meta_paths
-        .iter()
-        .map(|path| {
-            (
-                path.clone(),
-                std::fs::metadata(path)
-                    .and_then(|meta| meta.modified())
-                    .ok(),
-            )
-        })
-        .collect()
-}
-
-/// (path, mtime) over the config-anchored inputs: the config
-/// candidates, the effective baseline file, and every stub file the
-/// loader would read (flat plus one nesting level, mirroring
-/// `discover_stub_files`). Missing paths contribute `None` so creation
-/// and deletion register. Sorted for a stable whole-snapshot
-/// comparison.
-fn snapshot_static_inputs(
-    config_paths: &[PathBuf],
-    baseline: Option<&std::path::Path>,
-    stub_dirs: &[PathBuf],
-) -> Vec<(PathBuf, Option<SystemTime>)> {
-    let mut snapshot: Vec<(PathBuf, Option<SystemTime>)> = Vec::new();
-    snapshot.extend(config_paths.iter().map(|path| {
-        (
-            path.clone(),
-            std::fs::metadata(path)
-                .and_then(|meta| meta.modified())
-                .ok(),
-        )
-    }));
-    if let Some(path) = baseline {
-        snapshot.push((
-            path.to_path_buf(),
-            std::fs::metadata(path)
-                .and_then(|meta| meta.modified())
-                .ok(),
-        ));
-    }
-    for dir in stub_dirs {
-        match std::fs::read_dir(dir) {
-            Ok(entries) => {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        // One nesting level, like the stub loader.
-                        if let Ok(nested) = std::fs::read_dir(&path) {
-                            for entry in nested.flatten() {
-                                let path = entry.path();
-                                if !path.is_dir() {
-                                    snapshot.push((
-                                        path.clone(),
-                                        std::fs::metadata(&path)
-                                            .and_then(|meta| meta.modified())
-                                            .ok(),
-                                    ));
-                                }
-                            }
-                        }
-                    } else {
-                        snapshot.push((
-                            path.clone(),
-                            std::fs::metadata(&path)
-                                .and_then(|meta| meta.modified())
-                                .ok(),
-                        ));
-                    }
-                }
+/// The files the stub loader reads from `dirs`: flat plus one nesting
+/// level, like `discover_stub_files`. A missing dir stands in for its
+/// files so creating it triggers a reload.
+fn stub_files(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            files.push(dir.clone());
+            continue;
+        };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if !path.is_dir() {
+                files.push(path);
+            } else if let Ok(nested) = std::fs::read_dir(&path) {
+                files.extend(
+                    nested
+                        .flatten()
+                        .map(|entry| entry.path())
+                        .filter(|path| !path.is_dir()),
+                );
             }
-            // A missing stub dir still contributes its own entry so
-            // creating it later triggers a reload.
-            Err(_) => snapshot.push((
-                dir.clone(),
-                std::fs::metadata(dir).and_then(|meta| meta.modified()).ok(),
-            )),
         }
     }
-    snapshot.sort();
-    snapshot
+    files
 }
 
 /// Result of a single check pass: the diagnostics, file count, and
@@ -1245,17 +867,12 @@ fn run_check_once(
     )?;
 
     // Post-processing runs through the shared pipeline
-    // (`ry_checker::post_process`) so the CLI and the LSP apply one
-    // specified order: inline suppression comments (`# ry: ignore`,
-    // `# noqa`, `# ry: ignore-file`), then the severity filter, then
-    // [demotion seam — `demote_non_source_paths` on the pipeline, run
-    // at the seam below], then baseline subtraction, then the
-    // min-confidence threshold. The lexical (comment-based) suppression
-    // filter keeps a `#` inside a string literal from being mistaken
-    // for a directive.
+    // (`ry_checker::post_process`), so the CLI and the LSP apply one order.
+    // Suppression comments and the severity filter run per file here.
+    // `post_demotion` then runs on the collected result below.
     for group in groups {
         let files: Vec<_> = group
-            .source_indices
+            .indices
             .iter()
             .map(|&index| Arc::clone(&parsed[index]))
             .collect();
@@ -1268,7 +885,12 @@ fn run_check_once(
                 .into_iter()
                 .map(|diagnostic| (PathBuf::from(&diagnostic.path), diagnostic)),
         );
-        let checked = check_project(group.check_input, adopted.records);
+        for (path, reason) in &group.context.degraded_scopes {
+            degraded.insert(format!("{} ({})", path.display(), reason.description()));
+        }
+        let input =
+            pipeline::CheckInput::new(&parsed, &group.indices, &ctx.user_stubs, group.context);
+        let checked = check_project(input, adopted.records);
         debug_assert_eq!(files.len(), checked.len());
         for (file, (path, diagnostics)) in files.iter().zip(checked) {
             let filter = ctx
@@ -1282,9 +904,6 @@ fn run_check_once(
             };
             all_diagnostics.extend(post.pre_demotion(diagnostics, &path, Some(file.as_ref())));
         }
-        for (path, reason) in group.degraded_scopes {
-            degraded.insert(format!("{} ({})", path.display(), reason.description()));
-        }
     }
     // File-level synthetic findings have no unambiguous source comment to
     // honor, so they enter the pipeline at the severity filter.
@@ -1295,17 +914,12 @@ fn run_check_once(
         all_diagnostics.extend(diagnostics);
     }
 
-    // Demotion seam: path-based confidence demotion sits between the
-    // severity filter and the baseline, its documented position in the
-    // shared order. The stage lives in the shared pipeline, so the LSP
-    // demotes non-source paths exactly like the CLI.
     let post = ry_checker::PostProcess {
         filter: ctx.filter,
         baseline: ctx.baseline,
         min_confidence: ctx.min_confidence,
         repo_root: ctx.repo_root,
     };
-    post.demote_non_source_paths(&mut all_diagnostics);
     post.post_demotion(&mut all_diagnostics);
 
     sort_and_deduplicate_diagnostics(&mut all_diagnostics);
@@ -1598,17 +1212,6 @@ fn overlay_path_for_roots(
 fn report_read_errors(read_errors: &[(PathBuf, String)]) {
     for (path, error) in read_errors {
         eprintln!("ry: {}: {error}", path.display());
-    }
-}
-
-/// Record the current mtime of every path into `stamps`.
-fn sync_stamps(paths: &[PathBuf], stamps: &mut HashMap<PathBuf, std::time::SystemTime>) {
-    for p in paths {
-        if let Ok(meta) = std::fs::metadata(p)
-            && let Ok(mtime) = meta.modified()
-        {
-            stamps.insert(p.clone(), mtime);
-        }
     }
 }
 
@@ -1997,57 +1600,6 @@ mod tests {
             !meta.contains(&PathBuf::from("DESCRIPTION")),
             "the empty path component must not contribute a bare candidate: {meta:?}"
         );
-    }
-
-    /// Discovery anchors its upward walk by joining the working
-    /// directory WITHOUT folding `..` (`ry_config`'s `Config::discover`
-    /// keeps the components and lets `Path::parent` step over them), so
-    /// from `<base>/sub/../project` it probes `<base>/project` (through
-    /// the dots), then `<base>` (as `sub/..`), then `<base>/sub` itself
-    /// — directories a lexically folded start would skip. If discovery
-    /// can select a config the candidate walk omits, watch mode never
-    /// notices edits to the ACTIVE `ry.toml`. Pin both walks to the
-    /// same sequence: for dotted directory and dotted file inputs, the
-    /// first existing candidate must be exactly the file discovery
-    /// returns.
-    #[test]
-    fn config_candidates_mirror_discovery_for_dotdot_inputs() {
-        let temp = tempfile::tempdir().unwrap();
-        let base = temp.path();
-        std::fs::create_dir_all(base.join("sub")).unwrap();
-        std::fs::create_dir_all(base.join("project/R")).unwrap();
-        let use_r = base.join("project/R/use.R");
-        std::fs::write(&use_r, "x <- 1L\n").unwrap();
-        // The only config on the chain, placed in `sub`: the dotted walk
-        // reaches it after `project` and `base`, while the folded start
-        // `<base>/project` never visits `sub` at all. Discovery stops
-        // there, so nothing above the tempdir can influence the pick.
-        std::fs::write(base.join("sub/ry.toml"), "exit-zero = true\n").unwrap();
-
-        let dotted_dir = base.join("sub/../project");
-        let dotted_file = base.join("sub/../project/R/use.R");
-        for start in [&dotted_dir, &dotted_file] {
-            let found = config::Config::discover(start)
-                .unwrap()
-                .expect("discovery must find the config placed in sub")
-                .0;
-            let expected = base.join("sub").join(config::CONFIG_FILENAME);
-            assert_eq!(
-                found, expected,
-                "the fixture's only config is in sub; discovery must pick it for {start:?}"
-            );
-            let candidates = config_candidates(start);
-            assert!(
-                candidates.contains(&found),
-                "the candidate walk must watch the config discovery selects for {start:?}: {candidates:?}"
-            );
-            let first_hit = candidates.iter().find(|path| path.is_file());
-            assert_eq!(
-                first_hit,
-                Some(&found),
-                "the candidate walk must agree with discovery's selection for {start:?}: {candidates:?}"
-            );
-        }
     }
 
     #[test]

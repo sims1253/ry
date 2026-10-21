@@ -17,6 +17,23 @@ pub(crate) struct CheckInput {
 }
 
 impl CheckInput {
+    /// The files of `parsed` at `indices`, checked in `workspace`.
+    pub(crate) fn new(
+        parsed: &[Arc<ry_core::SourceFile>],
+        indices: &[usize],
+        user_stubs: &Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
+        workspace: ry_workspace::WorkspaceContext,
+    ) -> Self {
+        Self {
+            files: indices
+                .iter()
+                .map(|&index| (parsed[index].path.clone(), Arc::clone(&parsed[index])))
+                .collect(),
+            user_stubs: Arc::clone(user_stubs),
+            workspace,
+        }
+    }
+
     fn into_project(self, records: Vec<DeclarationRecord>) -> ry_checker::Project {
         let mut project = ry_checker::Project::new();
         project.set_declaration_records(records);
@@ -124,20 +141,11 @@ pub(crate) enum FailureAction {
     Abort,
 }
 
-/// Size rayon's global pool before the first parallel work starts
-/// (all CLI parallelism funnels through [`parse_files`]). The check
-/// pipeline alternates parallel phases (parsing, diagnostic emission)
-/// with serial ones (workspace resolution, fixpoint refinement), so a
-/// worker per core spends the serial phases spinning and waking: on a
-/// 24-core machine the default pool burns ~4x the system time of a
-/// 12-worker pool for the same wall time. Capping at 12 keeps
-/// throughput flat while cutting CPU and system time on large machines;
-/// an explicit `RAYON_NUM_THREADS` still wins.
-///
-/// Called lazily so subcommands that never touch rayon (`--version`,
-/// `--help`, completions) do not pay for spawning workers. Idempotent:
-/// rayon's global registry is process-wide and `build_global` fails on
-/// a second attempt, so a `Once` guards the (warning-free) first call.
+/// Cap rayon's global pool at 12 workers unless `RAYON_NUM_THREADS` is set.
+/// The check alternates parallel and serial phases, and on a 24-core machine
+/// a worker per core burns about 4x the system time of 12 workers for the
+/// same wall time. Called from [`parse_files`], so subcommands without
+/// parallel work spawn no workers.
 fn size_rayon_pool() {
     use rayon::ThreadPoolBuilder;
     use std::sync::Once;
@@ -155,17 +163,12 @@ fn size_rayon_pool() {
     });
 }
 
-/// Parse every path in parallel on rayon's pool, in input order.
-///
-/// Every failure is passed to `on_failure` as it happens; the callback
-/// reports it and picks the action. `Skip`ped files are dropped from
-/// the result. The first failure (in input order) whose action is
-/// `Abort` is returned in `Err` — and is the only one the caller must
-/// report, because the callback stays silent for files it aborts on.
-///
-/// Each file's native path is on
-/// [`ry_core::SourceFile::native_or_display_path`]; `overlay` substitutes one
+/// Parse every path in parallel, in input order. `overlay` substitutes one
 /// in-memory source.
+///
+/// `on_failure` reports each failure and picks the action. `Skip`ped files
+/// are dropped. The first `Abort` in input order comes back in `Err`, and
+/// the caller reports it.
 pub(crate) fn parse_files(
     paths: &[PathBuf],
     overlay: Option<&SourceOverlay>,
@@ -201,36 +204,19 @@ pub(crate) struct SourceOverlay {
     pub bytes: Vec<u8>,
 }
 
-/// One per-package group, ready for the checker: the group's files and
-/// workspace context wrapped as a `CheckInput`, plus the degraded-scope
-/// notes the command reports in its own voice.
-pub(crate) struct ResolvedGroup {
-    pub resolution_root: PathBuf,
-    /// Indices into the parsed input, in the same order as check output.
-    pub source_indices: Vec<usize>,
-    pub check_input: CheckInput,
-    pub degraded_scopes: Vec<(PathBuf, ry_workspace::InventoryFailure)>,
-}
-
-/// Resolve parsed files into per-package checker inputs, shared by
-/// `ry check` and `ry dump-types` so the two commands can never disagree
-/// about library scoping or resolution roots.
+/// Resolve parsed files into per-package checker inputs for `ry check` and
+/// `ry dump-types`.
 ///
 /// Each DESCRIPTION root becomes its own group (see
-/// [`ry_workspace::resolve_grouped`]). A group without a package root resolves
-/// against the first entry of `fallback_roots` that is set — `ry check`
-/// passes the config root, `dump-types` passes `--project-root` and then
-/// the config root — and finally against the working directory. The
-/// workspace context's `degraded_scopes` are split out of the
-/// `CheckInput` because each command reports the precision loss
-/// differently: check summarizes them in its summary line, dump-types
-/// prints one note per scope on stderr to keep stdout's JSON clean.
+/// [`ry_workspace::resolve_grouped`]). A group without a package root
+/// resolves against the first set entry of `fallback_roots`, else the
+/// working directory.
 pub(crate) fn resolve_groups(
     parsed: &[Arc<ry_core::SourceFile>],
     cfg: &config::Config,
-    user_stubs: &Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
+    user_stubs: &BTreeMap<String, ry_typeshed::Typeshed>,
     fallback_roots: &[Option<&Path>],
-) -> miette::Result<Vec<ResolvedGroup>> {
+) -> miette::Result<Vec<ry_workspace::ResolvedGroup>> {
     let fallback = fallback_roots
         .iter()
         .flatten()
@@ -241,25 +227,7 @@ pub(crate) fn resolve_groups(
     let files: Vec<&ry_core::SourceFile> = parsed.iter().map(AsRef::as_ref).collect();
     ry_workspace::resolve_grouped(&files, cfg, user_stubs, &fallback)
         .into_iter()
-        .map(|group| {
-            let mut workspace = group.context.map_err(|error| miette::miette!(error))?;
-            let degraded_scopes = std::mem::take(&mut workspace.degraded_scopes);
-            let analysis_files = group
-                .indices
-                .iter()
-                .map(|&index| (parsed[index].path.clone(), Arc::clone(&parsed[index])))
-                .collect();
-            Ok(ResolvedGroup {
-                resolution_root: group.resolution_root,
-                source_indices: group.indices,
-                check_input: CheckInput {
-                    files: analysis_files,
-                    user_stubs: Arc::clone(user_stubs),
-                    workspace,
-                },
-                degraded_scopes,
-            })
-        })
+        .map(|group| group.map_err(|error| miette::miette!(error)))
         .collect()
 }
 

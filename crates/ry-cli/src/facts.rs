@@ -397,7 +397,7 @@ pub(crate) fn run_dump_facts(
     let mut contexts = Vec::new();
     let mut exported = Vec::new();
     for group in groups {
-        let input = group.check_input;
+        let input = pipeline::CheckInput::new(&parsed, &group.indices, &user_stubs, group.context);
         let workspace = &input.workspace;
         let mut context_sources: Vec<_> = input
             .files
@@ -423,7 +423,7 @@ pub(crate) fn run_dump_facts(
             "typeshed": typeshed,
             "sources": context_sources,
             "workspace_hash": json_digest(&workspace_value(workspace)),
-            "degraded_scopes": group.degraded_scopes.iter().map(|(path, reason)| {
+            "degraded_scopes": workspace.degraded_scopes.iter().map(|(path, reason)| {
                 Ok((utf8_path(path)?, reason.description()))
             }).collect::<Result<Vec<_>>>()?,
         });

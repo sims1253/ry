@@ -1,8 +1,11 @@
 //! The editor checks the original report coordinates through the shared mask.
 use crate::harness;
 
-use harness::{ClientSession, join_session, spawn_session, sync_barrier};
-use ry_testkit::{FixtureProject, file_uri};
+use harness::{
+    ClientSession, change_published, file_uri, join_session, notify_changed, open_published,
+    spawn_session, sync_barrier,
+};
+use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 
 const ENABLED: &str = "[reports]\nenabled = true\n";
@@ -40,14 +43,7 @@ async fn write_config(
     fixture.write_file("ry.toml", config).unwrap();
     sync_barrier(session, uri).await;
     let mark = session.publication_mark();
-    let config_uri = file_uri(&fixture.path("ry.toml")).unwrap();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": config_uri, "type": 2}]}),
-        )
-        .await
-        .unwrap();
+    notify_changed(session, &file_uri(&fixture.path("ry.toml"))).await;
     session
         .published_diagnostics_after(uri, mark)
         .await
@@ -64,28 +60,15 @@ async fn change(session: &mut ClientSession, uri: &str, version: i32, changes: V
         .unwrap()
 }
 
-async fn replace(session: &mut ClientSession, uri: &str, version: i32, text: &str) -> Value {
-    change(session, uri, version, json!([{"text": text}])).await
-}
-
-async fn open(session: &mut ClientSession, uri: &str, text: &str) -> Value {
-    let mark = session.publication_mark();
-    session.open(uri, 1, text).await.unwrap();
-    session
-        .published_diagnostics_after(uri, mark)
-        .await
-        .unwrap()
-}
-
 #[tokio::test]
 async fn disabled_reports_never_supply_inlay_hints_even_after_config_toggles() {
     let fixture = FixtureProject::empty().unwrap();
     let outside = FixtureProject::empty().unwrap();
     fixture.write_file("ry.toml", DISABLED).unwrap();
     let source = "```{r}\nx <- 1L\n```\n";
-    let report_uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap()).unwrap();
-    let outside_uri = file_uri(&outside.write_file("outside.qmd", source).unwrap()).unwrap();
-    let ordinary_uri = file_uri(&fixture.write_file("ordinary.R", "x <- 1L\n").unwrap()).unwrap();
+    let report_uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap());
+    let outside_uri = file_uri(&outside.write_file("outside.qmd", source).unwrap());
+    let ordinary_uri = file_uri(&fixture.write_file("ordinary.R", "x <- 1L\n").unwrap());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
     session.open(&report_uri, 1, source).await.unwrap();
     session.open(&outside_uri, 1, source).await.unwrap();
@@ -111,9 +94,9 @@ async fn report_config_toggle_rechecks_an_open_buffer() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("ry.toml", DISABLED).unwrap();
     let source = "```{r}\n\"a\" + 1L\n```\n";
-    let uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap()).unwrap();
+    let uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let initial = open(&mut session, &uri, source).await;
+    let initial = open_published(&mut session, &uri, 1, source).await;
     assert!(finding(&initial, "RY040").is_none(), "{initial}");
     let enabled = write_config(&mut session, &fixture, &uri, ENABLED).await;
     assert!(finding(&enabled, "RY040").is_some(), "{enabled}");
@@ -127,9 +110,9 @@ async fn warm_report_execution_identity_edits_republish_the_same_uri() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("ry.toml", ENABLED).unwrap();
     let source = "😀 prose\r\n```{r, Eval=FALSE}\r\n'a' + 1L\r\n```\r\n";
-    let uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap()).unwrap();
+    let uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let active = open(&mut session, &uri, source).await;
+    let active = open_published(&mut session, &uri, 1, source).await;
     assert!(finding(&active, "RY040").is_some(), "{active}");
 
     // Each edit either runs `'a' + 1L` (RY040), stops at RY121, or neither.
@@ -168,7 +151,7 @@ async fn warm_report_execution_identity_edits_republish_the_same_uri() {
         ),
     ];
     for (version, (source, expected)) in (2..).zip(cases) {
-        let published = replace(&mut session, &uri, version, &source).await;
+        let published = change_published(&mut session, &uri, version, &source).await;
         for code in ["RY040", "RY121"] {
             let found = finding(&published, code).is_some();
             assert_eq!(found, expected == Some(code), "{code}: {published}");
@@ -194,9 +177,9 @@ async fn warm_report_prose_and_option_edits_keep_original_utf16_positions() {
         )
     };
     let first = report("😀 prose", "true");
-    let uri = file_uri(&fixture.write_file("memo.qmd", &first).unwrap()).unwrap();
+    let uri = file_uri(&fixture.write_file("memo.qmd", &first).unwrap());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let published = open(&mut session, &uri, &first).await;
+    let published = open_published(&mut session, &uri, 1, &first).await;
     assert_eq!(start(&published, "RY040"), (6, 0), "{published}");
     let bad = finding(&published, "RY040").unwrap();
     let action = session
@@ -220,9 +203,9 @@ async fn warm_report_prose_and_option_edits_keep_original_utf16_positions() {
     }, "text": "界"}]);
     let prose = change(&mut session, &uri, 2, insert).await;
     assert_eq!(start(&prose, "RY040"), (6, 0), "{prose}");
-    let disabled = replace(&mut session, &uri, 3, &report("界 prose", "false")).await;
+    let disabled = change_published(&mut session, &uri, 3, &report("界 prose", "false")).await;
     assert!(finding(&disabled, "RY040").is_none(), "{disabled}");
-    let moved = replace(
+    let moved = change_published(
         &mut session,
         &uri,
         4,
@@ -230,7 +213,7 @@ async fn warm_report_prose_and_option_edits_keep_original_utf16_positions() {
     )
     .await;
     assert_eq!(start(&moved, "RY040"), (7, 0), "{moved}");
-    let broken = replace(
+    let broken = change_published(
         &mut session,
         &uri,
         5,
@@ -249,9 +232,9 @@ async fn range_edit_that_disables_a_chunk_reparses_the_whole_report() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("ry.toml", ENABLED).unwrap();
     let source = "```{r, eval=TRUE}\nf <- function(x) x\n\"a\" + 1L\n```\n";
-    let uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap()).unwrap();
+    let uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let active = open(&mut session, &uri, source).await;
+    let active = open_published(&mut session, &uri, 1, source).await;
     assert!(finding(&active, "RY040").is_some(), "{active}");
     let edit = json!([{"range": {
         "start": {"line": 0, "character": 12},
@@ -272,11 +255,11 @@ async fn oversized_report_refusal_does_not_reuse_its_empty_parse_tree_after_shri
         )
         .unwrap();
     let huge = "é".repeat(ry_workspace::reports::MAX_REPORT_BYTES / 2 + 1);
-    let uri = file_uri(&fixture.write_file("memo.qmd", &huge).unwrap()).unwrap();
+    let uri = file_uri(&fixture.write_file("memo.qmd", &huge).unwrap());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    let capped = open(&mut session, &uri, &huge).await;
+    let capped = open_published(&mut session, &uri, 1, &huge).await;
     assert!(finding(&capped, "RY120").is_some(), "{capped}");
-    let admitted = replace(&mut session, &uri, 2, "```{r}\n\"x\" + 1L\n```\n").await;
+    let admitted = change_published(&mut session, &uri, 2, "```{r}\n\"x\" + 1L\n```\n").await;
     assert!(finding(&admitted, "RY120").is_none(), "{admitted}");
     assert!(finding(&admitted, "RY040").is_some(), "{admitted}");
     join_session(session, server).await;
@@ -288,11 +271,11 @@ async fn two_open_reports_keep_independent_r_bindings() {
     fixture.write_file("ry.toml", ENABLED).unwrap();
     let first = "```{r}\nx <- 1L\n```\n";
     let second = "```{r}\nx + 1L\n```\n";
-    let first_uri = file_uri(&fixture.write_file("first.qmd", first).unwrap()).unwrap();
-    let second_uri = file_uri(&fixture.write_file("second.qmd", second).unwrap()).unwrap();
+    let first_uri = file_uri(&fixture.write_file("first.qmd", first).unwrap());
+    let second_uri = file_uri(&fixture.write_file("second.qmd", second).unwrap());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
     session.open(&first_uri, 1, first).await.unwrap();
-    let published = open(&mut session, &second_uri, second).await;
+    let published = open_published(&mut session, &second_uri, 1, second).await;
     assert!(finding(&published, "RY010").is_some(), "{published}");
     join_session(session, server).await;
 }

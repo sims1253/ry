@@ -1,31 +1,10 @@
-//! #489: every URI that stops being analyzed must receive an empty
-//! publication — all of them, not just the last-scheduled one.
-//!
-//! Two gaps combined into the bug:
-//!
-//! * Republishing every open document scheduled one debounced task per
-//!   open document, but the debounce used a single workspace-wide
-//!   generation, so of N scheduled URIs only the last task survived
-//!   and the rest aborted as stale. Which URI survived followed
-//!   `docs` HashMap iteration order.
-//! * A publication pass sent an empty publication only for its own
-//!   requested URI when that URI was ineligible. Every other document
-//!   that left the eligible set (folder disabled, file excluded) was
-//!   filtered out of the check and never published again, and closed
-//!   disk files a rescan dropped from the index had the same gap —
-//!   nothing reconciled against the URIs that had received
-//!   diagnostics before.
-//!
-//! The single-document cases were already covered and passed by the
-//! surviving task's own URI, so every test here keeps at least two
-//! documents in play and asserts the client's whole final diagnostic
-//! store (the per-URI map `quiesce_diagnostics` returns, where the
-//! last publication per URI wins), not the latest publication for one
-//! document.
+//! Every URI that stops being analyzed gets an empty publication, open or
+//! closed. Each test keeps several documents in play and checks the
+//! client's final per-URI store, where the last publication wins.
 
 use crate::harness;
 
-use harness::{file_uri, join_session, spawn_session, sync_barrier};
+use harness::{file_uri, join_session, notify_changed, spawn_session, sync_barrier};
 use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -42,9 +21,7 @@ fn ry010_count(diagnostics: &[Value]) -> usize {
         .count()
 }
 
-/// The URI must be present in the final store with an empty set: the
-/// bug left affected URIs absent entirely (no clearing publication) or
-/// carrying their previous diagnostics.
+/// The URI must be present in the final store with an empty set.
 fn assert_cleared(store: &BTreeMap<String, Vec<Value>>, uri: &str) {
     assert!(
         store.get(uri).is_some_and(Vec::is_empty),
@@ -61,121 +38,76 @@ fn assert_ry010(store: &BTreeMap<String, Vec<Value>>, uri: &str) {
     );
 }
 
-/// Disabling the folder with two documents open must clear both URIs.
-/// On main only the URI carried by the surviving debounce task was
-/// cleared; the other kept its squiggles indefinitely. Re-enabling
-/// must restore both, proving the clear was a publication and not a
-/// permanent silencing.
+/// Configuration and disk changes that drop documents from analysis clear
+/// each of them, not only the last one scheduled. `a.R`, `b.R`, and `c.R`
+/// are open. `d.R` and `e.R` stay closed and publish through the index.
 #[tokio::test]
-async fn disabling_the_folder_clears_every_open_document() {
+async fn config_transitions_clear_every_dropped_document() {
     let fixture = FixtureProject::empty().unwrap();
-    fixture
-        .write_file("a.R", "x <- never_bound_here\n")
-        .unwrap();
-    fixture
-        .write_file("b.R", "y <- never_bound_here\n")
-        .unwrap();
-    let a_uri = file_uri(&fixture.path("a.R"));
-    let b_uri = file_uri(&fixture.path("b.R"));
+    fixture.write_file("ry.toml", "\n").unwrap();
+    let names = ["a", "b", "c", "d", "e"];
+    let uris: Vec<String> = names
+        .iter()
+        .map(|name| {
+            let path = fixture
+                .write_file(
+                    format!("{name}.R"),
+                    format!("{name}_value <- never_bound_here\n"),
+                )
+                .unwrap();
+            file_uri(&path)
+        })
+        .collect();
+    let [a, b, c, d, e] = [0, 1, 2, 3, 4].map(|index| uris[index].as_str());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-
-    sync_barrier(&mut session, &a_uri).await;
-    let mark = session.publication_mark();
-    session
-        .open(&a_uri, 1, "x <- never_bound_here\n")
-        .await
-        .unwrap();
-    session
-        .open(&b_uri, 1, "y <- never_bound_here\n")
-        .await
-        .unwrap();
-    let initial = session
-        .quiesce_diagnostics(&a_uri, mark, DRAIN)
-        .await
-        .unwrap();
-    assert_ry010(&initial, &a_uri);
-    assert_ry010(&initial, &b_uri);
+    sync_barrier(&mut session, a).await;
 
     let mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeConfiguration",
-            json!({ "settings": { "ry": { "enable": false } } }),
-        )
-        .await
-        .unwrap();
-    let disabled = session
-        .quiesce_diagnostics(&a_uri, mark, DRAIN)
-        .await
-        .unwrap();
-    assert_cleared(&disabled, &a_uri);
-    assert_cleared(&disabled, &b_uri);
+    for (uri, name) in [(a, "a"), (b, "b"), (c, "c")] {
+        session
+            .open(uri, 1, &format!("{name}_value <- never_bound_here\n"))
+            .await
+            .unwrap();
+    }
+    let initial = session.quiesce_diagnostics(a, mark, DRAIN).await.unwrap();
+    for uri in [a, b, c, d, e] {
+        assert_ry010(&initial, uri);
+    }
 
+    // Disabling the folder clears every open document, and re-enabling
+    // restores them, so the clear was a publication.
+    for (enable, expect_cleared) in [(false, true), (true, false)] {
+        let mark = session.publication_mark();
+        session
+            .notify(
+                "workspace/didChangeConfiguration",
+                json!({ "settings": { "ry": { "enable": enable } } }),
+            )
+            .await
+            .unwrap();
+        let store = session.quiesce_diagnostics(a, mark, DRAIN).await.unwrap();
+        for uri in [a, b, c] {
+            if expect_cleared {
+                assert_cleared(&store, uri);
+            } else {
+                assert_ry010(&store, uri);
+            }
+        }
+    }
+
+    // A rescan drops the deleted closed `e.R`. A plain `.R` deletion does
+    // not trigger one, so the event is an `ry.toml` change.
+    std::fs::remove_file(fixture.path("e.R")).unwrap();
     let mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeConfiguration",
-            json!({ "settings": { "ry": { "enable": true } } }),
-        )
-        .await
-        .unwrap();
-    let enabled = session
-        .quiesce_diagnostics(&a_uri, mark, DRAIN)
-        .await
-        .unwrap();
-    assert_ry010(&enabled, &a_uri);
-    assert_ry010(&enabled, &b_uri);
+    notify_changed(&mut session, &file_uri(&fixture.path("ry.toml"))).await;
+    let deleted = session.quiesce_diagnostics(b, mark, DRAIN).await.unwrap();
+    assert_cleared(&deleted, e);
+    assert_ry010(&deleted, b);
 
-    join_session(session, server).await;
-}
-
-/// The mixed case: excluding two of three open documents. Both excluded
-/// URIs must be cleared even though the still-eligible one also
-/// republishes. Two excluded documents make the gap deterministic: with
-/// one, the surviving debounce task could carry exactly that URI and
-/// mask the bug, while main clears at most the single URI the
-/// surviving task carries.
-#[tokio::test]
-async fn excluding_two_of_three_open_documents_clears_only_the_excluded_ones() {
-    let fixture = FixtureProject::empty().unwrap();
+    // Excluding two of the three open documents clears both while `b.R`
+    // republishes. The closed `d.R` is excluded too.
     fixture
-        .write_file("a.R", "x <- never_bound_here\n")
-        .unwrap();
-    fixture
-        .write_file("c.R", "z <- never_bound_here\n")
-        .unwrap();
-    fixture
-        .write_file("b.R", "y <- never_bound_here\n")
-        .unwrap();
-    let a_uri = file_uri(&fixture.path("a.R"));
-    let b_uri = file_uri(&fixture.path("b.R"));
-    let c_uri = file_uri(&fixture.path("c.R"));
-    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-
-    sync_barrier(&mut session, &a_uri).await;
-    let mark = session.publication_mark();
-    session
-        .open(&a_uri, 1, "x <- never_bound_here\n")
-        .await
-        .unwrap();
-    session
-        .open(&b_uri, 1, "y <- never_bound_here\n")
-        .await
-        .unwrap();
-    session
-        .open(&c_uri, 1, "z <- never_bound_here\n")
-        .await
-        .unwrap();
-    let initial = session
-        .quiesce_diagnostics(&a_uri, mark, DRAIN)
-        .await
-        .unwrap();
-    assert_ry010(&initial, &a_uri);
-    assert_ry010(&initial, &b_uri);
-    assert_ry010(&initial, &c_uri);
-
-    fixture
-        .write_file("ry.toml", "exclude = [\"a.R\", \"c.R\"]\n")
+        .write_file("ry.toml", "exclude = [\"a.R\", \"c.R\", \"d.R\"]\n")
         .unwrap();
     let mark = session.publication_mark();
     session
@@ -185,22 +117,17 @@ async fn excluding_two_of_three_open_documents_clears_only_the_excluded_ones() {
         )
         .await
         .unwrap();
-    let excluded = session
-        .quiesce_diagnostics(&b_uri, mark, DRAIN)
-        .await
-        .unwrap();
-    assert_cleared(&excluded, &a_uri);
-    assert_cleared(&excluded, &c_uri);
-    assert_ry010(&excluded, &b_uri);
+    let excluded = session.quiesce_diagnostics(b, mark, DRAIN).await.unwrap();
+    for uri in [a, c, d] {
+        assert_cleared(&excluded, uri);
+    }
+    assert_ry010(&excluded, b);
 
     join_session(session, server).await;
 }
 
-/// Removing a workspace folder must also clear the closed, previously
-/// published disk files under the removed root — not just open
-/// documents. `keep.R` in the surviving folder stays open and drives
-/// the republish; `B/a.R` was published through the background index
-/// while the folder existed.
+/// Removing a workspace folder clears the closed files published under it.
+/// `keep.R` in the surviving folder stays open and drives the republish.
 #[tokio::test]
 async fn removing_a_folder_clears_its_closed_disk_files() {
     let fixture = FixtureProject::empty().unwrap();
@@ -249,87 +176,6 @@ async fn removing_a_folder_clears_its_closed_disk_files() {
         .unwrap();
     assert_cleared(&removed, &a_uri);
     assert_ry010(&removed, &keep_uri);
-
-    join_session(session, server).await;
-}
-
-/// Closed disk files a rescan drops — deleted from disk, or newly
-/// excluded — must get an empty publication too. `keep.R` stays open
-/// and drives the publish; `a.R` and `c.R` are never opened, so their
-/// diagnostics arrive through the background index while `keep.R` is
-/// open.
-#[tokio::test]
-async fn closed_disk_files_dropped_by_a_rescan_get_an_empty_publication() {
-    let fixture = FixtureProject::empty().unwrap();
-    fixture.write_file("ry.toml", "\n").unwrap();
-    fixture
-        .write_file("a.R", "x <- never_bound_here\n")
-        .unwrap();
-    fixture
-        .write_file("c.R", "z <- never_bound_here\n")
-        .unwrap();
-    fixture
-        .write_file("keep.R", "w <- never_bound_here\n")
-        .unwrap();
-    let a_uri = file_uri(&fixture.path("a.R"));
-    let c_uri = file_uri(&fixture.path("c.R"));
-    let keep_uri = file_uri(&fixture.path("keep.R"));
-    let config_uri = file_uri(&fixture.path("ry.toml"));
-    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-
-    sync_barrier(&mut session, &keep_uri).await;
-    let mark = session.publication_mark();
-    session
-        .open(&keep_uri, 1, "w <- never_bound_here\n")
-        .await
-        .unwrap();
-    let initial = session
-        .quiesce_diagnostics(&keep_uri, mark, DRAIN)
-        .await
-        .unwrap();
-    assert_ry010(&initial, &a_uri);
-    assert_ry010(&initial, &c_uri);
-    assert_ry010(&initial, &keep_uri);
-
-    // Deletion: the rescan drops a.R from the index. A plain .R
-    // deletion is not itself a watched-file trigger, so the
-    // notification rides the ry.toml change the state machine's
-    // DeleteFile operation uses.
-    std::fs::remove_file(fixture.path("a.R")).unwrap();
-    let mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({ "changes": [{ "uri": config_uri, "type": 2 }] }),
-        )
-        .await
-        .unwrap();
-    let deleted = session
-        .quiesce_diagnostics(&keep_uri, mark, DRAIN)
-        .await
-        .unwrap();
-    assert_cleared(&deleted, &a_uri);
-    assert_ry010(&deleted, &keep_uri);
-
-    // New exclusion: c.R stays on disk and indexed, but the
-    // config change drops it from the eligible set.
-    fixture
-        .write_file("ry.toml", "exclude = [\"c.R\"]\n")
-        .unwrap();
-    let mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeConfiguration",
-            json!({ "settings": {} }),
-        )
-        .await
-        .unwrap();
-    let excluded = session
-        .quiesce_diagnostics(&keep_uri, mark, DRAIN)
-        .await
-        .unwrap();
-    assert_cleared(&excluded, &c_uri);
-    assert_ry010(&excluded, &keep_uri);
 
     join_session(session, server).await;
 }

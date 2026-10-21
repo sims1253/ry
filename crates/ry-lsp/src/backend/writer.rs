@@ -2,11 +2,10 @@
 //! analysis contexts, and the publication record, and the only place
 //! diagnostics are published.
 //!
-//! Handlers update open-document text themselves (requests must see the
-//! latest buffer) and then queue [`Work`]; everything that follows from an
-//! event runs here, one item at a time, in arrival order. A later event is
-//! therefore always applied after an earlier one, so no write needs a
-//! generation guard and nothing can be superseded mid-flight.
+//! Handlers update open documents themselves, because requests must see
+//! the latest buffer, and then queue [`Work`]. Everything that follows
+//! from an event runs here, one item at a time, in arrival order, so no
+//! write needs a generation guard.
 
 use super::*;
 use tokio::sync::{mpsc, oneshot};
@@ -29,15 +28,15 @@ pub(super) enum Work {
     Watched(Vec<FileEvent>),
     /// An open document changed.
     Publish(String),
-    /// `uri` closed at display path `path`; `shared` when another URI is
+    /// `uri` closed at display path `path`. `shared` when another URI is
     /// still open there.
     Closed {
         uri: Url,
         path: String,
         shared: bool,
     },
-    /// Stop once the work queued before it ran, dropping any pending pass;
-    /// acknowledged once nothing more will be published.
+    /// Stop after the work queued before it, dropping any pending pass.
+    /// The reply means nothing more will be published.
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -62,9 +61,8 @@ pub(super) struct IndexWriter {
     deadline: Option<Instant>,
     /// Passes wait for the first scan so they see the workspace bindings.
     indexed: bool,
-    /// Actual URIs whose last publication carried diagnostics, keyed by
-    /// display path. A URI that stops receiving publications is cleared
-    /// with an empty one so stale squiggles cannot linger.
+    /// URIs whose last publication carried diagnostics, keyed by display
+    /// path. A URI that stops receiving publications gets an empty one.
     published_uris: HashMap<String, HashSet<Url>>,
 }
 
@@ -86,8 +84,8 @@ impl IndexWriter {
     }
 
     /// Process work until shutdown or until every handler is gone. A due
-    /// pass runs only once no work is queued, so it never publishes a
-    /// state an already-queued event is about to change.
+    /// pass runs only when no work is queued, so it never publishes a state
+    /// a queued event is about to change.
     pub(super) async fn run(mut self) {
         loop {
             let work = match self.deadline.filter(|_| self.indexed) {
@@ -121,7 +119,8 @@ impl IndexWriter {
                 // read produces an event.
                 refresh_watchers(self.client.clone(), Arc::clone(&self.state)).await;
                 self.rescan().await;
-                self.request_open_documents().await;
+                let open = self.state.lock().await.docs.paths();
+                self.request(open).await;
             }
             Work::Folders { added, removed } => self.change_folders(added, removed).await,
             Work::Watched(changes) => self.watched_files(changes).await,
@@ -163,7 +162,7 @@ impl IndexWriter {
         self.clear([uri]).await;
         // Names the closed buffer defined can change diagnostics in the
         // documents still open.
-        let open: Vec<String> = self.state.lock().await.docs.keys().cloned().collect();
+        let open = self.state.lock().await.docs.paths();
         if !open.is_empty() {
             self.request(open).await;
         }
@@ -212,9 +211,8 @@ impl IndexWriter {
         }
     }
 
-    /// Pull `ry` settings per folder scope via `workspace/configuration`:
-    /// one item per folder root plus a final item for the fallback context,
-    /// whose root is `None`. `None` when the client request failed.
+    /// Pull `ry` settings for each folder root, plus a last item for the
+    /// fallback context with root `None`. `None` when the request failed.
     async fn pull_folder_settings(&self) -> Option<Vec<(Option<PathBuf>, serde_json::Value)>> {
         let scopes: Vec<(Option<PathBuf>, PathBuf)> = {
             let state = self.state.lock().await;
@@ -286,15 +284,17 @@ impl IndexWriter {
     async fn change_folders(&mut self, added: Vec<PathBuf>, removed: Vec<PathBuf>) {
         let under_removed_root =
             |path: &str| removed.iter().any(|root| Path::new(path).starts_with(root));
-        // Every URI under a removed root is cleared: open documents and
-        // closed disk files alike.
+        // Clear every URI under a removed root, open or not.
         let (to_clear, to_republish, server_settings) = {
             let state = self.state.lock().await;
-            let (clear, keep): (Vec<&String>, Vec<&String>) =
-                state.docs.keys().partition(|path| under_removed_root(path));
-            let mut to_clear: HashSet<Url> = clear
+            let (clear, keep): (Vec<String>, Vec<String>) = state
+                .docs
+                .paths()
                 .into_iter()
-                .flat_map(|path| source_uris(&state.open_source_paths, path))
+                .partition(|path| under_removed_root(path));
+            let mut to_clear: HashSet<Url> = clear
+                .iter()
+                .flat_map(|path| state.docs.uris(path))
                 .collect();
             for (_, uris) in self
                 .published_uris
@@ -303,11 +303,7 @@ impl IndexWriter {
             {
                 to_clear.extend(uris.iter().cloned());
             }
-            (
-                to_clear,
-                keep.into_iter().cloned().collect::<Vec<_>>(),
-                state.server_settings.clone(),
-            )
+            (to_clear, keep, state.server_settings.clone())
         };
         let added_contexts = if added.is_empty() {
             Vec::new()
@@ -322,9 +318,6 @@ impl IndexWriter {
         {
             let mut state = self.state.lock().await;
             state.disk_files.retain(|path, _| !under_removed_root(path));
-            state.trees.retain(|path, _| !under_removed_root(path));
-            state.parsed.retain(|path, _| !under_removed_root(path));
-            state.hints.retain(|path, _| !under_removed_root(path));
             // Replacing removed contexts drops their project caches with
             // them; surviving contexts keep theirs, new ones start fresh.
             state
@@ -343,9 +336,8 @@ impl IndexWriter {
         self.request(to_republish).await;
     }
 
-    /// Refresh configuration and filesystem-backed resolution when a
-    /// package metadata, data, stub, or config file changes; refresh the
-    /// disk index entry by entry when only sources changed.
+    /// Reload and rescan when package metadata, data, stub, or config files
+    /// change. When only sources changed, refresh their index entries.
     async fn watched_files(&mut self, changes: Vec<FileEvent>) {
         let config_paths = custom_config_paths(&*self.state.lock().await);
         let config_or_baseline_changed = changes.iter().any(|change| {
@@ -401,21 +393,14 @@ impl IndexWriter {
             }
             self.refresh_package_contexts(&publish).await;
         }
-        publish.extend(self.state.lock().await.docs.keys().cloned());
+        publish.extend(self.state.lock().await.docs.paths());
         self.request(publish).await;
     }
 
-    /// Discover and parse every source under the workspace folders and
-    /// install the result in `disk_files` together with each package
-    /// group's resolution context. Only workspace folders are indexed: the
-    /// fallback root never is, so removing every folder stops indexing its
-    /// directory.
+    /// Index every source under the workspace folders into `disk_files`
+    /// and resolve each package group. The fallback root is never indexed.
     async fn rescan(&mut self) {
-        self.index_folders().await;
         self.indexed = true;
-    }
-
-    async fn index_folders(&self) {
         let roots: Vec<_> = self
             .state
             .lock()
@@ -440,8 +425,8 @@ impl IndexWriter {
             let mut all_truncated: Vec<(PathBuf, ry_workspace::TruncationReport)> = Vec::new();
             for (root, config_root, config, stubs) in &roots {
                 let outcome = crate::index::index_workspace(root, config_root.as_deref(), config);
-                for report in outcome.truncated.iter().filter(|t| t.any_hit()) {
-                    all_truncated.push((root.clone(), report.clone()));
+                if let Some(report) = outcome.truncated {
+                    all_truncated.push((root.clone(), report));
                 }
                 // Each package group resolves against its own root; loose
                 // scripts resolve against the folder root.
@@ -453,9 +438,9 @@ impl IndexWriter {
                     .collect();
                 let mut folder_contexts = HashMap::new();
                 for group in ry_workspace::resolve_grouped(&files, config, stubs, root) {
-                    match group.context {
-                        Ok(context) => {
-                            folder_contexts.insert(group.key, context);
+                    match group {
+                        Ok(group) => {
+                            folder_contexts.insert(group.key, group.context);
                         }
                         Err(error) => tracing::warn!(%error, "workspace resolution degraded"),
                     }
@@ -479,7 +464,7 @@ impl IndexWriter {
             files = disk_files.len(),
             "background workspace index complete"
         );
-        // A cap hit is never silent: structured events below plus one
+        // A cap hit is never silent: a log event per cap plus one
         // user-visible warning per scan.
         for (root, report) in &truncated {
             if report.max_files_hit {
@@ -507,7 +492,7 @@ impl IndexWriter {
                 );
             }
         }
-        let newly_degraded = {
+        {
             let mut state = self.state.lock().await;
             state.disk_files = disk_files;
             for ctx in &mut state.folder_contexts {
@@ -515,13 +500,8 @@ impl IndexWriter {
                     ctx.workspace_contexts = wc.clone();
                 }
             }
-            state.newly_degraded_scopes()
-        };
-        for (path, reason) in &newly_degraded {
-            self.client
-                .log_message(MessageType::WARNING, reason.notice(path))
-                .await;
         }
+        self.notify_degraded_scopes().await;
         if !truncated.is_empty() {
             self.client
                 .log_message(
@@ -532,18 +512,16 @@ impl IndexWriter {
         }
     }
 
-    /// Refresh one `disk_files` entry from disk under the owning folder's
-    /// eligibility and the walk's per-file admission rules, through the
-    /// same loader the indexer uses. A missing, inadmissible, or unreadable
-    /// file, or one no folder owns, leaves the index, so a rescan cannot
-    /// disagree about membership. Returns whether the index changed; an
-    /// open buffer owns its path, and a new entry past `index.max-files`
-    /// is refused.
+    /// Refresh one `disk_files` entry with the walk's admission rules and
+    /// loader, so a rescan agrees about membership. A missing, inadmissible,
+    /// or unreadable file, or one no folder owns, leaves the index. Returns
+    /// whether the index changed. An open path is left alone, and a new
+    /// entry past `index.max-files` is refused.
     async fn refresh_disk_entry(&self, path: &Path) -> bool {
         let path_string = path.to_string_lossy().into_owned();
         let admission = {
             let state = self.state.lock().await;
-            if state.docs.contains_key(&path_string) {
+            if state.docs.contains(&path_string) {
                 return false;
             }
             state
@@ -599,9 +577,7 @@ impl IndexWriter {
     }
 
     /// Re-resolve the package groups owning `paths` after their disk
-    /// entries changed, so an incremental refresh never disagrees with a
-    /// fresh scan. A group whose resolution fails converges through a full
-    /// rescan, which resolves every group from current disk.
+    /// entries changed. If one fails, a full rescan resolves every group.
     async fn refresh_package_contexts(&mut self, paths: &[String]) {
         let mut groups: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
         {
@@ -670,7 +646,7 @@ impl IndexWriter {
                 .flatten()
                 .map(|&index| candidates[index].1.as_ref())
                 .collect();
-            ry_workspace::resolve_group(key.as_deref(), files, &config, &stubs, &root).1
+            ry_workspace::resolve_group(key.as_deref(), files, &config, &stubs, &root)
         })
         .await;
         let context = match resolved {
@@ -684,33 +660,33 @@ impl IndexWriter {
                 return false;
             }
         };
-        let newly_degraded = {
-            let mut state = self.state.lock().await;
-            if let Some(ctx) = state
-                .folder_contexts
-                .iter_mut()
-                .find(|ctx| ctx.root == folder_root)
-            {
-                ctx.workspace_contexts.insert(package_root, context);
-            }
-            state.newly_degraded_scopes()
-        };
+        if let Some(ctx) = self
+            .state
+            .lock()
+            .await
+            .folder_contexts
+            .iter_mut()
+            .find(|ctx| ctx.root == folder_root)
+        {
+            ctx.workspace_contexts.insert(package_root, context);
+        }
+        self.notify_degraded_scopes().await;
+        true
+    }
+
+    /// Log each inventory failure the installed contexts newly report.
+    async fn notify_degraded_scopes(&self) {
+        let newly_degraded = self.state.lock().await.newly_degraded_scopes();
         for (path, reason) in &newly_degraded {
             self.client
                 .log_message(MessageType::WARNING, reason.notice(path))
                 .await;
         }
-        true
     }
 
-    async fn request_open_documents(&mut self) {
-        let open: Vec<String> = self.state.lock().await.docs.keys().cloned().collect();
-        self.request(open).await;
-    }
-
-    /// Debounce one publication pass covering `paths`: every pass
-    /// publishes all checked files, so a burst of requests coalesces into
-    /// one pass. With nothing requested, only dropped URIs are reconciled.
+    /// Schedule a debounced pass covering `paths`. Every pass publishes all
+    /// checked files, so a burst coalesces. With nothing requested, only
+    /// dropped URIs are reconciled.
     async fn request(&mut self, paths: impl IntoIterator<Item = String>) {
         self.pending.extend(paths);
         if self.pending.is_empty() {
@@ -731,10 +707,9 @@ impl IndexWriter {
         }
     }
 
-    /// Incrementally update the project and publish diagnostics for every
-    /// checked file: an edit to a definition can change diagnostics in its
-    /// cross-file callers. Returns what was published, or `None` when an
-    /// edit or queued work made the snapshot stale before publication.
+    /// Check incrementally and publish every checked file, since an edit
+    /// can change its cross-file callers. Returns what was published, or
+    /// `None` when an edit or queued work made the snapshot stale.
     async fn publish_diagnostics(&self) -> Option<Vec<Published>> {
         // Snapshot under the lock, then check without it so a slow check
         // does not block other requests.
@@ -743,9 +718,8 @@ impl IndexWriter {
             doc_versions,
             supports_diagnostic_data,
             supports_related_information,
-            open_source_paths,
-            active_collision_uris,
-            eligible_collision_sources,
+            open_uris,
+            collision_sources,
         ) = {
             let mut state = self.state.lock().await;
             // Handlers queue their work under the lock that applied the
@@ -755,49 +729,48 @@ impl IndexWriter {
                 return None;
             }
             state.diag_generation = state.diag_generation.wrapping_add(1);
+            let paths = state.docs.paths();
             (
                 state.diag_generation,
-                state
-                    .docs
-                    .keys()
-                    .filter(|p| state.eligibility_for_path(p))
-                    .filter_map(|p| {
-                        state
-                            .versions
-                            .get(p)
-                            .copied()
-                            .map(|version| (p.clone(), version))
-                    })
+                paths
+                    .iter()
+                    .filter(|path| state.eligibility_for_path(path))
+                    .filter_map(|path| Some((path.clone(), state.docs.active(path)?.version)))
                     .collect::<Vec<_>>(),
                 state.supports_diagnostic_data,
                 state.supports_related_information,
-                state.open_source_paths.clone(),
-                state.active_collision_uri.clone(),
-                state
-                    .open_source_paths
+                // Every open path's URIs and the URI of its active document.
+                paths
                     .iter()
-                    .filter(|(_, open)| open.len() > 1)
-                    .map(|(path, open)| {
-                        let eligible: HashMap<Url, (String, i32)> = open
+                    .filter_map(|path| {
+                        let active = state.docs.active(path)?.uri.clone();
+                        Some((path.clone(), (state.docs.uris(path), active)))
+                    })
+                    .collect::<HashMap<_, _>>(),
+                // Each colliding path's eligible documents, each judged by
+                // its own size.
+                paths
+                    .iter()
+                    .filter(|path| state.docs.at(path).len() > 1)
+                    .map(|path| {
+                        let eligible: HashMap<Url, (String, i32)> = state
+                            .docs
+                            .at(path)
                             .iter()
-                            .filter_map(|(uri, source)| {
-                                let (text, version) = source.shadow.as_ref()?;
-                                state
-                                    .eligibility_for_path_with_len(path, Some(text.len() as u64))
-                                    .then(|| (uri.clone(), (text.clone(), *version)))
+                            .filter(|doc| {
+                                state.eligibility_for_path_with_len(
+                                    path,
+                                    Some(doc.text.len() as u64),
+                                )
                             })
+                            .map(|doc| (doc.uri.clone(), (doc.text.clone(), doc.version)))
                             .collect();
                         (path.clone(), state.context_for_path(path).clone(), eligible)
                     })
                     .collect::<Vec<_>>(),
             )
         };
-        let publication_uris = |path: &str| source_uris(&open_source_paths, path);
-        let colliding = |path: &str| {
-            open_source_paths
-                .get(path)
-                .is_some_and(|open| open.len() > 1)
-        };
+        let colliding = |path: &str| open_uris.get(path).is_some_and(|(uris, _)| uris.len() > 1);
 
         let mut open_files = Vec::with_capacity(doc_versions.len());
         for (doc_path, version) in &doc_versions {
@@ -806,17 +779,15 @@ impl IndexWriter {
             };
             open_files.push((doc_path.clone(), *version, file));
         }
-        // One path-keyed source view: an open buffer owns its path, eligible
-        // or not, so its disk twin never contributes, and an ineligible
-        // buffer contributes nothing. Sorting the union by path gives the
-        // CLI's canonical order, which decides same-name shadowing; each
-        // owner's files keep that order through the grouping below.
+        // An open buffer owns its path, eligible or not, so its disk twin
+        // never contributes. Sorting by path gives the CLI's order, which
+        // decides same-name shadowing. The grouping below keeps it.
         let mut project_files: Vec<(Option<PathBuf>, PackageFile)> = {
             let state = self.state.lock().await;
             let disk = state
                 .disk_files
                 .iter()
-                .filter(|(p, _)| !state.docs.contains_key(p.as_str()))
+                .filter(|(p, _)| !state.docs.contains(p))
                 .filter(|(p, _)| state.eligibility_for_path(p))
                 .map(|(p, file)| (p.clone(), 0, Arc::clone(file)));
             disk.chain(open_files)
@@ -830,12 +801,12 @@ impl IndexWriter {
         };
         project_files.sort_by(|a, b| a.1.0.cmp(&b.1.0));
 
-        // A display path can stand for several native URIs. Keep each
-        // admitted buffer's annotation status, comments, and version with
-        // that URI; the active sibling cannot supply any of those values.
+        // At a colliding display path, each eligible document gets its own
+        // RY117 when it has contracts in scope, with its own suppressions
+        // and version.
         let mut collision_diagnostics: HashMap<String, HashMap<Url, Vec<LspDiagnostic>>> =
             HashMap::new();
-        for (path, ctx, sources) in eligible_collision_sources {
+        for (path, ctx, sources) in collision_sources {
             let mut by_uri = HashMap::new();
             if let Some(scope) = ctx.config.annotations.typehint.adopted_scope()
                 && !ctx.excludes_path(&path)
@@ -868,8 +839,8 @@ impl IndexWriter {
             collision_diagnostics.insert(path, by_uri);
         }
 
-        // Partition by owning context, then by package group: each R package
-        // is a separate library scope and checks through its own cache.
+        // Partition by owning context, then by package group. Each package
+        // is its own library scope with its own cache.
         let mut owners: Vec<(Option<PathBuf>, Vec<PackageFile>)> = Vec::new();
         for (owner, file) in project_files {
             match owners.iter_mut().find(|(root, _)| *root == owner) {
@@ -936,12 +907,11 @@ impl IndexWriter {
             }
         }
 
-        // Every open buffer, including ineligible ones and those owned by
-        // another partition, hides its possibly stale disk copy from box.
-        let open_paths: HashSet<String> = open_source_paths.keys().cloned().collect();
+        // Every open buffer, eligible or not, hides its disk copy from box.
+        let open_paths: HashSet<String> = open_uris.keys().cloned().collect();
         let mut all_results: Vec<(Arc<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
         for job in jobs {
-            // Colliding snapshots are handled by the per-URI pass above.
+            // Colliding paths get their RY117 from the per-URI pass above.
             let adoptable: Vec<Arc<SourceFile>> = job
                 .files
                 .iter()
@@ -969,16 +939,23 @@ impl IndexWriter {
             all_results.push((job.ctx, result));
         }
 
-        // An edit that arrived while parsing/checking invalidates this whole
-        // project result because every open document is republished below.
+        // An edit during the check invalidates the whole result.
         if self.state.lock().await.diag_generation != generation {
             return None;
         }
 
         let diagnostic_versions: HashMap<_, _> = doc_versions.into_iter().collect();
 
-        // Publish each file through the context it was checked under.
-        let mut published: Vec<Published> = Vec::new();
+        let publication_uris = |path: &str| {
+            open_uris
+                .get(path)
+                .map_or_else(|| vec![path_to_uri(path)], |(uris, _)| uris.clone())
+        };
+        // Post-process each file through the context it was checked under.
+        // `None` marks a colliding path that was not checked because its
+        // active document is over a cap. Its eligible siblings still own
+        // their RY117.
+        let mut outgoing: Vec<(String, Option<Vec<LspDiagnostic>>)> = Vec::new();
         for (ctx, result) in all_results {
             let ProjectCheckResult {
                 diagnostics: per_file,
@@ -1008,69 +985,42 @@ impl IndexWriter {
                         .map(|version| diagnostic_origin(&diagnostic_path, *version, generation)),
                     related_uri,
                 );
-                if uris.len() == 1 {
-                    let uri = uris[0].clone();
-                    let non_empty = if diagnostics.is_empty() {
-                        HashSet::new()
-                    } else {
-                        HashSet::from([uri.clone()])
-                    };
-                    self.client
-                        .publish_diagnostics(
-                            uri,
-                            diagnostics,
-                            diagnostic_versions.get(&diagnostic_path).copied(),
-                        )
-                        .await;
-                    published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
-                    continue;
-                }
-                let mut warnings = collision_diagnostics
-                    .remove(&diagnostic_path)
-                    .unwrap_or_default();
-                let mut non_empty = HashSet::new();
-                for uri in &uris {
-                    // The active display-keyed buffer owns ordinary check
-                    // results. Other native URIs only receive the shared
-                    // ambiguity status, never another buffer's findings.
-                    let active = active_collision_uris.get(&diagnostic_path) == Some(uri);
-                    let mut for_uri = if active {
-                        diagnostics.clone()
-                    } else {
-                        Vec::new()
-                    };
-                    for_uri.extend(warnings.remove(uri).unwrap_or_default());
-                    if !for_uri.is_empty() {
-                        non_empty.insert(uri.clone());
-                    }
-                    self.client
-                        .publish_diagnostics(
-                            uri.clone(),
-                            for_uri,
-                            active
-                                .then(|| diagnostic_versions.get(&diagnostic_path).copied())
-                                .flatten(),
-                        )
-                        .await;
-                }
-                published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
+                outgoing.push((diagnostic_path, Some(diagnostics)));
+            }
+        }
+        for path in collision_diagnostics.keys() {
+            if !outgoing.iter().any(|(checked, _)| checked == path) {
+                outgoing.push((path.clone(), None));
             }
         }
 
-        // If the active colliding buffer is over cap, no project file was
-        // checked for this display key. Eligible inactive buffers still own
-        // their annotation warning, so publish them without admitting the
-        // oversized active text into inference or reparsing it.
-        for (path, mut warnings) in collision_diagnostics {
+        let mut published: Vec<Published> = Vec::new();
+        for (path, diagnostics) in outgoing {
             let uris = publication_uris(&path);
+            let active = open_uris.get(&path).map(|(_, active)| active);
+            let checked = diagnostics.is_some();
+            let mut diagnostics = diagnostics.unwrap_or_default();
+            let mut warnings = collision_diagnostics.remove(&path).unwrap_or_default();
             let mut non_empty = HashSet::new();
             for uri in &uris {
-                let for_uri = warnings.remove(uri).unwrap_or_default();
+                // The active document owns the check results. Other URIs at
+                // the path get only their own RY117, never its findings.
+                let owner = active.is_none_or(|active| active == uri);
+                let mut for_uri = if owner {
+                    std::mem::take(&mut diagnostics)
+                } else {
+                    Vec::new()
+                };
+                for_uri.extend(warnings.remove(uri).unwrap_or_default());
                 if !for_uri.is_empty() {
                     non_empty.insert(uri.clone());
                 }
+                let version = diagnostic_versions
+                    .get(&path)
+                    .copied()
+                    .filter(|_| owner && checked);
                 self.client
-                    .publish_diagnostics(uri.clone(), for_uri, None)
+                    .publish_diagnostics(uri.clone(), for_uri, version)
                     .await;
             }
             published.push((path, uris.into_iter().collect(), non_empty));
@@ -1078,12 +1028,10 @@ impl IndexWriter {
         Some(published)
     }
 
-    /// Clear every URI that should no longer show diagnostics, against
-    /// current state: destinations this pass stopped publishing to,
-    /// requested paths that are not analyzed (the empty publication
-    /// acknowledges a document opened into a disabled folder, an excluded
-    /// path, or over a size or depth cap), and tracked paths that left the
-    /// analysis set (no longer eligible, or neither open nor indexed).
+    /// Clear every URI that should no longer show diagnostics: ones this
+    /// pass stopped publishing to, requested paths that are not analyzed
+    /// (acknowledging a document opened into a disabled folder or past a
+    /// cap), and tracked paths that are no longer eligible, open, or indexed.
     async fn reconcile(&mut self, requested: &HashSet<String>, published: Vec<Published>) {
         let mut stale: HashSet<Url> = HashSet::new();
         for (path, destinations, non_empty) in published {
@@ -1097,7 +1045,7 @@ impl IndexWriter {
             let state = self.state.lock().await;
             for path in requested {
                 if !state.any_open_source_eligible(path) {
-                    stale.extend(source_uris(&state.open_source_paths, path));
+                    stale.extend(state.docs.uris(path));
                 }
             }
             let dropped: Vec<String> = self
@@ -1105,7 +1053,7 @@ impl IndexWriter {
                 .keys()
                 .filter(|path| {
                     !state.any_open_source_eligible(path)
-                        || (!state.docs.contains_key(path.as_str())
+                        || (!state.docs.contains(path)
                             && !state.disk_files.contains_key(path.as_str()))
                 })
                 .cloned()

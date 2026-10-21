@@ -10,12 +10,13 @@
 //! 2. `ry.toml` config file.
 //! 3. Built-in defaults.
 //!
-//! For list fields (`error`, `warn`, `ignore`) CLI values are APPENDED
-//! to the config file's lists rather than replacing them, matching ty's
-//! `--error` / `--warn` / `--ignore` semantics. Scalar fields are
+//! For list fields (`error`, `warn`, `ignore`, `typeshed`) CLI values are
+//! APPENDED to the config file's lists rather than replacing them, matching
+//! ty's `--error` / `--warn` / `--ignore` semantics. Scalar fields are
 //! overridden only when the CLI explicitly sets them (detected via
 //! clap's `ValueSource`), so a config `error-on-warning = true` still
-//! takes effect when the user runs `ry check` with no flags.
+//! takes effect when the user runs `ry check` with no flags. The `-v` and
+//! `-q` counts add to the config's `verbose` and `quiet`.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -80,7 +81,9 @@ pub struct EnvironmentConfig {
     pub bindings: Vec<String>,
     #[serde(default)]
     pub paths: Vec<String>,
-    /// `paths` compiled against the config root when the file is loaded.
+    /// `paths` compiled against the config root. Only [`Config::load_file`]
+    /// fills it, so a `Config` from `Default` or plain deserialization has
+    /// an empty scope that matches nothing.
     #[serde(skip)]
     pub scope: ScopedPaths,
 }
@@ -101,7 +104,9 @@ pub struct TypehintConfig {
     pub adopt: bool,
     pub version: Option<String>,
     pub paths: Vec<String>,
-    /// `paths` compiled against the config root when the file is loaded.
+    /// `paths` compiled against the config root. Only [`Config::load_file`]
+    /// fills it, so a `Config` from `Default` or plain deserialization has
+    /// an empty scope that matches nothing.
     #[serde(skip)]
     scope: ScopedPaths,
 }
@@ -115,6 +120,11 @@ pub struct RuleOverrideConfig {
     pub error: Vec<String>,
     pub warn: Vec<String>,
     pub ignore: Vec<String>,
+    /// `paths` compiled against the config root. Only [`Config::load_file`]
+    /// fills it, so a `Config` from `Default` or plain deserialization has
+    /// an empty scope that matches nothing.
+    #[serde(skip)]
+    pub scope: ScopedPaths,
 }
 
 /// A strict, reusable config-root-relative glob scope. Both the config root
@@ -132,12 +142,8 @@ pub struct ScopedPaths {
 }
 
 impl ScopedPaths {
-    pub fn new(root: &Path, patterns: &[String]) -> Result<Self, glob::PatternError> {
-        Self::compile(root, patterns).map_err(|(_, error)| error)
-    }
-
-    /// Like [`ScopedPaths::new`], reporting which pattern failed.
-    fn compile<'a>(
+    /// Compile `patterns` against `root`. The error names the failing pattern.
+    pub fn new<'a>(
         root: &Path,
         patterns: &'a [String],
     ) -> Result<Self, (&'a String, glob::PatternError)> {
@@ -330,18 +336,8 @@ pub struct ReportsConfig {
     pub enabled: bool,
 }
 
-/// Parsed contents of a `ry.toml` project config file.
-///
-/// The schema is intentionally minimal and conservative; we can add
-/// fields later without breaking existing configs. Unknown fields are
-/// rejected (`#[serde(deny_unknown_fields)]`) so typos surface
-/// immediately rather than being silently ignored.
-///
-/// Field names use snake_case in Rust and kebab-case on disk; the
-/// kebab-case aliases (e.g. `error-on-warning`, `output-format`) are
-/// declared per-field via `#[serde(alias = "...")]`. The struct-level
-/// `#[serde(default)]` lets users omit any subset of fields, with each
-/// missing field falling back to its documented default.
+/// Parsed contents of a `ry.toml` project config file. Missing fields take
+/// their value from [`Config::default`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -376,7 +372,7 @@ pub struct Config {
     #[serde(alias = "check-test-fixtures")]
     pub check_test_fixtures: bool,
     /// Output format. Default: "full".
-    #[serde(alias = "output-format", default = "default_output_format")]
+    #[serde(alias = "output-format")]
     pub output_format: String,
     /// Verbosity count (cumulative with -v). Default: 0.
     pub verbose: u8,
@@ -443,15 +439,6 @@ impl Default for Config {
     }
 }
 
-/// serde default for `Config::output_format`. Kept as a free function
-/// because `#[serde(default = "...")]` requires a path, not a closure.
-/// Without this, the struct-level `#[serde(default)]` would fill a
-/// missing `output-format` with the `String` default (empty string)
-/// rather than `"full"`.
-fn default_output_format() -> String {
-    DEFAULT_OUTPUT_FORMAT.to_string()
-}
-
 impl Config {
     /// Try to load a `ry.toml` from the given directory.
     ///
@@ -489,7 +476,7 @@ impl Config {
             }
         })?;
         let scope = |key: String, patterns: &[String]| {
-            ScopedPaths::compile(&root, patterns).map_err(|(pattern, source)| {
+            ScopedPaths::new(&root, patterns).map_err(|(pattern, source)| {
                 ConfigError::InvalidPattern {
                     path: path.to_path_buf(),
                     key,
@@ -504,14 +491,14 @@ impl Config {
                 &profile.paths,
             )?;
         }
-        for (index, table) in cfg.rule_overrides.iter().enumerate() {
+        for (index, table) in cfg.rule_overrides.iter_mut().enumerate() {
             if table.paths.is_empty() {
                 return Err(ConfigError::EmptyRuleOverridePaths {
                     path: path.to_path_buf(),
                     index: index + 1,
                 });
             }
-            scope(format!("rule-overrides #{} paths", index + 1), &table.paths)?;
+            table.scope = scope(format!("rule-overrides #{} paths", index + 1), &table.paths)?;
         }
         scope("include-build-ignored".into(), &cfg.include_build_ignored)?;
         cfg.annotations.typehint.scope = scope(
@@ -561,55 +548,46 @@ impl Config {
     }
 
     /// Walk up from `start` looking for a `ry.toml`. Stops at the first
-    /// ancestor directory that contains one.
+    /// ancestor directory that contains one; see [`config_candidates`]
+    /// for the probe order.
     ///
-    /// `start` is resolved to an absolute path first; if `start` is a
-    /// file rather than a directory, discovery begins from its parent.
-    /// Symlinks are not followed during the upward walk (we use plain
-    /// `Path::parent` iteration rather than `canonicalize`, so a
-    /// symlinked `ry.toml` in a real directory is still found but the
-    /// walk itself does not chase symlinks).
-    ///
-    /// Returns `Ok(Some((path, config)))` on the first match,
-    /// `Ok(None)` if the filesystem root is reached without finding a
-    /// `ry.toml`. Permission errors during `load_from_dir` propagate as
-    /// `Err`; transient "does not exist" results from probing each
-    /// ancestor are folded into the walk.
+    /// Returns `Ok(None)` if the filesystem root is reached without
+    /// finding a `ry.toml`. Read and parse errors propagate as `Err`.
     pub fn discover(start: &Path) -> Result<Option<(PathBuf, Self)>, ConfigError> {
-        // Resolve to an absolute path. We avoid `canonicalize` here so
-        // that the walk does not silently resolve symlinked parents;
-        // `std::env::current_dir` gives us the anchor for relative
-        // inputs without dereferencing the path's own components.
-        let abs = if start.is_absolute() {
-            start.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(start)
-        };
-        let mut dir: &Path = if abs.is_file() {
-            abs.parent().unwrap_or(Path::new("."))
-        } else {
-            abs.as_path()
-        };
-        loop {
-            if let Some(cfg) = Self::load_from_dir(dir)? {
-                return Ok(Some((dir.join(CONFIG_FILENAME), cfg)));
-            }
-            match dir.parent() {
-                Some(parent) => dir = parent,
-                None => return Ok(None),
+        for path in config_candidates(start) {
+            if path.exists() {
+                return Self::load_file(&path).map(|cfg| Some((path, cfg)));
             }
         }
+        Ok(None)
     }
 }
 
-/// CLI flag values that override (or extend) a loaded `ry.toml`.
-///
-/// Every field is empty/unset by default, which means "the CLI did not
-/// touch this; keep the config value". The list fields append to the
-/// config's lists; the scalar fields install only when `Some`; the
-/// verbosity counts add on top of the config's.
+/// Every `ry.toml` path [`Config::discover`] probes from `start`, nearest
+/// first. A file `start` begins at its parent. A relative `start` joins
+/// the working directory without `canonicalize` or folding `..`, so the
+/// walk does not resolve symlinks and steps over dotted components as
+/// `Path::parent` yields them.
+pub fn config_candidates(start: &Path) -> Vec<PathBuf> {
+    let abs = if start.is_absolute() {
+        start.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(start)
+    };
+    let first = if abs.is_file() {
+        abs.parent().unwrap_or(Path::new("."))
+    } else {
+        abs.as_path()
+    };
+    first
+        .ancestors()
+        .map(|dir| dir.join(CONFIG_FILENAME))
+        .collect()
+}
+
+/// CLI flag values merged into a loaded `ry.toml` by [`Config::merge_cli`].
 #[derive(Debug, Default, Clone)]
 pub struct CliOverrides {
     /// Rules to treat as errors (`--error`).
@@ -635,17 +613,8 @@ pub struct CliOverrides {
 }
 
 impl Config {
-    /// Merge CLI overrides into this config.
-    ///
-    /// List fields (`error`, `warn`, `ignore`) have the CLI values
-    /// APPENDED to the config file's values. Scalar boolean / string
-    /// fields are overridden only when the CLI passes `Some(...)`,
-    /// meaning "the user explicitly set this on the command line". A
-    /// `None` means "the CLI did not touch this; keep the config value".
-    ///
-    /// `verbose` and `quiet` are additive: the CLI count is added on
-    /// top of the config count, so `verbose = 1` in `ry.toml` plus a
-    /// single `-v` flag yields a final count of 2.
+    /// Merge CLI overrides into this config, following the precedence in
+    /// the module docs.
     pub fn merge_cli(mut self, cli: CliOverrides) -> Self {
         self.error.extend(cli.error);
         self.warn.extend(cli.warn);
@@ -663,32 +632,22 @@ impl Config {
         if let Some(output_format) = cli.output_format {
             self.output_format = output_format;
         }
-        // Saturating add so a config value of 255 plus a CLI flag stays
-        // within u8 rather than panicking on overflow.
         self.verbose = self.verbose.saturating_add(cli.verbose);
         self.quiet = self.quiet.saturating_add(cli.quiet);
         self
     }
 }
 
-/// A compiled set of `exclude` patterns. Patterns are gitignore-style
-/// globs matched against the path of each candidate file relative to
-/// the directory containing the originating `ry.toml`.
-///
-/// Constructed once from a `Config` and reused across all path checks
-/// so we pay pattern-compilation cost only once per run. The forward
-/// slash is used as the path separator on every platform, matching the
-/// glob crate's expectations and the documented `ry.toml` schema.
+/// Compiled `exclude` globs, matched against paths relative to the
+/// config root with `/` separators on every platform.
 #[derive(Debug, Clone, Default)]
 pub struct Excludes {
     patterns: Vec<glob::Pattern>,
 }
 
 impl Excludes {
-    /// Compile the `exclude` field of a `Config` into a reusable
-    /// matcher. Patterns that fail to compile are skipped with a
-    /// `tracing::warn!`; an invalid pattern in a config file should
-    /// not crash the run, but should be surfaced for the user to fix.
+    /// Compile `cfg.exclude`. An invalid pattern is skipped with a warning
+    /// rather than failing the run.
     pub fn from_config(cfg: &Config) -> Self {
         let mut patterns = Vec::with_capacity(cfg.exclude.len());
         for raw in &cfg.exclude {
@@ -702,15 +661,10 @@ impl Excludes {
         Self { patterns }
     }
 
-    /// Returns true if `relative_path` matches any of the compiled
-    /// exclude patterns. The path must be expressed relative to the
-    /// directory that owns the `ry.toml`, using forward slashes as
-    /// separators.
     pub fn matches(&self, relative_path: &str) -> bool {
         self.patterns.iter().any(|p| p.matches(relative_path))
     }
 
-    /// Returns true if there are no patterns, i.e. nothing can match.
     pub fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }
@@ -942,7 +896,7 @@ paths = ["inst/shiny/**"]
         fs::create_dir_all(root.join("R/sub")).unwrap();
         fs::create_dir_all(root.join("scripts")).unwrap();
         fs::write(root.join("R/a.R"), "x <- 1L\n").unwrap();
-        let paths = ScopedPaths::new(root, &config.rule_overrides[0].paths).unwrap();
+        let paths = &config.rule_overrides[0].scope;
         assert!(paths.matches(&root.join("R/a.R")));
         assert!(paths.matches(&root.join("R/sub/../a.R")));
         assert!(paths.matches(&root.join("R/sub/../unsaved.R")));
@@ -1049,7 +1003,7 @@ paths = ["inst/shiny/**"]
         )
         .unwrap();
         let config = Config::load_file(&config_path).unwrap();
-        let paths = ScopedPaths::new(root, &config.rule_overrides[0].paths).unwrap();
+        let paths = &config.rule_overrides[0].scope;
         assert!(paths.matches(&backslash));
         assert!(!paths.matches(&slash));
     }
@@ -1288,6 +1242,30 @@ paths = ["inst/shiny/**"]
             .expect("should find nearest ry.toml");
         assert_eq!(path, mid.join(CONFIG_FILENAME));
         assert_eq!(cfg.error, vec!["MID"]);
+    }
+
+    #[test]
+    fn discover_steps_over_dotdot_without_folding_it() {
+        // From `sub/../project`, `Path::parent` visits `sub/..` and then
+        // `sub` itself, which a folded `project` start never visits.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+        fs::create_dir_all(base.join("sub")).unwrap();
+        fs::create_dir_all(base.join("project/R")).unwrap();
+        fs::write(base.join("project/R/use.R"), "x <- 1L\n").unwrap();
+        fs::write(base.join("sub").join(CONFIG_FILENAME), "exit-zero = true\n").unwrap();
+        let expected = base.join("sub").join(CONFIG_FILENAME);
+        for start in [
+            base.join("sub/../project"),
+            base.join("sub/../project/R/use.R"),
+        ] {
+            let (path, _) = Config::discover(&start).unwrap().expect("sub/ry.toml");
+            assert_eq!(path, expected, "{start:?}");
+            let first = config_candidates(&start)
+                .into_iter()
+                .find(|candidate| candidate.is_file());
+            assert_eq!(first, Some(expected.clone()), "{start:?}");
+        }
     }
 
     #[test]

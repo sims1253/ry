@@ -2,7 +2,7 @@
 #
 # Compares expected diagnostic identities from a corpus ledger against actual
 # diagnostics from hermetic reports, and returns the exit status (0 = pass,
-# 1 = fail) according to the reconciliation mode and finding labels.
+# 1 = fail).
 
 identity_key <- function(package, code, path, line, column) {
   sprintf("%s\t%s\t%s\t%s\t%s", package, code, sub("^\\./", "", path), line, column)
@@ -86,23 +86,13 @@ reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {
   if (length(unowned)) {
     writeLines(c("ecosystem: unowned hermetic findings appeared:", paste0("  - ", unowned)), stderr())
   }
+  if (length(missing_required)) {
+    writeLines("ecosystem: a reviewed true_positive finding disappeared.", stderr())
+    return(1L)
+  }
   if (length(missing) || length(unowned)) {
-    if (length(missing_required)) {
-      writeLines("ecosystem: a reviewed true_positive finding disappeared; this gates the build in every mode.", stderr())
-      return(1L)
-    }
-    reconciliation_mode <- if (!is.null(corpus$reconciliation) && length(corpus$reconciliation) > 0) corpus$reconciliation[[1L]] else "hermetic"
-    if (reconciliation_mode == "audit-transcript") {
-      writeLines(c(
-        sprintf("ecosystem: %s is an audit transcript of an installed-library run;", corpus_path),
-        "ecosystem: the hermetic-vs-audit delta above is reported for visibility and does not gate this build.",
-        sprintf("ecosystem: to update the ledger, re-audit the %s corpus and regenerate it from the audit results (see docs/corpus/README.md).", corpus$corpus[[1L]])
-      ), stderr())
-      return(0L)
-    } else {
-      writeLines(sprintf("ecosystem: update %s with the reviewed findings delta", corpus_path), stderr())
-      return(1L)
-    }
+    writeLines(sprintf("ecosystem: update %s with the reviewed findings delta", corpus_path), stderr())
+    return(1L)
   }
   0L
 }

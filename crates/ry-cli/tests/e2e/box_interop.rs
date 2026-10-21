@@ -1,7 +1,9 @@
 //! Real CLI and LSP entry points for package-local box modules.
-use ry_testkit::{FixtureProject, JsonRpcProcess, file_uri};
+use ry_testkit::{CliProcess, FixtureProject, JsonRpcProcess, file_uri};
 use serde_json::{Value, json};
 use std::process::Command;
+
+use crate::support::check;
 
 const SOURCE: &str = "box::use(./modules/hello[foo, missing])\nbox::use(dplyr[filter])\nd <- data.frame(mpg = c(21, 22.8))\nchosen <- filter(d, mpg > 21)\nbad <- foo() + 1L\n";
 const MODULE: &str = "foo <- function() 'hello'\nbox::export(foo)\n";
@@ -20,35 +22,19 @@ fn fixture() -> FixtureProject {
     files
 }
 
-fn ry_check() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ry"));
-    command
-        .args(["check", "--output-format", "json"])
-        .env("RY_NO_INSTALLED_LIBRARIES", "1");
-    command
-}
-
-fn json_diagnostics(command: &mut Command, status: i32) -> Vec<Value> {
-    let output = command.output().unwrap();
-    assert_eq!(output.status.code(), Some(status), "{output:?}");
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| panic!("{error}: {output:?}"))
-}
-
-fn codes(diagnostics: &[Value]) -> Vec<String> {
-    diagnostics
-        .iter()
-        .map(|diagnostic| diagnostic["code"].as_str().unwrap().to_string())
-        .collect()
+/// Rule codes of a JSON check, after asserting its exit code.
+fn codes(process: CliProcess, status: i32) -> Vec<String> {
+    let output = process.args(["--output-format", "json"]).run();
+    assert_eq!(output.code(), Some(status), "{output:?}");
+    output.codes()
 }
 
 #[test]
 fn package_local_module_and_dplyr_import_reach_cli_pipeline() {
-    let files = fixture();
-    let diagnostics = json_diagnostics(ry_check().arg(files.root()), 1);
-    let codes = codes(&diagnostics);
-    assert!(codes.contains(&"RY118".to_string()), "{diagnostics:#?}");
-    assert!(codes.contains(&"RY040".to_string()), "{diagnostics:#?}");
-    assert!(!codes.contains(&"RY010".to_string()), "{diagnostics:#?}");
+    let codes = codes(check().arg(fixture().root()), 1);
+    assert!(codes.contains(&"RY118".to_string()), "{codes:?}");
+    assert!(codes.contains(&"RY040".to_string()), "{codes:?}");
+    assert!(!codes.contains(&"RY010".to_string()), "{codes:?}");
 }
 
 #[test]
@@ -65,15 +51,14 @@ fn installed_namespace_gates_package_stub_import_without_loading_r() {
         .unwrap();
     let namespace = files.path("lib/dplyr/NAMESPACE");
     let run = || {
-        let mut command = ry_check();
-        command
+        let process = check()
             .arg("--exit-zero")
             .arg(files.path("run.R"))
             .env_remove("RY_NO_INSTALLED_LIBRARIES")
             .env("R_LIBS", files.path("lib"))
             .env("R_LIBS_USER", files.path("missing-user-lib"))
             .env("R_LIBS_SITE", files.path("missing-site-lib"));
-        codes(&json_diagnostics(&mut command, 0))
+        codes(process, 0)
     };
     files
         .write_file("lib/dplyr/NAMESPACE", "export(select)\n")
@@ -142,9 +127,14 @@ fn package_local_module_and_dplyr_import_reach_lsp_pipeline() {
         )
         .unwrap();
     let diagnostics = publication["params"]["diagnostics"].as_array().unwrap();
-    let codes = codes(diagnostics);
-    assert!(codes.contains(&"RY040".to_string()), "{diagnostics:#?}");
-    assert!(!codes.contains(&"RY010".to_string()), "{diagnostics:#?}");
+    assert!(
+        diagnostics.iter().any(|d| d["code"] == "RY040"),
+        "{diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d["code"] != "RY010"),
+        "{diagnostics:#?}"
+    );
     let shutdown = client.request("shutdown", Value::Null).unwrap();
     client
         .receive_until(|message| message.get("id") == Some(&json!(shutdown)), 16)
@@ -169,13 +159,11 @@ fn native_caller_directory_drives_relative_module_lookup_in_cli() {
     std::fs::write(raw_dir.join("mod.r"), "foo <- function() 'wrong'\n").unwrap();
     std::fs::write(unicode_dir.join("mod.r"), "foo <- function() 'wrong'\n").unwrap();
     let check = |paths: &[&std::path::Path], expect_type_error: bool| {
-        let diagnostics = json_diagnostics(ry_check().arg("--exit-zero").args(paths), 0);
+        let codes = codes(check().arg("--exit-zero").args(paths), 0);
         assert_eq!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic["code"] == "RY040"),
+            codes.contains(&"RY040".to_string()),
             expect_type_error,
-            "{diagnostics:#?}"
+            "{codes:?}"
         );
     };
     // A wrong return in the raw directory must be observed, proving that

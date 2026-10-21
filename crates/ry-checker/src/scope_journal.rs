@@ -2,6 +2,22 @@
 use super::*;
 use crate::reference_facts::{BindingProvenance, ReferenceBlocker, ScopeProvenance};
 
+/// Insert `value` under `key`, or remove `key` when `value` is `None`.
+fn put<V, S: std::hash::BuildHasher>(
+    map: &mut HashMap<String, V, S>,
+    key: String,
+    value: Option<V>,
+) {
+    match value {
+        Some(value) => {
+            map.insert(key, value);
+        }
+        None => {
+            map.remove(&key);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct BindingState {
     pub ty: Option<RType>,
@@ -76,38 +92,22 @@ impl BindingState {
             self.default_parameter,
         );
         marker(&mut scope.lexical_functions, &name, self.lexical);
-        if let Some(span) = self.lexical_definition {
-            scope.lexical_definitions.insert(name.clone(), span);
-        } else {
-            scope.lexical_definitions.remove(&name);
-        }
-        if let Some(alias) = self.alias {
-            scope.function_aliases.insert(name.clone(), alias);
-        } else {
-            scope.function_aliases.remove(&name);
-        }
-        if let Some(object) = self.box_object {
-            scope.box_objects.insert(name.clone(), object);
-        } else {
-            scope.box_objects.remove(&name);
-        }
+        put(
+            &mut scope.lexical_definitions,
+            name.clone(),
+            self.lexical_definition,
+        );
+        put(&mut scope.function_aliases, name.clone(), self.alias);
+        put(&mut scope.box_objects, name.clone(), self.box_object);
         if let Some(p) = scope.reference_provenance.as_mut() {
-            if let Some(value) = self.provenance {
-                p.bindings.insert(name.clone(), value);
-            } else {
-                p.bindings.remove(&name);
-            }
+            put(&mut p.bindings, name.clone(), self.provenance);
         }
-        if let Some(ty) = self.ty {
-            scope.bindings.insert(name, ty);
-        } else {
-            scope.bindings.remove(&name);
-        }
+        put(&mut scope.bindings, name, self.ty);
     }
 }
 
 // An ordinary assignment removes these facts. Keep only the values actually
-// removed; after later undo records are replayed, absent facts need no work.
+// removed. After later undo records are replayed, absent facts need no work.
 #[derive(Debug)]
 pub(crate) struct AssignmentUndo {
     ty: Option<RType>,
@@ -126,11 +126,11 @@ impl AssignmentUndo {
                 set.insert(name.clone());
             }
         }
-        if let Some(span) = self.lexical_definition {
-            scope.lexical_definitions.insert(name.clone(), span);
-        } else {
-            scope.lexical_definitions.remove(&name);
-        }
+        put(
+            &mut scope.lexical_definitions,
+            name.clone(),
+            self.lexical_definition,
+        );
         debug_assert!(!scope.function_aliases.contains_key(&name));
         if let Some(alias) = self.alias {
             scope.function_aliases.insert(name.clone(), alias);
@@ -144,11 +144,7 @@ impl AssignmentUndo {
             debug_assert!(!table.bindings.contains_key(&name));
             table.bindings.insert(name.clone(), provenance);
         }
-        if let Some(ty) = self.ty {
-            scope.bindings.insert(name, ty);
-        } else {
-            scope.bindings.remove(&name);
-        }
+        put(&mut scope.bindings, name, self.ty);
     }
 }
 
@@ -184,7 +180,7 @@ pub(crate) enum Undo {
 }
 
 /// Undo records for the active branch snapshots. A cloned scope starts its
-/// own history: rollback in the original never replays into the clone.
+/// own history, so rollback in the original never replays into the clone.
 #[derive(Debug, Default)]
 pub(crate) struct Journal {
     pub(crate) undo: Vec<Undo>,
@@ -556,11 +552,7 @@ impl Scope {
         while self.journal.undo.len() > mark.len {
             match self.journal.undo.pop().unwrap() {
                 Undo::KnownString(name, previous) => {
-                    if let Some(value) = previous {
-                        self.known_strings.insert(name, value);
-                    } else {
-                        self.known_strings.remove(&name);
-                    }
+                    put(&mut self.known_strings, name, previous);
                 }
                 Undo::KnownStrings(previous) => self.known_strings = previous,
                 Undo::Assignment(name, state) => state.restore(self, name),
@@ -580,26 +572,14 @@ impl Scope {
                     }
                 }
                 Undo::LexicalDefinition(name, previous) => {
-                    if let Some(span) = previous {
-                        self.lexical_definitions.insert(name, span);
-                    } else {
-                        self.lexical_definitions.remove(&name);
-                    }
+                    put(&mut self.lexical_definitions, name, previous);
                 }
                 Undo::Alias(name, previous) => {
-                    if let Some(value) = previous {
-                        self.function_aliases.insert(name, value);
-                    } else {
-                        self.function_aliases.remove(&name);
-                    }
+                    put(&mut self.function_aliases, name, previous);
                 }
                 Undo::Reference(name, previous) => {
                     if let Some(p) = self.reference_provenance.as_mut() {
-                        if let Some(value) = previous {
-                            p.bindings.insert(name, value);
-                        } else {
-                            p.bindings.remove(&name);
-                        }
+                        put(&mut p.bindings, name, previous);
                     }
                 }
                 Undo::OpsBinding(name, function, vector) => {

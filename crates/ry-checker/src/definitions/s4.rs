@@ -1,12 +1,12 @@
 //! S4 method selection: which project method a generic call provably reaches.
 //!
-//! A method is selected only under one of two proofs; every other call
-//! that project methods may answer is [`S4Selection::Uncertain`]:
+//! A method is selected only under one of two proofs. Every other call
+//! that project methods may answer is [`S4Selection::Uncertain`].
 //!
 //! - exact: every dispatch position has an exactly known class (or is
 //!   missing) and one method's signature names exactly those classes. R's
 //!   total distance is then zero, and an equal competitor would need the
-//!   same signature, which `setMethod` replaces;
+//!   same signature, which `setMethod` replaces.
 //! - receiver-only: every method has `ANY` after the first position, and
 //!   one method names the receiver's exact class.
 //!
@@ -236,8 +236,7 @@ impl Definitions {
                 S4Selection::NoCandidate
             };
         };
-        // Fall through, as before full signatures, when no method names
-        // any actual's explicit class. An uninterpreted registration may
+        // Fall through when no method names any actual's explicit class. An uninterpreted registration may
         // name any of them.
         let named = |class: &str| {
             call.arg_types

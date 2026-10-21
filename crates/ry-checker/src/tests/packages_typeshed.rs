@@ -62,6 +62,30 @@ fn schema_verb_ladder_gates_on_the_project_union() {
 }
 
 #[test]
+fn stub_ladder_reads_import_then_base_then_attached() {
+    // Base takes one `diag` formal, Matrix four.
+    let from_matrix = |name: &str, checker: &Checker| {
+        checker
+            .resolve_typeshed_sig(name)
+            .map(|signature| signature.params.len() == 4)
+    };
+    let mut checker = Checker::new("test.R");
+    checker.set_bare_loaded(HashSet::from(["Matrix".to_string()]));
+    // An R script reaches Matrix first. The ladder reads base first, as
+    // package code does.
+    assert_eq!(from_matrix("diag", &checker), Some(false));
+    checker.set_imported_from(HashMap::from([("diag".into(), "Matrix".into())]));
+    assert_eq!(from_matrix("diag", &checker), Some(true));
+
+    // A qualified name reads only its own package. Standard packages map to
+    // the base database.
+    assert_eq!(from_matrix("base::diag", &checker), Some(false));
+    assert_eq!(from_matrix("stats::diag", &checker), Some(false));
+    assert_eq!(from_matrix("Matrix::diag", &checker), Some(true));
+    assert_eq!(from_matrix("dplyr::diag", &checker), None);
+}
+
+#[test]
 fn package_loading_calls_have_distinct_return_types() {
     let (diags, scope) = check_with_scope(
         "attached <- library(stats)\navailable <- require(stats)\nnamespaced <- requireNamespace(\"stats\")\n",

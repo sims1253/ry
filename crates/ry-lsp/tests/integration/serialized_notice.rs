@@ -62,12 +62,7 @@ async fn repaired_serialized_scope_clears_the_notice_and_a_later_failure_reports
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
     notice_after(&mut session, 0, LIMIT).await;
 
-    let mark = session.publication_mark();
-    session.open(&main, 1, "sysdata\n").await.unwrap();
-    session
-        .published_diagnostics_after(&main, mark)
-        .await
-        .unwrap();
+    harness::open_published(&mut session, &main, 1, "sysdata\n").await;
 
     std::fs::write(
         &data_path,
@@ -75,13 +70,7 @@ async fn repaired_serialized_scope_clears_the_notice_and_a_later_failure_reports
     )
     .unwrap();
     let mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": serialized, "type": 2}]}),
-        )
-        .await
-        .unwrap();
+    harness::notify_changed(&mut session, &serialized).await;
     // The repaired inventory binds no `sysdata`, so the name is unbound again.
     loop {
         let publish = session
@@ -109,13 +98,7 @@ async fn repaired_serialized_scope_clears_the_notice_and_a_later_failure_reports
 
     std::fs::write(&data_path, nested).unwrap();
     let mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": serialized, "type": 2}]}),
-        )
-        .await
-        .unwrap();
+    harness::notify_changed(&mut session, &serialized).await;
     notice_after(&mut session, mark, LIMIT).await;
     join_session(session, server).await;
 }

@@ -101,28 +101,43 @@ fn components_after_dependencies(dependencies: &[Vec<usize>]) -> Vec<Vec<usize>>
     components
 }
 
+/// Raise `parameter`'s NSE flags to the inherited ones. Returns whether any
+/// flag changed.
+fn inherit_nse_flags(
+    parameter: &mut UserParam,
+    quoting: bool,
+    defused: bool,
+    injection: Option<InjectionMode>,
+) -> bool {
+    let mut changed = false;
+    if quoting && !parameter.quoting {
+        parameter.quoting = true;
+        changed = true;
+    }
+    if defused && !parameter.defused {
+        parameter.defused = true;
+        changed = true;
+    }
+    if injection > parameter.injection {
+        parameter.injection = injection;
+        changed = true;
+    }
+    changed
+}
+
 impl Checker {
-    // Pass 2: refine all function return types until convergence.
-    // Safe to call once, after all files have been collected.
-    //
-    // S3 methods (`print.foo`, etc.) sit in `fns` under their full
-    // name, with `s3_methods` pointing at the same return slot, so
-    // iterating `fns` refines their bodies alongside regular
-    // functions; dispatch reads the refined slot via `s3_methods`.
+    // Pass 2: refine all function return types until convergence. S3
+    // methods sit in `functions` under their full name, with
+    // `s3_methods` pointing at the same return slot, so refinement covers
+    // their bodies too.
     pub(crate) fn run_fixpoint(&mut self) {
         self.run_fixpoint_scoped(None);
     }
 
-    /// Run the fixpoint, but only refine functions in `scope` when given.
-    /// Functions outside the scope keep their current (seeded) return type.
-    /// Used by `Project` for incremental checks where only a subset of
-    /// functions can have changed.
-    ///
-    /// The set must include every function whose definition or callees
-    /// changed; functions outside the set are assumed stable. The fixpoint
-    /// still iterates until convergence *within the scope* — a scoped
-    /// function whose return type changes can still affect other scoped
-    /// functions that call it.
+    /// Run the fixpoint, refining only functions in `scope` when given.
+    /// Functions outside the scope keep their seeded return type, so the
+    /// set must include every function whose definition or callees
+    /// changed.
     ///
     /// Scoped returns start at bottom (not computed): a call to such a
     /// function makes its path unreachable, so recursion keeps its base
@@ -360,8 +375,7 @@ impl Checker {
                         // that generic formal, regardless of its position.
                         Some(position) => Some(position),
                         // A named method formal absent from the generic is
-                        // supplied through the generic's dots just like a
-                        // method dots formal.  This is the common S3 shape
+                        // supplied through the generic's dots, as in
                         // `generic(x, ...)` / `generic.class(x, column, ...)`.
                         None => dots,
                     };
@@ -385,15 +399,9 @@ impl Checker {
                 .functions
                 .live_mut(&generic)
                 .and_then(|function| function.params.get_mut(position))
+                && inherit_nse_flags(parameter, quoting, false, injection)
             {
-                if quoting && !parameter.quoting {
-                    parameter.quoting = true;
-                    changed.insert(slot);
-                }
-                if injection > parameter.injection {
-                    parameter.injection = injection;
-                    changed.insert(slot);
-                }
+                changed.insert(slot);
             }
         }
         changed
@@ -401,10 +409,8 @@ impl Checker {
 
     /// Propagate user-NSE metadata across direct formal forwarding.
     ///
-    /// `ForwardedCall` is collected syntactically, so an argument is present
-    /// here only when its value was an identifier.  This deliberately excludes
-    /// expressions such as `callee(p + 1)` and nested calls such as
-    /// `callee(f(p))`, which evaluate `p` before the callee can capture it.
+    /// `ForwardedCall` holds only identifier arguments. `callee(p + 1)` and
+    /// `callee(f(p))` evaluate `p` before the callee can capture it.
     fn propagate_forwarded_evaluation(&mut self) -> HashSet<usize> {
         let mut inherited = Vec::new();
 
@@ -480,10 +486,8 @@ impl Checker {
                         )
                     })
                 };
-                // Dots capture is already modeled as defusing (rather than
-                // quoting) so its direct arguments remain opaque.  Preserve
-                // that stronger behavior while forwarding `...` to another
-                // dots-capturing user function.
+                // Dots capture is modeled as defusing, so its direct
+                // arguments stay opaque when `...` is forwarded.
                 let inherits_defusing = source == "..."
                     && if let Some(callee) = user_callee {
                         callee.params[target].defused
@@ -524,19 +528,9 @@ impl Checker {
                 .functions
                 .live_mut(&caller)
                 .and_then(|function| function.params.iter_mut().find(|p| p.name == parameter))
+                && inherit_nse_flags(parameter, quoting, defused, injection)
             {
-                if quoting && !parameter.quoting {
-                    parameter.quoting = true;
-                    changed.insert(slot);
-                }
-                if defused && !parameter.defused {
-                    parameter.defused = true;
-                    changed.insert(slot);
-                }
-                if injection > parameter.injection {
-                    parameter.injection = injection;
-                    changed.insert(slot);
-                }
+                changed.insert(slot);
             }
         }
         changed

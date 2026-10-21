@@ -590,3 +590,63 @@ pretty <- function() helper_a
 helper_a <- function(x) x
 }, environment())
 }
+
+## case: bindings made in both arms of an if value are visible afterwards
+# no-diag
+# From xfun `cache.R` (issue #694). R binds an assignment in an `if` arm
+# in the enclosing frame wherever the `if` sits.
+f <- function(code, suffix) {
+  n <- if (suffix == "") {
+    hits <- TRUE
+    length(code)
+  } else {
+    hits <- endsWith(code, suffix)
+    which.max(hits)
+  }
+  list(n, hits)
+}
+
+## case: an if ending a braced call argument binds after the call
+# no-diag
+# From dplyr `summarise.R` (issues #350 and #694).
+f <- function(verb) {
+  withCallingHandlers({
+    if (verb == "summarise") {
+      sizes <- NULL
+    } else {
+      sizes <- 1L
+    }
+  }, error = function(e) stop(e))
+  sizes
+}
+
+## case: an if ending a bare block binds after the block
+# no-diag
+f <- function(verb) {
+  {
+    if (verb == "summarise") sizes <- NULL else sizes <- 1L
+  }
+  sizes
+}
+
+## case: a binding made in one arm of an if value is silent like the statement form
+# no-diag
+f <- function(flag) {
+  n <- if (flag) { extra <- 1; 2 } else 3
+  extra
+}
+
+## case: an if value joins the types its arms bind
+# expect: RY040
+f <- function(flag) {
+  n <- if (flag) { label <- "a"; 1 } else { label <- "b"; 2 }
+  label + n
+}
+
+## case: a name no arm of an if value binds stays unbound
+# expect: RY010
+# The arm binds `hidden` only in the closure's own frame.
+f <- function(flag) {
+  n <- if (flag) { helper <- function() hidden <- 1; 1 } else 2
+  hidden
+}

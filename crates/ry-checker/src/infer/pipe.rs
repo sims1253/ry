@@ -307,77 +307,35 @@ impl Checker {
         else_: &Option<Box<Expr>>,
         scope: &mut Scope,
     ) -> RType {
+        self.infer_if_value(
+            cond,
+            IfArm::Expr(then),
+            else_.as_deref().map(IfArm::Expr),
+            scope,
+        )
+    }
+
+    /// Infer the value of an `if` used as one: an `if` expression, or an
+    /// `if` statement that ends a block. Its arms run in the enclosing
+    /// frame, so their bindings merge back like the statement form's
+    /// (issue #694).
+    pub(super) fn infer_if_value(
+        &mut self,
+        cond: &Expr,
+        then: IfArm<'_>,
+        else_: Option<IfArm<'_>>,
+        scope: &mut Scope,
+    ) -> RType {
         // RY103: an `if` used in expression position still requires a
         // length-1 logical condition.
         self.infer_condition(cond, scope, ConditionContext::If);
-        // Flow-sensitive type narrowing for the expression form too.
-        //
-        // Limitation: the branch scopes here are clones, and
-        // `BinOpKind::Assign` in expression position (e.g.
-        // `y <- if (c) (x <- 1) else (x <- 2); x`) mutates only the clone, so
-        // any binding introduced inside an `if` *expression* is silently
-        // dropped. The statement-form `Stmt::If` merges its branch bindings
-        // back into the parent (see `walk_journal_if`); doing the same
-        // for the expression form is deferred to a later phase because
-        // expression-position assignment is rare and merging here would
-        // require plumbing owned branch scopes back to the caller.
         let narrowing = self.extract_type_narrowing(cond, scope);
-        // Expression arms do not merge bindings. Drop each child before
-        // creating its sibling, and avoid a child for an absent else arm.
-        // Delay propagating effects until both arms have seen the same base.
         // The arm a literal condition never takes is inferred silently.
         let literal_cond = match cond {
             Expr::Logical(value, _) => Some(*value),
             _ => None,
         };
-        let mut infer_arm = |expr, branch| {
-            let mut child = scope.clone();
-            apply_narrowing_branch(&mut child, &narrowing, branch);
-            let dead = match branch {
-                NarrowingBranch::Then => literal_cond == Some(false),
-                NarrowingBranch::Else => literal_cond == Some(true),
-            };
-            let outer = self.in_dead_arm;
-            self.in_dead_arm |= dead;
-            let ty = self.infer(expr, &mut child);
-            self.in_dead_arm = outer;
-            (
-                ty,
-                child.uncertainty,
-                child.unreachable,
-                (!child.unreachable).then_some(child.scalar_asserted_bindings),
-            )
-        };
-        let (then_t, then_uncertainty, then_unreachable, then_facts) =
-            infer_arm(then, NarrowingBranch::Then);
-        let (else_t, else_uncertainty, else_unreachable, else_facts) = match else_ {
-            Some(e) => infer_arm(e, NarrowingBranch::Else),
-            None => (
-                RType::new(Mode::Null, Length::Zero),
-                Uncertainty::default(),
-                false,
-                None,
-            ),
-        };
-        // A reachable arm that lost a fact, for example through a call
-        // allowed before an assertion, loses it for the continuation too.
-        for facts in [then_facts, else_facts].into_iter().flatten() {
-            scope.retain_scalar_assertions(|name| facts.contains(name));
-        }
-        scope.clear_ops_facts();
-        scope.clear_known_strings();
-        // Expression arms drop their bindings, and with them the evidence
-        // their names carry about escaped slot operators.
-        scope.uncertainty |= Uncertainty {
-            escaped_slot_names: false,
-            ..then_uncertainty | else_uncertainty
-        };
-        scope.unreachable |= then_unreachable && else_unreachable;
-        match (then_unreachable, else_unreachable) {
-            (true, false) => else_t,
-            (false, true) => then_t,
-            _ => then_t.join(else_t),
-        }
+        self.walk_journal_if(scope, &narrowing, literal_cond, then, else_, IfWalk::Value)
     }
 
     /// Infer the result type of `switch(EXPR, ...)`. Both forms are
@@ -472,7 +430,11 @@ mod if_expression_scope_tests {
         let members = ty.members.unwrap();
         assert!(members.iter().any(|ty| ty.mode == Mode::Integer));
         assert!(members.iter().any(|ty| ty.mode == Mode::Character));
-        assert_eq!(scope.get("x").unwrap().mode, Mode::Integer);
+        // The arm's assignment reaches the enclosing frame (issue #694), so
+        // the continuation joins the rebinding with the original.
+        let after = scope.get("x").unwrap().members.clone().unwrap();
+        assert!(after.iter().any(|ty| ty.mode == Mode::Integer));
+        assert!(after.iter().any(|ty| ty.mode == Mode::Character));
     }
 
     #[test]

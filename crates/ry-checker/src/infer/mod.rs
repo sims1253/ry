@@ -912,9 +912,9 @@ impl Checker {
                     scope,
                     &narrowing,
                     literal_cond,
-                    then,
-                    else_.as_deref(),
-                    returns,
+                    IfArm::Statements(then),
+                    else_.as_deref().map(IfArm::Statements),
+                    IfWalk::Statement(returns),
                 );
             }
             Stmt::For {
@@ -1534,6 +1534,49 @@ impl Checker {
         self.in_dead_arm = outer;
     }
 
+    /// Walk one arm for [`Self::walk_journal_if`] and return its value
+    /// when the `if` is walked as one.
+    fn walk_journal_arm(
+        &mut self,
+        arm: IfArm<'_>,
+        dead: bool,
+        scope: &mut Scope,
+        walk: &mut IfWalk<'_>,
+    ) -> RType {
+        if let (IfArm::Statements(statements), IfWalk::Statement(returns)) = (arm, &mut *walk) {
+            self.walk_if_arm(statements, dead, scope, returns.as_deref_mut());
+            return RType::unknown();
+        }
+        let outer = self.in_dead_arm;
+        self.in_dead_arm |= dead;
+        let value = match arm {
+            IfArm::Statements(statements) => self.infer_braced(statements, scope),
+            IfArm::Expr(expression) => self.infer(expression, scope),
+        };
+        self.in_dead_arm = outer;
+        value
+    }
+
+    fn arm_diverges(&self, arm: IfArm<'_>) -> bool {
+        match arm {
+            IfArm::Statements(statements) => self.block_diverges(statements),
+            IfArm::Expr(expression) => self.expr_diverges_full(expression),
+        }
+    }
+
+    fn arm_diverges_for_continuation(&self, arm: IfArm<'_>) -> bool {
+        match arm {
+            IfArm::Statements(statements) => self.block_diverges_for_continuation(statements),
+            IfArm::Expr(expression) => {
+                self.expr_diverges(expression, &mut HashSet::new(), DivergenceView::ReturnBlind)
+            }
+        }
+    }
+
+    /// Merge the bindings both arms of an `if` make into `scope`, wherever
+    /// the `if` sits: R evaluates an arm in the enclosing frame. Returns the
+    /// `if`'s value when `walk` is [`IfWalk::Value`].
+    ///
     /// `literal_cond` is the value of a literal `TRUE`/`FALSE` condition;
     /// the arm it never takes contributes no loop-vector alternative and
     /// is walked without diagnostics.
@@ -1542,35 +1585,37 @@ impl Checker {
         scope: &mut Scope,
         narrowing: &Narrowing,
         literal_cond: Option<bool>,
-        then: &[Stmt],
-        else_: Option<&[Stmt]>,
-        mut returns: Option<&mut Vec<RType>>,
-    ) {
+        then: IfArm<'_>,
+        else_: Option<IfArm<'_>>,
+        mut walk: IfWalk<'_>,
+    ) -> RType {
         let mut narrowed = HashSet::new();
         let mark = scope.begin_snapshot();
         for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
             narrowed.insert(name.to_string());
         }
-        self.walk_if_arm(
-            then,
-            literal_cond == Some(false),
-            scope,
-            returns.as_deref_mut(),
-        );
+        let then_value = self.walk_journal_arm(then, literal_cond == Some(false), scope, &mut walk);
         let mut then_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let mark = scope.begin_snapshot();
         for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Else) {
             narrowed.insert(name.to_string());
         }
-        if let Some(statements) = else_ {
-            self.walk_if_arm(statements, literal_cond == Some(true), scope, returns);
-        }
+        // Without an `else`, R returns NULL on the FALSE path.
+        let else_value = match else_ {
+            Some(arm) => self.walk_journal_arm(arm, literal_cond == Some(true), scope, &mut walk),
+            None => RType::new(Mode::Null, Length::Zero),
+        };
         let mut else_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let has_else = else_.is_some();
         let then_reaches = !then_delta.unreachable;
         let else_reaches = has_else && !else_delta.unreachable;
+        let value = match (then_delta.unreachable, has_else && else_delta.unreachable) {
+            (true, false) => else_value,
+            (false, true) => then_value,
+            _ => then_value.join(else_value),
+        };
         // Equal inferred function types do not prove equal lexical targets.
         // Drop an adopted declaration identity if any reaching branch may
         // bind the name to a different definition, even when its RType is
@@ -1602,9 +1647,9 @@ impl Checker {
         // those values before streaming independent binding merges into it.
         // Return-blind: else-branch narrowing of a `return`-guard must not
         // flow into continuations (`DivergenceView`).
-        let then_diverges = then_diverges_in_loop || self.block_diverges_for_continuation(then);
+        let then_diverges = then_diverges_in_loop || self.arm_diverges_for_continuation(then);
         let else_diverges = else_diverges_in_loop
-            || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
+            || else_.is_some_and(|arm| self.arm_diverges_for_continuation(arm));
         // Assertions before this `if` remain valid only if no continuing arm
         // can replace their binding. A same-typed assignment still invalidates
         // the proof, even though ordinary type merging would see no change.
@@ -1720,10 +1765,10 @@ impl Checker {
             .filter_map(|name| scope.get(name))
             .any(|original| narrow_away_from_null(original).is_some());
         let then_return_diverges =
-            guard_narrowed_null_member && !then_diverges && self.block_diverges(then);
+            guard_narrowed_null_member && !then_diverges && self.arm_diverges(then);
         let else_return_diverges = guard_narrowed_null_member
             && !else_diverges
-            && else_.is_some_and(|statements| self.block_diverges(statements));
+            && else_.is_some_and(|arm| self.arm_diverges(arm));
         let union_guard_facts: Vec<(String, RType)> = if narrowed.is_empty() {
             Vec::new()
         } else {
@@ -1850,8 +1895,10 @@ impl Checker {
                 let merged = match (then_ty, else_ty) {
                     (Some(a), Some(b)) => {
                         let definitely_rebound = definitely_rebound.get_or_insert_with(|| {
-                            let mut names = definitely_assigned_names(then);
-                            let other = definitely_assigned_names(else_.unwrap_or_default());
+                            let mut names = then.definitely_assigned_names();
+                            let other = else_
+                                .map(IfArm::definitely_assigned_names)
+                                .unwrap_or_default();
                             names.retain(|name| other.contains(name));
                             names
                         });
@@ -1923,6 +1970,7 @@ impl Checker {
         };
         cache.clear();
         self.journal_delta_cache = cache;
+        value
     }
 
     /// Whether every path through a statement block stops executing the
@@ -2908,6 +2956,27 @@ impl Checker {
         true
     }
 
+    /// Infer the value of a `{ ... }` block. A block holding only `{ name }`
+    /// is rlang's embrace, which reads `name` from the data mask.
+    fn infer_braced(&mut self, body: &[Stmt], scope: &mut Scope) -> RType {
+        let Some((name, span)) = embraced_symbol(body) else {
+            return self.infer_block_expr(body, scope);
+        };
+        let bound = match &scope.data_mask {
+            Some(frame) => frame.env.contains_key(name),
+            None => scope.get(name).is_some(),
+        };
+        if !bound {
+            self.emit(
+                Severity::Warning,
+                span,
+                "RY010",
+                format!("variable `{name}` is not bound in this scope"),
+            );
+        }
+        RType::unknown()
+    }
+
     pub(crate) fn infer_block_expr(&mut self, body: &[Stmt], scope: &mut Scope) -> RType {
         let mut value = RType::new(Mode::Null, Length::Zero);
         self.walk_block_with(body, |checker, statement, last| {
@@ -2937,23 +3006,13 @@ impl Checker {
                 .map(|v| self.infer(v, scope))
                 .unwrap_or_else(|| RType::new(Mode::Null, Length::Zero)),
             Stmt::If {
+                cond, then, else_, ..
+            } => self.infer_if_value(
                 cond,
-                then,
-                else_,
-                span,
-            } => {
-                let then_expr = Expr::Block {
-                    body: then.clone(),
-                    span: *span,
-                };
-                let else_expr = else_.as_ref().map(|body| {
-                    Box::new(Expr::Block {
-                        body: body.clone(),
-                        span: *span,
-                    })
-                });
-                self.infer_if_expr(cond, &then_expr, &else_expr, scope)
-            }
+                IfArm::Statements(then),
+                else_.as_deref().map(IfArm::Statements),
+                scope,
+            ),
             Stmt::For { .. } | Stmt::While { .. } | Stmt::FunctionDef { .. } => {
                 self.walk_stmt(stmt, scope, None);
                 RType::unknown()
@@ -3581,25 +3640,7 @@ impl Checker {
                 self.apply_superassignment_updates(params, body, scope);
                 value
             }
-            Expr::Block { body, .. } => {
-                if let Some((name, span)) = embraced_symbol(body) {
-                    let bound = match &scope.data_mask {
-                        Some(frame) => frame.env.contains_key(name),
-                        None => scope.get(name).is_some(),
-                    };
-                    if !bound {
-                        self.emit(
-                            Severity::Warning,
-                            span,
-                            "RY010",
-                            format!("variable `{name}` is not bound in this scope"),
-                        );
-                    }
-                    RType::unknown()
-                } else {
-                    self.infer_block_expr(body, scope)
-                }
-            }
+            Expr::Block { body, .. } => self.infer_braced(body, scope),
             Expr::If {
                 cond, then, else_, ..
             } => self.infer_if_expr(cond, then, else_, scope),
@@ -3739,4 +3780,29 @@ fn definitely_assigned_names(body: &[Stmt]) -> HashSet<&str> {
         }
     }
     names
+}
+
+/// One arm of an `if`: the statements of a statement-form arm, or the
+/// expression of an `if` used as a value.
+#[derive(Clone, Copy)]
+enum IfArm<'a> {
+    Statements(&'a [Stmt]),
+    Expr(&'a Expr),
+}
+
+impl<'a> IfArm<'a> {
+    fn definitely_assigned_names(self) -> HashSet<&'a str> {
+        match self {
+            IfArm::Statements(statements) => definitely_assigned_names(statements),
+            IfArm::Expr(Expr::Block { body, .. }) => definitely_assigned_names(body),
+            IfArm::Expr(_) => HashSet::new(),
+        }
+    }
+}
+
+/// How [`Checker::walk_journal_if`] walks the arms: as statements, which may
+/// collect `return()` types, or for the value of an `if` used as one.
+enum IfWalk<'r> {
+    Statement(Option<&'r mut Vec<RType>>),
+    Value,
 }

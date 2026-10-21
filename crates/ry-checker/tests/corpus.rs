@@ -243,10 +243,10 @@ fn checker_fixture_diagnostics_are_readable_snapshots() {
     insta::assert_yaml_snapshot!("checker_fixture_diagnostics", snapshots);
 }
 
-/// For visibility: list every fixture and what it currently emits. This
-/// is a no-op assertion that exists purely so `cargo test corpus_summary
-/// -- --nocapture` gives a quick status table while iterating.
+/// List every fixture and what it emits. Run with
+/// `cargo test corpus_summary -- --ignored --nocapture`.
 #[test]
+#[ignore = "report"]
 fn corpus_summary() {
     let fixtures = load_fixtures();
     println!("{:<32} {:<10} codes", "fixture", "result");

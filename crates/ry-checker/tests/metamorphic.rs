@@ -10,10 +10,10 @@
 //! | :-- | :-- |
 //! | R2 deterministic serial/parallel and repeated output | gate |
 //! | R3 inert blank/comment insertion | gate |
-//! | R4 capture-avoiding alpha rename | report (tracked in the rule-evidence ledger) |
+//! | R4 capture-avoiding alpha rename | report, `#[ignore]`d (tracked in the rule-evidence ledger) |
 //! | R5 file concatenation union | replaced by reset + non-interference |
-//! | R7 literal-to-parameter lifting | report (feeds rule-evidence verdicts) |
-//! | R8 negated branch swap | report |
+//! | R7 literal-to-parameter lifting | report in `rule_evidence.rs` |
+//! | R8 negated branch swap | gate |
 //! | R9 unchanged variable across branches | focused branch-join invariant |
 //! | R10 pipe placeholder combinations | generated regression matrix |
 //!
@@ -471,7 +471,7 @@ fn r3_inert_blank_and_comment_insertion_is_diagnostic_neutral() {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// R4 — Capture-avoiding alpha rename (REPORT)
+// R4 — Capture-avoiding alpha rename (REPORT, ignored)
 // ════════════════════════════════════════════════════════════════════════
 
 /// Collect user-defined identifiers from assignment targets. These are the
@@ -523,13 +523,21 @@ fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'.'
 }
 
+fn diag_code_multiset(diags: &[Diagnostic]) -> Vec<String> {
+    let mut codes: Vec<String> = diags.iter().map(|d| d.code.to_string()).collect();
+    codes.sort();
+    codes
+}
+
 /// Diagnostics compared by code and span-normalised message (the renamed
 /// identifier may appear in messages).
 fn diag_code_set(diags: &[Diagnostic]) -> BTreeSet<String> {
     diags.iter().map(|d| d.code.to_string()).collect()
 }
 
+/// Run with `cargo test -p ry-checker --test metamorphic r4_ -- --ignored --nocapture`.
 #[test]
+#[ignore = "report"]
 fn r4_alpha_rename_report() {
     let fixtures = checker_fixtures();
     let mut parser = RParser::new().expect("parser init");
@@ -731,65 +739,7 @@ fn r5_project_incremental_reset_after_removal() {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// R7 — Literal-to-parameter lifting (REPORT; feeds rule-evidence verdicts)
-// ════════════════════════════════════════════════════════════════════════
-
-/// The metamorphic relation: `f <- function(x) body` called as `f(literal)`
-/// should produce the same diagnostics as `f <- function(x = literal) body`
-/// called as `f()`. Both evaluate `body` with `x` bound to `literal`.
-#[test]
-fn r7_literal_to_parameter_lifting_report() {
-    let cases = [
-        // (definition, call with literal, call with default)
-        (
-            "f <- function(x) x + 1L\n",
-            "f(42L)\n",
-            "f <- function(x = 42L) x + 1L\nf()\n",
-        ),
-        (
-            "f <- function(x) x + \"text\"\n",
-            "f(1L)\n",
-            "f <- function(x = 1L) x + \"text\"\nf()\n",
-        ),
-        (
-            "g <- function(data) data[[\"col\"]]\n",
-            "g(data.frame(x = 1L))\n",
-            "g <- function(data = data.frame(x = 1L)) data[[\"col\"]]\ng()\n",
-        ),
-        (
-            "h <- function(n) seq_len(n)\n",
-            "h(5L)\n",
-            "h <- function(n = 5L) seq_len(n)\nh()\n",
-        ),
-    ];
-
-    let mut total = 0usize;
-    let mut diffs = 0usize;
-    for (def, call_literal, call_default) in &cases {
-        let literal_src = format!("{def}{call_literal}");
-        let default_src = call_default.to_string();
-        let literal_diags = check_source(&literal_src);
-        let default_diags = check_source(&default_src);
-
-        let literal_codes: BTreeSet<String> =
-            literal_diags.iter().map(|d| d.code.to_string()).collect();
-        let default_codes: BTreeSet<String> =
-            default_diags.iter().map(|d| d.code.to_string()).collect();
-
-        if literal_codes != default_codes {
-            diffs += 1;
-            eprintln!(
-                "R7 report: literal vs default-lifted parameter diverge\n  def: {def}  literal call: {call_literal}\n  literal codes: {literal_codes:?}\n  default codes: {default_codes:?}",
-            );
-        }
-        total += 1;
-    }
-    eprintln!("R7 literal-to-parameter lifting: {total} cases checked, {diffs} differences found");
-    // Report mode: no assertion on zero differences.
-}
-
-// ════════════════════════════════════════════════════════════════════════
-// R8 — Negated branch swap (REPORT over explicit else, stub-known predicates)
+// R8 — Negated branch swap (GATE over explicit else, stub-known predicates)
 // ════════════════════════════════════════════════════════════════════════
 
 /// The metamorphic relation: `if (pred(x)) A else B` is equivalent to
@@ -802,7 +752,7 @@ fn r7_literal_to_parameter_lifting_report() {
 /// diagnostics are normalised by comparing the multiset of post-join
 /// diagnostic codes.
 #[test]
-fn r8_negated_branch_swap_report() {
+fn r8_negated_branch_swap_is_diagnostic_neutral() {
     let predicates = [
         "is.null",
         "is.numeric",
@@ -821,8 +771,7 @@ fn r8_negated_branch_swap_report() {
         ("x[[1]]\n", "x + 2L\n"),
     ];
 
-    let mut total = 0usize;
-    let mut diffs = 0usize;
+    let mut diagnosed = 0usize;
     for pred in &predicates {
         for (then_body, else_body) in &bodies {
             // Original: if (pred(x)) then else else_
@@ -834,24 +783,17 @@ fn r8_negated_branch_swap_report() {
                 "f <- function(x) {{\n  if (!{pred}(x)) {{\n    {else_body}}} else {{\n    {then_body}}}\n}}\n",
             );
 
-            let orig_diags = check_source(&original);
-            let swap_diags = check_source(&swapped);
-
-            let orig_codes: BTreeSet<String> =
-                orig_diags.iter().map(|d| d.code.to_string()).collect();
-            let swap_codes: BTreeSet<String> =
-                swap_diags.iter().map(|d| d.code.to_string()).collect();
-
-            if orig_codes != swap_codes {
-                diffs += 1;
-                eprintln!(
-                    "R8 report: branch swap changed diagnostics for {pred}\n  original codes: {orig_codes:?}\n  swapped codes:  {swap_codes:?}\n  original:\n{original}  swapped:\n{swapped}",
-                );
-            }
-            total += 1;
+            let orig_codes = diag_code_multiset(&check_source(&original));
+            let swap_codes = diag_code_multiset(&check_source(&swapped));
+            assert_eq!(
+                orig_codes, swap_codes,
+                "R8: branch swap changed diagnostics\n  original:\n{original}  swapped:\n{swapped}",
+            );
+            diagnosed += usize::from(!orig_codes.is_empty());
         }
     }
-    eprintln!("R8 negated branch swap: {total} cases checked, {diffs} differences found");
+    // Some cases must diagnose, or equal empty sets prove nothing.
+    assert!(diagnosed > 0, "R8: no case produced a diagnostic");
 }
 
 // ════════════════════════════════════════════════════════════════════════

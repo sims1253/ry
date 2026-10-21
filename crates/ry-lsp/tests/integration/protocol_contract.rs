@@ -1401,13 +1401,16 @@ async fn per_file_publication_matches_cli_across_differing_files() {
 
 /// (#48): the same fixture tree must produce the same discovered path
 /// set in CLI and LSP. The fixture includes a `target/` directory, a hidden
-/// directory (both skip), and a normal file. Every file has a diagnostic so
-/// the discovery set is observable through published diagnostic paths.
+/// directory (both skip), an opened file, and a closed file. Every file has
+/// a diagnostic so the discovery set is observable through published
+/// diagnostic paths. The closed `other.R` must be published, so the
+/// absence of the skipped files means the LSP did not discover them.
 #[tokio::test]
 async fn cli_lsp_discovery_set_equality() {
     let fixture = FixtureProject::empty().unwrap();
-    // Normal file with a diagnostic.
+    // Normal files with a diagnostic. Only `normal.R` is opened.
     fixture.write_file("normal.R", "length(xx = 1L)\n").unwrap();
+    fixture.write_file("other.R", "length(xx = 1L)\n").unwrap();
     // File in target/ — both modes skip this directory.
     fixture
         .write_file("target/skipped.R", "length(xx = 1L)\n")
@@ -1456,32 +1459,32 @@ async fn cli_lsp_discovery_set_equality() {
         "textDocument": {"uri": normal_uri, "languageId": "r", "version": 1, "text": normal_text}
     })).await.unwrap();
 
-    // Collect ALL publishDiagnostics notifications within a bounded
-    // message count to determine the LSP's discovered file set.
+    // Record every published path, in any order.
     let mut lsp_uris: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    // First, consume the normal.R publication.
-    let _ = client
-        .receive_until(
-            |m| {
-                m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                    && m.pointer("/params/uri") == Some(&json!(normal_uri))
-            },
-            128,
-        )
-        .await
-        .unwrap();
+    let record = |lsp_uris: &mut std::collections::BTreeSet<String>, message: &Value| {
+        if message.get("method") != Some(&json!("textDocument/publishDiagnostics")) {
+            return;
+        }
+        if let Some(uri) = message.pointer("/params/uri").and_then(Value::as_str) {
+            let path = uri.strip_prefix("file://").unwrap_or(uri);
+            lsp_uris.insert(normalize_path(Path::new(path), root));
+        }
+    };
+    // Wait for every path the CLI found, with a deadline. An idle gap between
+    // publications does not prove the background pass is over.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !cli_paths.is_subset(&lsp_uris) {
+            let message = client.receive().await.unwrap();
+            record(&mut lsp_uris, &message);
+        }
+    })
+    .await;
 
-    // Now drain remaining indexed-file publications (bounded).
+    // Then drain any extra publications the CLI does not expect (bounded).
     for _ in 0..128 {
         match tokio::time::timeout(std::time::Duration::from_millis(500), client.receive()).await {
             Ok(Ok(message)) => {
-                if message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                    && let Some(uri) = message.pointer("/params/uri").and_then(Value::as_str)
-                {
-                    let path = uri.strip_prefix("file://").unwrap_or(uri);
-                    let rel = normalize_path(Path::new(path), root);
-                    lsp_uris.insert(rel);
-                }
+                record(&mut lsp_uris, &message);
             }
             Ok(Err(e)) => panic!("transport error during drain: {e}"),
             Err(_) => break, // timeout: server has quiesced
@@ -1500,9 +1503,6 @@ async fn cli_lsp_discovery_set_equality() {
         .unwrap()
         .unwrap();
     assert_eq!(code, std::process::ExitCode::SUCCESS);
-
-    // The opened file's publication was consumed above; add it back.
-    lsp_uris.insert("normal.R".to_string());
 
     // Convert LSP URIs to normalized paths and compare with CLI.
     assert_eq!(

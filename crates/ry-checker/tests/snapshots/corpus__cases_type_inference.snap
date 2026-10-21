@@ -838,3 +838,15 @@ expression: rows
   diagnostics: []
 - case: "1:\"Inf\" is not typed numeric"
   diagnostics: []
+- case: "tryCatch(error = h, { ... }) is typed from the expression, not the handler"
+  diagnostics: []
+- case: "tryCatch(error = h, expr = x) is typed from expr"
+  diagnostics: []
+- case: "tryCatch(x, error = h, finally = cleanup()) is typed from x and h"
+  diagnostics: []
+- case: "tryCatch(error = h, \"b\") + 1L is character arithmetic"
+  diagnostics:
+    - code: RY040
+      line: 1267
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error

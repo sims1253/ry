@@ -408,10 +408,11 @@ impl Checker {
         join_all(alt_types.into_iter())
     }
 
-    /// Infer the result type of `tryCatch(expr, ...)`. The first
-    /// positional argument is the main expression; subsequent named
-    /// arguments are condition handlers (`error = function(e) ...`,
-    /// `warning = function(w) ...`, etc.).
+    /// Infer the result type of `tryCatch(expr, ...)`. The main
+    /// expression is the argument named `expr`, else the first unnamed
+    /// one: named handlers bind by name, so `tryCatch(error = h, { ... })`
+    /// is legal. The other named arguments are condition handlers
+    /// (`error = function(e) ...`, `warning = function(w) ...`, etc.).
     ///
     /// The result type is the join of the main expression's type and
     /// all handler return types. Each handler is a function literal
@@ -420,9 +421,13 @@ impl Checker {
     /// callback's argument (opaque, since we don't model the
     /// condition object).
     pub(crate) fn infer_trycatch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
+        let expr_index = args
+            .iter()
+            .position(|a| a.name.as_deref() == Some("expr"))
+            .or_else(|| args.iter().position(|a| a.name.is_none()));
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {
-            if i == 0 {
+            if Some(i) == expr_index {
                 types.push(self.infer(&a.value, scope));
             } else if a.name.is_some() {
                 if let Some(rt) = self.callback_return_type(&a.value, &[RType::unknown()], scope) {

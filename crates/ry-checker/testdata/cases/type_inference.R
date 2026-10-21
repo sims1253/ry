@@ -1230,3 +1230,55 @@ y <- x + "a"
 # no-diag
 x <- 1:"Inf"
 y <- x + "a"
+
+## case: tryCatch(error = h, { ... }) is typed from the expression, not the handler
+# no-diag
+# Named handlers bind by name, so the first unnamed argument is `expr`
+# (pkgload's dev-help.R).
+f <- function(topic) {
+  ok <- tryCatch(
+    error = function(...) FALSE,
+    {
+      is.character(topic)
+    }
+  )
+  if (ok) 1
+}
+
+## case: tryCatch(error = h, expr = x) is typed from expr
+# no-diag
+f <- function(topic) {
+  ok <- tryCatch(error = function(e) FALSE, expr = is.character(topic))
+  if (ok) 1
+}
+
+## case: tryCatch(e = NULL, error = h) partially matches e to expr
+# expect: RY001
+# `expr` precedes `...`, so `e =` partially matches it and the result
+# may be NULL: R errors with "argument is of length zero".
+f <- function() {
+  ok <- tryCatch(e = NULL, error = function(e) FALSE)
+  if (ok) 1
+}
+
+## case: the value of finally = function() NULL is discarded
+# no-diag
+f <- function(topic) {
+  ok <- tryCatch(is.character(topic), error = function(e) FALSE, finally = function() NULL)
+  if (ok) 1
+}
+
+## case: tryCatch(x, error = h, finally = cleanup()) is typed from x and h
+# no-diag
+cleanup <- function() "done"
+f <- function(topic) {
+  ok <- tryCatch(is.character(topic), error = function(e) FALSE, finally = cleanup())
+  if (ok) 1
+}
+
+## case: tryCatch(error = h, "b") + 1L is character arithmetic
+# expect: RY040
+f <- function() {
+  x <- tryCatch(error = function(e) "a", "b")
+  x + 1L
+}

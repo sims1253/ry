@@ -1484,6 +1484,13 @@ fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut 
 // strictly between the iterator walk and the body walk, where the walker
 // provides no hook. Same judgment as the force family in `infer/quoting.rs`.
 fn first_parameter_use_in_stmt(statement: &Stmt, parameter: &str) -> Option<FirstParameterUse> {
+    ry_core::stack::grow(|| first_parameter_use_in_stmt_inner(statement, parameter))
+}
+
+fn first_parameter_use_in_stmt_inner(
+    statement: &Stmt,
+    parameter: &str,
+) -> Option<FirstParameterUse> {
     match statement {
         Stmt::Assign { target, value, .. } => first_parameter_use_in_expr(value, parameter)
             .or_else(|| match target {
@@ -1528,6 +1535,13 @@ fn first_parameter_use_in_stmt(statement: &Stmt, parameter: &str) -> Option<Firs
 }
 
 fn first_parameter_use_in_expr(expression: &Expr, parameter: &str) -> Option<FirstParameterUse> {
+    ry_core::stack::grow(|| first_parameter_use_in_expr_inner(expression, parameter))
+}
+
+fn first_parameter_use_in_expr_inner(
+    expression: &Expr,
+    parameter: &str,
+) -> Option<FirstParameterUse> {
     match expression {
         Expr::Ident { name, .. } => (name == parameter).then_some(FirstParameterUse::Normal),
         Expr::Call { func, args, .. } => {
@@ -1830,6 +1844,10 @@ fn missing_test(condition: &Expr, name: &str) -> Option<bool> {
 }
 
 fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool, bool) {
+    ry_core::stack::grow(|| statement_force_flow_inner(statement, name))
+}
+
+fn statement_force_flow_inner(statement: &Stmt, name: &str) -> (bool, bool, bool) {
     match statement {
         Stmt::Assign { value, .. } | Stmt::Expr(value) => {
             if let Some(returned) = return_call_value(value) {
@@ -1900,6 +1918,10 @@ fn return_call_value(expression: &Expr) -> Option<Option<&Expr>> {
 }
 
 fn expression_must_force(expression: &Expr, name: &str) -> bool {
+    ry_core::stack::grow(|| expression_must_force_inner(expression, name))
+}
+
+fn expression_must_force_inner(expression: &Expr, name: &str) -> bool {
     match expression {
         Expr::Ident {
             name: identifier, ..

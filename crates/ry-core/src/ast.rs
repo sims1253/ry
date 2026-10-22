@@ -123,7 +123,7 @@ pub struct SyntaxViolation {
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Stmt {
     /// `target <- value`
     Assign {
@@ -166,6 +166,62 @@ pub enum Stmt {
     },
     /// `return(value)` / `invisible(value)`
     Return { value: Option<Expr>, span: Span },
+}
+
+// Hand-written so an `else if` chain clones on a growable stack.
+impl Clone for Stmt {
+    fn clone(&self) -> Self {
+        match self {
+            Stmt::Assign {
+                target,
+                value,
+                span,
+            } => Stmt::Assign {
+                target: target.clone(),
+                value: value.clone(),
+                span: *span,
+            },
+            Stmt::Expr(expression) => Stmt::Expr(expression.clone()),
+            Stmt::If {
+                cond,
+                then,
+                else_,
+                span,
+            } => crate::stack::grow(|| Stmt::If {
+                cond: cond.clone(),
+                then: then.clone(),
+                else_: else_.clone(),
+                span: *span,
+            }),
+            Stmt::For {
+                name,
+                name_span,
+                iter,
+                body,
+                span,
+            } => Stmt::For {
+                name: name.clone(),
+                name_span: *name_span,
+                iter: iter.clone(),
+                body: body.clone(),
+                span: *span,
+            },
+            Stmt::While { cond, body, span } => Stmt::While {
+                cond: cond.clone(),
+                body: body.clone(),
+                span: *span,
+            },
+            Stmt::FunctionDef { params, body, span } => Stmt::FunctionDef {
+                params: params.clone(),
+                body: body.clone(),
+                span: *span,
+            },
+            Stmt::Return { value, span } => Stmt::Return {
+                value: value.clone(),
+                span: *span,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

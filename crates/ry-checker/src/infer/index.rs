@@ -970,28 +970,13 @@ pub(crate) fn is_operator_generic(name: &str) -> bool {
     crate::semantic_lists::OPERATORS.contains(&name)
 }
 
-pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, globals: &Globals) {
-    let method_name = semantic_argument_name(method_name);
-    let group_method = split_s3_method_name(method_name, globals)
-        .is_some_and(|(generic, _)| crate::semantic_lists::is_group_generic(&generic));
-    // Subset primitives supply the S3 dispatch bindings too, but do not
-    // belong to a group. Require a nonempty class suffix, as for group methods.
-    let subset_method = ["[", "[[", "$", "[<-", "[[<-", "$<-"]
-        .iter()
-        .any(|generic| {
-            method_name
-                .strip_prefix(generic)
-                .and_then(|suffix| suffix.strip_prefix('.'))
-                .is_some_and(|class| !class.is_empty())
-        });
-    if group_method || subset_method {
-        scope.insert(".Generic", RType::scalar(Mode::Character));
-        scope.insert(".Method", RType::new(Mode::Character, Length::Unknown));
-        scope.insert(".Class", RType::new(Mode::Character, Length::Unknown));
-    }
-    if group_method {
-        scope.insert(".Group", RType::scalar(Mode::Character));
-    }
+/// Bind what R's dispatcher puts in every S3 method frame: `.Generic`,
+/// `.Method`, `.Class`, and `.Group` (`""` outside group dispatch).
+pub(crate) fn insert_s3_dispatch_context(scope: &mut Scope) {
+    scope.insert(".Generic", RType::scalar(Mode::Character));
+    scope.insert(".Method", RType::new(Mode::Character, Length::Unknown));
+    scope.insert(".Class", RType::new(Mode::Character, Length::Unknown));
+    scope.insert(".Group", RType::scalar(Mode::Character));
 }
 
 /// Names assigned anywhere in a body, for closure-capture candidates.

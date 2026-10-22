@@ -205,6 +205,10 @@ impl FormalSupplyWalk<'_, '_> {
     }
 
     fn walk_stmt(&mut self, statement: &Stmt, point: &mut SupplyPoint) {
+        ry_core::stack::grow(|| self.walk_stmt_inner(statement, point))
+    }
+
+    fn walk_stmt_inner(&mut self, statement: &Stmt, point: &mut SupplyPoint) {
         match statement {
             Stmt::Assign { target, value, .. } => {
                 // The statement `p <<- v` lowers to Assign with a
@@ -367,6 +371,10 @@ impl FormalSupplyWalk<'_, '_> {
     }
 
     fn walk_expr(&mut self, expression: &Expr, point: &mut SupplyPoint) {
+        ry_core::stack::grow(|| self.walk_expr_inner(expression, point))
+    }
+
+    fn walk_expr_inner(&mut self, expression: &Expr, point: &mut SupplyPoint) {
         if self.hit.is_some() {
             return;
         }

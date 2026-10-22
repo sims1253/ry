@@ -298,12 +298,7 @@ impl Checker {
     /// `<generic>.<class>` definition is still enough to connect the method to
     /// a unique shipped generic signature.
     pub(crate) fn resolve_user_s3_inherited_sig(&self, generic: &str) -> Option<FunctionSig> {
-        let method_prefix = format!("{generic}.");
-        let has_method = self
-            .fn_table
-            .functions
-            .names()
-            .any(|name| name.starts_with(&method_prefix))
+        let has_method = self.fn_table.functions.has_method_prefix(generic)
             || self
                 .fn_table
                 .s3_methods
@@ -385,12 +380,9 @@ impl Checker {
         expected_package: &str,
     ) -> bool {
         if self.fn_table.has_escaped_binding_names
-            || assigned
-                .iter()
-                .chain(scope.bindings.keys())
-                .chain(self.external_bindings.iter())
-                .chain(self.imported_from.keys())
-                .any(|name| name.contains('\\'))
+            || self.escaped_external_bindings
+            || scope.bindings.has_escaped_names()
+            || assigned.iter().any(|name| name.contains('\\'))
         {
             return true;
         }

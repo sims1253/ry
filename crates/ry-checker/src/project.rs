@@ -1146,6 +1146,8 @@ mod tests {
             ("other.R", "x <- 1\n", false),
             ("other.R", "{\n  compare <- function(e1, e2) e1\n}\n", true),
             ("other.R", "x <- 1\n", false),
+            ("other.R", "compare <- function(e1, e2) e1\n", true),
+            ("other.R", "x <- 1\n", false),
         ] {
             project.update_file(path.into(), parse_file(path, source).into());
             assert_eq!(
@@ -1153,6 +1155,37 @@ mod tests {
                 expected,
                 "{path}: {source}"
             );
+        }
+    }
+
+    #[test]
+    fn namespace_s3_method_edit_gives_dispatch_bindings_incrementally() {
+        let source = "format.widget <- function(x, ...) .Generic\n";
+        let methods = |registered: bool| {
+            let entries = if registered {
+                HashSet::from([("format".to_string(), "widget".to_string())])
+            } else {
+                HashSet::new()
+            };
+            HashMap::from([("R/a.R".to_string(), entries)])
+        };
+        let mut project = Project::new();
+        project.add_file("R/a.R".into(), parse_file("R/a.R", source));
+        project.set_external_s3_methods(methods(false));
+        project.check();
+        for registered in [true, false] {
+            project.set_external_s3_methods(methods(registered));
+            let incremental = project.check_incremental();
+            let mut cold = Project::new();
+            cold.add_file("R/a.R".into(), parse_file("R/a.R", source));
+            cold.set_external_s3_methods(methods(registered));
+            assert_eq!(format!("{incremental:?}"), format!("{:?}", cold.check()));
+            assert_eq!(project.prev_fn_returns, cold.prev_fn_returns);
+            let flagged = incremental
+                .iter()
+                .flat_map(|(_, found)| found)
+                .any(|d| d.code == "RY010");
+            assert_eq!(flagged, !registered);
         }
     }
 

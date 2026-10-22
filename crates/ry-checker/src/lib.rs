@@ -941,6 +941,22 @@ impl Scope {
         self.lexical_functions.contains(name)
     }
 
+    /// Whether this frame's binding of the bare call head `name` may be the
+    /// function R calls, hiding a same-named stub: R's call lookup stops at a
+    /// function or opaque value, or a union with a closure member (#700),
+    /// and skips any other value. A write that may have escaped an unproven
+    /// `local()`/`test_that()` block is only a possible binding (#722).
+    pub(crate) fn binding_may_be_callee(&self, name: &str) -> bool {
+        !self.possible_block_writes.contains(name)
+            && self.get(name).is_some_and(|binding| {
+                binding.mode == Mode::Function
+                    || binding.mode.is_unknown()
+                    || binding.members.as_ref().is_some_and(|members| {
+                        members.iter().any(|member| member.mode == Mode::Function)
+                    })
+            })
+    }
+
     pub(crate) fn lexical_definition(&self, name: &str) -> Option<Span> {
         self.lexical_definitions.get(name).copied()
     }

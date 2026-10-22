@@ -40,3 +40,15 @@ expression: rows
       line: 106
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
+- case: a local data or load function is not the utils or base loader
+  diagnostics: []
+- case: data still binds the dataset it loads
+  diagnostics:
+    - code: RY061
+      line: 140
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: only a union with a function member shadows the data loader
+  diagnostics: []
+- case: a data parameter with a non-function default shadows the loader
+  diagnostics: []

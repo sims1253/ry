@@ -109,6 +109,9 @@ All notable changes to ry are documented in this file.
   scripts (#568).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
+- Report a serialized workspace the parser stops reading early, such as an
+  `R/sysdata.rda` that holds an external pointer, as a degraded scope instead
+  of a complete inventory (#714).
 
 ## [0.11.0] - 2026-09-22
 

@@ -115,6 +115,15 @@ fn stmt_step<B>(
     fn_depth: usize,
     visit: &mut impl FnMut(AstNode<'_>, usize) -> ControlFlow<B, Descend>,
 ) -> ControlFlow<B> {
+    crate::stack::grow(|| stmt_step_inner(stmt, policy, fn_depth, visit))
+}
+
+fn stmt_step_inner<B>(
+    stmt: &Stmt,
+    policy: Walk,
+    fn_depth: usize,
+    visit: &mut impl FnMut(AstNode<'_>, usize) -> ControlFlow<B, Descend>,
+) -> ControlFlow<B> {
     match visit(AstNode::Stmt(stmt), fn_depth) {
         ControlFlow::Break(b) => return ControlFlow::Break(b),
         ControlFlow::Continue(Descend::Skip) => return ControlFlow::Continue(()),
@@ -176,6 +185,15 @@ fn stmt_step<B>(
 }
 
 fn expr_step<B>(
+    expr: &Expr,
+    policy: Walk,
+    fn_depth: usize,
+    visit: &mut impl FnMut(AstNode<'_>, usize) -> ControlFlow<B, Descend>,
+) -> ControlFlow<B> {
+    crate::stack::grow(|| expr_step_inner(expr, policy, fn_depth, visit))
+}
+
+fn expr_step_inner<B>(
     expr: &Expr,
     policy: Walk,
     fn_depth: usize,

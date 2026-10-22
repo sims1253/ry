@@ -33,6 +33,60 @@ fn light_table_mask(scope: &Scope) -> bool {
     !scope.data_mask_unknown && scope.data_mask_columns_first()
 }
 
+/// Base `[` is a primitive that evaluates its subscripts in the calling
+/// frame, so `x[iu <- upper.tri(x)]` binds `iu` there (#713). The table
+/// mask is a scratch scope, so copy those writes back as opaque bindings:
+/// an opaque receiver may be a matrix or a data.table, and data.table's
+/// `[` keeps the write in its own frame. A proven data.table keeps every
+/// write local. `<<-` writes an enclosing frame, never this one.
+fn merge_subscript_assignments(scope: &mut Scope, mask: &Scope, args: &[Arg], receiver: &RType) {
+    if receiver.class.contains("data.table") {
+        return;
+    }
+    let mut names = HashSet::new();
+    for argument in args {
+        let _ = walk_expr(
+            &argument.value,
+            Walk {
+                assign_targets: false,
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                let target = match node {
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::Assign,
+                        lhs,
+                        ..
+                    }) => lhs.as_ref(),
+                    // The statement form `x <<- v` keeps its marker on the value.
+                    AstNode::Stmt(Stmt::Assign { target, value, .. })
+                        if !matches!(
+                            value,
+                            Expr::BinOp {
+                                op: BinOpKind::SuperAssign,
+                                ..
+                            }
+                        ) =>
+                    {
+                        target
+                    }
+                    _ => return ControlFlow::Continue(Descend::Into),
+                };
+                if let Expr::Ident { name, .. } = target {
+                    names.insert(name.clone());
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+    }
+    for name in names {
+        if mask.get(&name).is_some() {
+            scope.insert(name, RType::unknown());
+        }
+    }
+}
+
 /// The conservative `$`/`[[` fallback when no schema resolves the access:
 /// for list-like bases return opaque since the element type is unknowable;
 /// for other types return a length-1 value of the base mode. A union base
@@ -282,120 +336,123 @@ impl Checker {
                 // than borrowing a scope function's type. Base data.frame
                 // receivers, plain lists, and atomic receivers keep eager
                 // index evaluation — base R does not data-mask `[`.
-                let mut table_mask =
-                    table_index_receiver(&bt).then(|| self.table_index_mask_scope(scope, &bt));
-                let index_scope: &mut Scope = match table_mask.as_mut() {
-                    Some(mask) => mask,
-                    None => scope,
-                };
-                // A row index may select only part of each column.
-                let rows_selected = args.len() >= 2 && !matches!(args[0].value, Expr::Missing(_));
-                let subset = |ty: RType| if rows_selected { subset_facts(ty) } else { ty };
-                // `df[i, j]` selects a column when `j` is scalar and the
-                // default `drop = TRUE` is in effect.  A data frame's own
-                // length is its number of columns, not its row count, so
-                // returning `bt` here would make `df[, 1]` look like a
-                // length-ncol vector.  Prefer the schema's column type,
-                // which `infer_data_frame` has already widened to the frame
-                // row count.
-                if bt.class.contains("data.frame") && args.len() >= 2 {
-                    let column_arg = &args[1];
-                    let drop_false = args.iter().any(|arg| {
-                        arg.name.as_deref() == Some("drop")
-                            && matches!(arg.value, Expr::Logical(false, _))
-                    });
-                    let column = match &column_arg.value {
-                        Expr::String(name, _) => {
-                            bt.columns.as_ref().and_then(|schema| schema.get(name))
-                        }
-                        Expr::Integer(index, _) if *index >= 1 => bt
-                            .columns
-                            .as_ref()
-                            .and_then(|schema| schema.columns.get(*index as usize - 1))
-                            .map(|(_, ty)| ty.clone()),
-                        Expr::Double(index, _) if *index >= 1.0 && index.fract() == 0.0 => bt
-                            .columns
-                            .as_ref()
-                            .and_then(|schema| schema.columns.get(*index as usize - 1))
-                            .map(|(_, ty)| ty.clone()),
-                        _ => None,
-                    };
-                    let _ = self.infer_table_index_args(args, &bt, index_scope);
-                    let column = column.map(subset);
-                    if let Some(column) = column {
-                        if !drop_false {
-                            return column;
-                        }
-                        let name = match &column_arg.value {
-                            Expr::String(name, _) => name.clone(),
-                            _ => "[[1]]".to_string(),
-                        };
-                        return RType::new(Mode::List, Length::One)
-                            .with_class(ClassVector::single("data.frame"))
-                            .with_columns(Arc::new(ColumnSchema {
-                                columns: vec![(name, column)],
-                                complete: true,
-                                locally_constructed: false,
-                            }));
-                    }
-                    // A scalar but dynamic column index still drops to a
-                    // vector. Its mode and row count are not knowable.
-                    if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
-                        return RType::unknown();
-                    }
-                    return subset(bt);
+                if !table_index_receiver(&bt) {
+                    return self.infer_single_index(bt, args, scope);
                 }
-                if matches!(bt.mode, Mode::List) && args.len() >= 2 {
-                    if let Some(column) = args.iter().find_map(|arg| match &arg.value {
-                        Expr::String(column, _) => Some(column),
-                        _ => None,
-                    }) {
-                        let _ = self.infer_table_index_args(args, &bt, index_scope);
-                        if let Some(schema) = &bt.columns {
-                            if let Some(column_type) = schema.get(column) {
-                                return subset(column_type);
-                            }
-                            if !schema.complete {
-                                return RType::unknown();
-                            }
-                        }
-                        return RType::unknown();
-                    }
-                }
-                // For one-dimensional vector subsetting, result length is
-                // controlled by the index rather than the source. Logical
-                // masks select by their TRUE count, and numeric indices may
-                // exclude or select nothing, so retain a length only when R's
-                // index mode makes that length provable.
-                let index_types = self.infer_table_index_args(args, &bt, index_scope);
-                if let Some(members) = &bt.members {
-                    if args.len() != 1
-                        || members
-                            .iter()
-                            .any(|member| !member.class.known || member.class.len > 0)
-                    {
-                        return RType::unknown();
-                    }
-                    return members
-                        .iter()
-                        .map(|member| {
-                            subset_vector(member, &index_types[0], &args[0].value)
-                                .unwrap_or_else(RType::unknown)
-                        })
-                        .reduce(RType::join)
-                        .unwrap_or_else(RType::unknown);
-                }
-                if args.len() == 1
-                    && let Some(result) = subset_vector(&bt, &index_types[0], &args[0].value)
-                {
-                    return result;
-                }
-                if bt.mode.is_unknown_or_non_vector() {
-                    RType::unknown()
-                } else {
-                    bt
-                }
+                let mut mask = self.table_index_mask_scope(scope, &bt);
+                let result = self.infer_single_index(bt.clone(), args, &mut mask);
+                merge_subscript_assignments(scope, &mask, args, &bt);
+                result
             }
+        }
+    }
+
+    /// Infer `x[...]` with the index arguments evaluated in `index_scope`:
+    /// the caller's scope, or a table mask over the receiver.
+    fn infer_single_index(&mut self, bt: RType, args: &[Arg], index_scope: &mut Scope) -> RType {
+        // A row index may select only part of each column.
+        let rows_selected = args.len() >= 2 && !matches!(args[0].value, Expr::Missing(_));
+        let subset = |ty: RType| if rows_selected { subset_facts(ty) } else { ty };
+        // `df[i, j]` selects a column when `j` is scalar and the
+        // default `drop = TRUE` is in effect.  A data frame's own
+        // length is its number of columns, not its row count, so
+        // returning `bt` here would make `df[, 1]` look like a
+        // length-ncol vector.  Prefer the schema's column type,
+        // which `infer_data_frame` has already widened to the frame
+        // row count.
+        if bt.class.contains("data.frame") && args.len() >= 2 {
+            let column_arg = &args[1];
+            let drop_false = args.iter().any(|arg| {
+                arg.name.as_deref() == Some("drop") && matches!(arg.value, Expr::Logical(false, _))
+            });
+            let column = match &column_arg.value {
+                Expr::String(name, _) => bt.columns.as_ref().and_then(|schema| schema.get(name)),
+                Expr::Integer(index, _) if *index >= 1 => bt
+                    .columns
+                    .as_ref()
+                    .and_then(|schema| schema.columns.get(*index as usize - 1))
+                    .map(|(_, ty)| ty.clone()),
+                Expr::Double(index, _) if *index >= 1.0 && index.fract() == 0.0 => bt
+                    .columns
+                    .as_ref()
+                    .and_then(|schema| schema.columns.get(*index as usize - 1))
+                    .map(|(_, ty)| ty.clone()),
+                _ => None,
+            };
+            let _ = self.infer_table_index_args(args, &bt, index_scope);
+            let column = column.map(subset);
+            if let Some(column) = column {
+                if !drop_false {
+                    return column;
+                }
+                let name = match &column_arg.value {
+                    Expr::String(name, _) => name.clone(),
+                    _ => "[[1]]".to_string(),
+                };
+                return RType::new(Mode::List, Length::One)
+                    .with_class(ClassVector::single("data.frame"))
+                    .with_columns(Arc::new(ColumnSchema {
+                        columns: vec![(name, column)],
+                        complete: true,
+                        locally_constructed: false,
+                    }));
+            }
+            // A scalar but dynamic column index still drops to a
+            // vector. Its mode and row count are not knowable.
+            if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
+                return RType::unknown();
+            }
+            return subset(bt);
+        }
+        if matches!(bt.mode, Mode::List) && args.len() >= 2 {
+            if let Some(column) = args.iter().find_map(|arg| match &arg.value {
+                Expr::String(column, _) => Some(column),
+                _ => None,
+            }) {
+                let _ = self.infer_table_index_args(args, &bt, index_scope);
+                if let Some(schema) = &bt.columns {
+                    if let Some(column_type) = schema.get(column) {
+                        return subset(column_type);
+                    }
+                    if !schema.complete {
+                        return RType::unknown();
+                    }
+                }
+                return RType::unknown();
+            }
+        }
+        // For one-dimensional vector subsetting, result length is
+        // controlled by the index rather than the source. Logical
+        // masks select by their TRUE count, and numeric indices may
+        // exclude or select nothing, so retain a length only when R's
+        // index mode makes that length provable.
+        let index_types = self.infer_table_index_args(args, &bt, index_scope);
+        if let Some(members) = &bt.members {
+            if args.len() != 1
+                || members
+                    .iter()
+                    .any(|member| !member.class.known || member.class.len > 0)
+            {
+                return RType::unknown();
+            }
+            return members
+                .iter()
+                .map(|member| {
+                    subset_vector(member, &index_types[0], &args[0].value)
+                        .unwrap_or_else(RType::unknown)
+                })
+                .reduce(RType::join)
+                .unwrap_or_else(RType::unknown);
+        }
+        if args.len() == 1
+            && let Some(result) = subset_vector(&bt, &index_types[0], &args[0].value)
+        {
+            return result;
+        }
+        if bt.mode.is_unknown_or_non_vector() {
+            RType::unknown()
+        } else {
+            bt
         }
     }
 

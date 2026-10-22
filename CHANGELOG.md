@@ -156,6 +156,9 @@ All notable changes to ry are documented in this file.
 - Keep a name assigned inside a `[` subscript bound when the receiver is
   opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
   reports in lme4 and DescTools (#713).
+- Stop RY010 from reporting a closure's free name that a braced call
+  argument binds later, as in `suppressWarnings({ ... })`, a `switch()` arm,
+  or `local({ ... })` when `local` may be masked (#690).
 
 ## [0.11.0] - 2026-09-22
 

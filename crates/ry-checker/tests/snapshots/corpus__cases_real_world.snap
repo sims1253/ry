@@ -50,3 +50,5 @@ expression: rows
       severity: error
 - case: only a union with a function member shadows the data loader
   diagnostics: []
+- case: a data parameter with a non-function default shadows the loader
+  diagnostics: []

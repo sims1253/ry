@@ -152,3 +152,8 @@ g <- function(flag) {
   data <- if (flag) NULL else function() list(x = 1)
   data()$x
 }
+
+## case: a data parameter with a non-function default shadows the loader
+# no-diag
+# A caller may pass a function over the NULL default (Shiny modules).
+f <- function(data = NULL) data()$nodes

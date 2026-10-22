@@ -174,6 +174,12 @@ impl Checker {
                             // with after the diagnostic.
                         } else if matches!(bt.mode, Mode::List) && bt.class == ClassVector::empty()
                         {
+                            // Plain list `$` partially matches a unique
+                            // prefix. An unlisted field could still match
+                            // exactly or make the prefix ambiguous.
+                            if let Some(t) = schema.unique_prefix_match(name) {
+                                return if schema.complete { t } else { RType::unknown() };
+                            }
                             // Plain list `$` miss yields NULL in R.
                             return RType::new(Mode::Null, Length::Zero);
                         }
@@ -823,7 +829,10 @@ pub(crate) fn known_null_arithmetic_operand(expr: &Expr, other: &RType, scope: &
         .get(name)
         .and_then(|ty| ty.columns.as_ref())
         .is_some_and(|schema| {
-            schema.locally_constructed && schema.complete && schema.get(field).is_none()
+            schema.locally_constructed
+                && schema.complete
+                && schema.get(field).is_none()
+                && (*kind != IndexKind::Dollar || schema.unique_prefix_match(field).is_none())
         })
 }
 

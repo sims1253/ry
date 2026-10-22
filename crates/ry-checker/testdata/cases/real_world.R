@@ -64,8 +64,8 @@ result <- c(1, 2, 3) %>%
 
 ## case: a merge() result column takes arithmetic
 # no-diag
-# The base stub types merge() as a class-less list, but merge() returns
-# a data frame, so `m[, 1]` is a column vector (#709, caret's rfe.R).
+# merge() on data frames returns a data frame, so `m[, 1]` is a column
+# vector; the base stub's merge() return is opaque (#709, caret's rfe.R).
 f <- function(a, b) {
   m <- merge(a, b, by = 1)
   m[, 1] - 1
@@ -73,8 +73,8 @@ f <- function(a, b) {
 
 ## case: a read.csv() column selection takes arithmetic
 # no-diag
-# A multi-column data-frame selection dispatches to Ops.data.frame
-# (#709, parameters' methods_epi2x2.R).
+# read.csv() returns a data frame, and a multi-column selection
+# dispatches to Ops.data.frame (#709, parameters' methods_epi2x2.R).
 g <- function(path) {
   m <- read.csv(path)
   100 * m[, c("x", "y")]
@@ -85,10 +85,15 @@ g <- function(path) {
 # gc() returns a double matrix (#709, lobstr's mem.R).
 h <- function() sum(gc()[, 1] * c(56, 8))
 
+## case: a one-index merge() subset takes arithmetic
+# no-diag
+# `merge(a, a)[1]` is a one-column data frame, and Ops.data.frame
+# accepts it (#709).
+j <- function(a) merge(a, a)[1] + 1
+
 ## case: a one-index subset of a plain list stays a list
 # expect: RY040
-# Only matrix indexing on a list turns opaque; `lst[1]` is still a
-# list, and list arithmetic still errors.
+# `lst[1]` is still a list, and list arithmetic still errors.
 k <- function() {
   lst <- list(1, 2)
   lst[1] + 1

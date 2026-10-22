@@ -115,6 +115,11 @@ All notable changes to ry are documented in this file.
   parameter as that callable instead of the same-named base function, so
   `dt()` on a `dt` argument no longer takes `stats::dt`'s arity or return
   type (#722).
+- Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
+  results such as `merge(a, b)[, 1] - 1`. The vendored base stubs
+  (r-typeshed affe513f) now return a data frame from `read.table` and its
+  `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
+  double matrix from `gc` (#709).
 
 ## [0.11.0] - 2026-09-22
 

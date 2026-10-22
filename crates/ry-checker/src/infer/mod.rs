@@ -656,6 +656,17 @@ impl Checker {
         &mut self,
         s: &Stmt,
         scope: &mut Scope,
+        returns: Option<&mut Vec<RType>>,
+    ) {
+        // Statement and expression walks recurse once per `else if` arm
+        // and per nesting level.
+        ry_core::stack::grow(|| self.walk_stmt_inner(s, scope, returns))
+    }
+
+    fn walk_stmt_inner(
+        &mut self,
+        s: &Stmt,
+        scope: &mut Scope,
         mut returns: Option<&mut Vec<RType>>,
     ) {
         if scope.unreachable {
@@ -1096,8 +1107,23 @@ impl Checker {
                 }
             }
         }
+        // `environment(f) <- rho` re-homes this closure (issue #716): its
+        // free variables resolve in `rho`, so what the defining frame
+        // binds (often an `x <- NULL` R CMD check placeholder) is unknown.
+        if self
+            .dynamic_closure_literals
+            .environment_replaced
+            .contains(&span)
+        {
+            let inherited: Vec<String> = fn_scope.bindings.keys().cloned().collect();
+            for name in inherited {
+                fn_scope.insert(name, RType::unknown());
+            }
+        }
         if named_binding && let Some(name) = function_name {
-            insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
+            if self.runs_as_s3_method(name, &self.path, span) {
+                insert_s3_dispatch_context(&mut fn_scope);
+            }
             // RY108 inspects the definition's own shape (formal defaults
             // vs. `missing()` guards), not the walked body's types, so it
             // runs before the parameter defaults are inserted below.
@@ -1185,7 +1211,11 @@ impl Checker {
         if let Some(saved) = saved_vacuous_map {
             self.vacuous_map_results = saved;
         }
-        if let Some(kind) = self.dynamic_closure_literals.get(&span).copied()
+        if let Some(kind) = self
+            .dynamic_closure_literals
+            .placeholders
+            .get(&span)
+            .copied()
             && !self.discarding
         {
             // Only the placeholder-specific rules go; everything else
@@ -1420,6 +1450,10 @@ impl Checker {
     /// intentional side-effect calls as bugs while covering common missing
     /// assignment mistakes (`paste0(x, ...)`, `read_*()`, and arithmetic).
     fn check_discarded_branch_results(&mut self, body: &[Stmt]) {
+        ry_core::stack::grow(|| self.check_discarded_branch_results_inner(body))
+    }
+
+    fn check_discarded_branch_results_inner(&mut self, body: &[Stmt]) {
         for (index, statement) in body.iter().enumerate() {
             if index + 1 < body.len()
                 && let Stmt::If {
@@ -2040,6 +2074,16 @@ impl Checker {
         visited: &mut HashSet<String>,
         view: DivergenceView,
     ) -> bool {
+        // Recurses once per `else if` arm and per nesting level.
+        ry_core::stack::grow(|| self.stmt_diverges_inner(statement, visited, view))
+    }
+
+    fn stmt_diverges_inner(
+        &self,
+        statement: &Stmt,
+        visited: &mut HashSet<String>,
+        view: DivergenceView,
+    ) -> bool {
         match statement {
             Stmt::Return { .. } => true,
             Stmt::Expr(expression) => self.expr_diverges(expression, visited, view),
@@ -2052,6 +2096,15 @@ impl Checker {
     }
 
     fn expr_diverges(
+        &self,
+        expression: &Expr,
+        visited: &mut HashSet<String>,
+        view: DivergenceView,
+    ) -> bool {
+        ry_core::stack::grow(|| self.expr_diverges_inner(expression, visited, view))
+    }
+
+    fn expr_diverges_inner(
         &self,
         expression: &Expr,
         visited: &mut HashSet<String>,
@@ -2237,6 +2290,16 @@ impl Checker {
     /// `return(...)` call (which [`Checker::walk_literal_returns`]
     /// already counted).
     pub(crate) fn trailing_return_type(
+        &mut self,
+        body: &[Stmt],
+        scope: &mut Scope,
+        depth: usize,
+    ) -> Option<RType> {
+        // Recurses once per `else if` arm and per nesting level.
+        ry_core::stack::grow(|| self.trailing_return_type_inner(body, scope, depth))
+    }
+
+    fn trailing_return_type_inner(
         &mut self,
         body: &[Stmt],
         scope: &mut Scope,
@@ -3003,6 +3066,10 @@ impl Checker {
     }
 
     pub(crate) fn infer_stmt_value(&mut self, stmt: &Stmt, scope: &mut Scope) -> RType {
+        ry_core::stack::grow(|| self.infer_stmt_value_inner(stmt, scope))
+    }
+
+    fn infer_stmt_value_inner(&mut self, stmt: &Stmt, scope: &mut Scope) -> RType {
         if scope.unreachable {
             return RType::unknown();
         }
@@ -3258,6 +3325,10 @@ impl Checker {
 
     /// Infer the type of an expression, emitting diagnostics for misuse.
     pub(crate) fn infer(&mut self, e: &Expr, scope: &mut Scope) -> RType {
+        ry_core::stack::grow(|| self.infer_inner(e, scope))
+    }
+
+    fn infer_inner(&mut self, e: &Expr, scope: &mut Scope) -> RType {
         if scope.unreachable {
             return RType::unknown();
         }
@@ -3765,6 +3836,10 @@ pub(crate) fn embraced_symbol(body: &[Stmt]) -> Option<(&str, Span)> {
 /// Names assigned on every path that reaches the end of this block.
 /// Loops, calls, and nested function bodies cannot establish this fact.
 fn definitely_assigned_names(body: &[Stmt]) -> HashSet<&str> {
+    ry_core::stack::grow(|| definitely_assigned_names_inner(body))
+}
+
+fn definitely_assigned_names_inner(body: &[Stmt]) -> HashSet<&str> {
     let mut names = HashSet::new();
     for statement in body {
         match statement {

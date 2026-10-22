@@ -1,0 +1,96 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: a helper registered at load time sees the S3 dispatcher bindings
+  diagnostics: []
+- case: an evalqOnLoad .S3method registration binds all four dispatcher variables
+  diagnostics: []
+- case: S3 method names bind all four dispatcher variables
+  diagnostics: []
+- case: an unregistered helper still reports dispatcher variables as unbound
+  diagnostics:
+    - code: RY010
+      line: 45
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registration does not reach a local namesake
+  diagnostics:
+    - code: RY010
+      line: 54
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registration after a non-literal rebinding proves nothing
+  diagnostics:
+    - code: RY010
+      line: 61
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a plain top-level registration may run before the definition
+  diagnostics:
+    - code: RY010
+      line: 70
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a rebinding inside the evalqOnLoad block proves nothing
+  diagnostics:
+    - code: RY010
+      line: 74
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a second literal inside the evalqOnLoad block proves nothing
+  diagnostics:
+    - code: RY010
+      line: 83
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: an escaped identifier may rebind the registered name
+  diagnostics:
+    - code: RY010
+      line: 92
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registration inside local() proves nothing
+  diagnostics:
+    - code: RY010
+      line: 99
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: unevaluated registrations prove nothing
+  diagnostics:
+    - code: RY010
+      line: 108
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 111
+      message: "variable `.Class` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 115
+      message: "variable `.Method` is not bound in this scope"
+      severity: warning
+- case: an evalqOnLoad block evaluated elsewhere proves nothing
+  diagnostics:
+    - code: RY010
+      line: 126
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registration inside a function body proves nothing
+  diagnostics:
+    - code: RY010
+      line: 131
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a redefined registerS3method proves nothing
+  diagnostics:
+    - code: RY010
+      line: 137
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registered name with two definitions proves nothing
+  diagnostics:
+    - code: RY010
+      line: 142
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning

@@ -956,6 +956,22 @@ impl Scope {
         self.lexical_functions.contains(name)
     }
 
+    /// Whether this frame's binding of the bare call head `name` may be the
+    /// function R calls, hiding a same-named stub: R's call lookup stops at a
+    /// function or opaque value, or a union with a closure member (#700),
+    /// and skips any other value. A write that may have escaped an unproven
+    /// `local()`/`test_that()` block is only a possible binding (#722).
+    pub(crate) fn binding_may_be_callee(&self, name: &str) -> bool {
+        !self.possible_block_writes.contains(name)
+            && self.get(name).is_some_and(|binding| {
+                binding.mode == Mode::Function
+                    || binding.mode.is_unknown()
+                    || binding.members.as_ref().is_some_and(|members| {
+                        members.iter().any(|member| member.mode == Mode::Function)
+                    })
+            })
+    }
+
     pub(crate) fn lexical_definition(&self, name: &str) -> Option<Span> {
         self.lexical_definitions.get(name).copied()
     }
@@ -1182,6 +1198,13 @@ pub(crate) struct FnTable {
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
     pub(crate) s3_methods: FxMap<(String, String), usize>,
+    // Names an unconditional top-level `registerS3method()`/`.S3method()`
+    // registers as S3 methods, whatever their spelling (#348).
+    pub(crate) registered_s3_methods: FxSet<String>,
+    // Names a global-frame literal binds where the definition collector
+    // does not record it (braces, `local()`, expression position), so
+    // `capture_literal_bindings` misses that definition.
+    pub(crate) unrecorded_global_literals: FxSet<String>,
     // Names of all top-level variable assignments across all files in
     // the project. Used to suppress RY010 for cross-file references:
     // when an identifier is not in the current scope but IS in this
@@ -1299,6 +1322,10 @@ impl FnTable {
                 .iter()
                 .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
         );
+        self.registered_s3_methods
+            .extend(collected.registered_s3_methods.iter().cloned());
+        self.unrecorded_global_literals
+            .extend(collected.unrecorded_global_literals.iter().cloned());
         self.known_vars.extend(collected.known_vars.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());
@@ -1531,7 +1558,9 @@ pub struct Checker {
     // Indexed once per pass-3 run by `emit_diagnostics`;
     // `enter_function_body` drops the placeholder-invalidated rules
     // (RY010; RY080 only under body<-) from such a literal's internals.
-    dynamic_closure_literals: FxMap<Span, infer::dynamic_closure::PlaceholderKind>,
+    // Literals whose closure later receives `environment(x) <-` (issue
+    // #716) are walked without the defining frame's bindings.
+    dynamic_closure_literals: infer::dynamic_closure::DynamicClosures,
 }
 
 impl Checker {
@@ -1704,7 +1733,7 @@ impl Checker {
             stmt_continuations: HashMap::new(),
             formal_shadows: Vec::new(),
             formal_reads: FxMap::default(),
-            dynamic_closure_literals: FxMap::default(),
+            dynamic_closure_literals: Default::default(),
         }
     }
 
@@ -1852,7 +1881,7 @@ impl Checker {
         );
         infer::index_formal_reads(&file.stmts, &mut self.formal_reads);
         self.index_vacuous_helpers(&file.stmts);
-        self.dynamic_closure_literals.clear();
+        self.dynamic_closure_literals = Default::default();
         infer::dynamic_closure::index_dynamic_closure_literals(
             &file.stmts,
             &mut self.dynamic_closure_literals,

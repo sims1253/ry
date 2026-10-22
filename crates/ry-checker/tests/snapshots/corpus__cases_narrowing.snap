@@ -387,3 +387,17 @@ expression: rows
       line: 873
       message: "could not find function `dof` (bound here as `union`)"
       severity: error
+- case: is.list on a local union with no list member gives the arm an unknown value
+  diagnostics: []
+- case: the else arm of a negated is.list gives a local union an unknown value
+  diagnostics: []
+- case: is.numeric on a local union with no numeric member gives the arm an unknown value
+  diagnostics: []
+- case: arithmetic inside a dead is.character guard on a numeric local stays quiet
+  diagnostics: []
+- case: "a local union with no list member and no guard still reports `$`"
+  diagnostics:
+    - code: RY061
+      line: 915
+      message: "$ operator is invalid for atomic vectors of mode `integer` or `character`"
+      severity: error

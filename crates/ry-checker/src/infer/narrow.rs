@@ -553,7 +553,7 @@ fn apply_single_narrowing_branch<'a>(
             // class targets and incompatible parameter defaults
             // do install.
             if let Some(existing) = scope.get(var).cloned() {
-                if disjoint_function_guard(scope, var, &existing, target) {
+                if disjoint_mode_guard(scope, var, &existing, target) {
                     scope.insert_narrowed(var.clone(), RType::unknown());
                     return Some(var.as_str());
                 }
@@ -622,29 +622,12 @@ fn apply_single_narrowing_branch<'a>(
             // When a mode predicate's false path proves the runtime value
             // is not any tested mode, the default-derived mode cannot
             // describe it here; degrade to unknown in this branch only.
-            // Mode predicates carry a concrete or union mode and no class
-            // claim. `Mode::Opaque` targets are class predicates
-            // (`inherits`, `is.<class>`), and a concrete
-            // mode target can still carry an explicit class
-            // (`is.data.frame` is list + "data.frame"; stub-declared
-            // predicates can express the same shape) — a false path there
-            // rejects the class claim, not the mode, so
-            // `has_known_class()` targets never degrade. Locals keep their
+            // A class predicate's false path rejects the class claim, not
+            // the mode, so it never degrades. Locals keep their
             // type (their rejected branch is genuinely unreachable), mixed
             // unions keep any surviving member, and a rebinding clears the
             // default-parameter marker before this can apply.
-            if matches!(
-                target.mode,
-                Mode::Logical
-                    | Mode::Integer
-                    | Mode::Double
-                    | Mode::Character
-                    | Mode::Complex
-                    | Mode::Raw
-                    | Mode::List
-                    | Mode::Function
-                    | Mode::Union
-            ) && !target.class.has_known_class()
+            if is_mode_predicate(target)
                 && scope.is_default_parameter(var)
                 && let Some(existing) = scope.get(var)
                 && type_is_exactly_tested_family(existing, target)
@@ -695,13 +678,33 @@ fn apply_single_narrowing_branch<'a>(
     None
 }
 
-/// A passing function guard on a binding ry typed with no function member,
-/// other than a default parameter (which installs the function). Either the
-/// branch is dead or a caller passed what ry's type misses. Calling the value
-/// cannot fail there, but a function type would make dead branches report
-/// arithmetic on it, so the branch sees an unknown value instead (#741).
-fn disjoint_function_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
-    target.mode == Mode::Function
+/// Whether `target` tests only a mode (`is.list`, `is.numeric`, ...).
+/// `Mode::Opaque` targets are class predicates (`inherits`, `is.<class>`),
+/// and a concrete mode can still carry a class claim (`is.data.frame` is
+/// list + "data.frame").
+fn is_mode_predicate(target: &RType) -> bool {
+    matches!(
+        target.mode,
+        Mode::Logical
+            | Mode::Integer
+            | Mode::Double
+            | Mode::Character
+            | Mode::Complex
+            | Mode::Raw
+            | Mode::List
+            | Mode::Function
+            | Mode::Union
+    ) && !target.class.has_known_class()
+}
+
+/// A passing mode guard on a binding ry typed with no member of the tested
+/// mode, other than a default parameter (which installs the tested type).
+/// Either the branch is dead or a caller passed what ry's type misses. The
+/// tested type would make dead branches report errors on it (`dof + 1`
+/// under `is.character(dof)`), so the branch sees an unknown value instead
+/// (#741, #752).
+fn disjoint_mode_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
+    is_mode_predicate(target)
         && !existing.mode.is_unknown_or_non_vector()
         && existing.mode != Mode::Null
         && !scope.is_default_parameter(var)
@@ -712,7 +715,7 @@ fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> b
     let Some(existing) = scope.get(var).cloned() else {
         return false;
     };
-    if disjoint_function_guard(scope, var, &existing, target) {
+    if disjoint_mode_guard(scope, var, &existing, target) {
         scope.insert_narrowed(var.to_string(), RType::unknown());
         return true;
     }
@@ -932,7 +935,7 @@ mod selected_branch_tests {
     }
 
     #[test]
-    fn positive_and_negated_union_guards_keep_their_distinct_rules() {
+    fn positive_and_negated_guards_on_a_disjoint_union_give_unknown() {
         let original = RType::union(Arc::from([
             RType::scalar(Mode::Integer),
             RType::scalar(Mode::Character),
@@ -941,8 +944,8 @@ mod selected_branch_tests {
         positive.insert("x", original.clone());
         let mut negative = positive.clone();
         let target = RType::scalar(Mode::Double);
-        // The positive guard requires an intersecting member. The false path
-        // of the negated predicate has historically installed its target.
+        // No member is a double, so neither passing path keeps the stale
+        // union or installs the tested type (#752).
         assert_eq!(
             apply_single_narrowing_branch(
                 &mut positive,
@@ -952,9 +955,9 @@ mod selected_branch_tests {
                 },
                 NarrowingBranch::Then,
             ),
-            None
+            Some("x")
         );
-        assert_eq!(positive.get("x"), Some(&original));
+        assert_eq!(positive.get("x"), Some(&RType::unknown()));
         assert_eq!(
             apply_single_narrowing_branch(
                 &mut negative,
@@ -966,7 +969,7 @@ mod selected_branch_tests {
             ),
             Some("x")
         );
-        assert_eq!(negative.get("x").map(|ty| ty.mode), Some(Mode::Double));
+        assert_eq!(negative.get("x"), Some(&RType::unknown()));
     }
 
     #[test]

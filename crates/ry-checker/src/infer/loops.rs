@@ -60,6 +60,10 @@ impl Checker {
     }
 
     fn ends_loop_iteration(&self, statement: &Stmt, scope: &Scope) -> bool {
+        ry_core::stack::grow(|| self.ends_loop_iteration_inner(statement, scope))
+    }
+
+    fn ends_loop_iteration_inner(&self, statement: &Stmt, scope: &Scope) -> bool {
         match statement {
             Stmt::Expr(Expr::Ident { name, .. }) => self.unmasked_loop_transfer(name, scope),
             Stmt::Expr(Expr::Block { body, .. }) => {

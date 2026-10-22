@@ -159,6 +159,10 @@ All notable changes to ry are documented in this file.
 - Read a literal `x[[N]]` on a partly named list by position: `list()`
   numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
   no longer reads the unnamed list and now reports RY061 on `$b` (#758).
+- Stop applying an omitted `NULL` default after guards that exclude it:
+  `if (is.null(x)) return(...)`, `!missing(x)`, every `!is.null()`
+  conjunct of `&&`, `length(x) == 1` or `length(x) > 0`, and a `for`
+  body over `x`. These no longer report a false RY001 or RY070 (#692).
 
 ## [0.11.0] - 2026-09-22
 

@@ -159,9 +159,16 @@ fn scope_placeholder_spans(stmts: &[Stmt], out: &mut DynamicClosures) {
     let mut current: FxMap<String, Span> = FxMap::default();
     // Every literal the current value of each name may evaluate to.
     let mut values: FxMap<String, Vec<Span>> = FxMap::default();
-    // `if` statements seen so far: an assignment inside one may not run,
-    // so it adds to a name's possible literals instead of replacing them.
+    // The `if` statements enclosing the current node, innermost last: an
+    // assignment inside one may not run, so it adds to a name's possible
+    // literals instead of replacing them. Nodes arrive in source order, so
+    // an `if` that ends before the current node is popped for good.
     let mut conditionals: Vec<Span> = Vec::new();
+    let close_ended = |conditionals: &mut Vec<Span>, at: Span| {
+        while conditionals.last().is_some_and(|open| open.end <= at.start) {
+            conditionals.pop();
+        }
+    };
     let _ = walk_stmts(
         stmts,
         Walk {
@@ -179,7 +186,10 @@ fn scope_placeholder_spans(stmts: &[Stmt], out: &mut DynamicClosures) {
         },
         |node, _: usize| -> ControlFlow<(), Descend> {
             match node {
-                AstNode::Stmt(Stmt::If { span, .. }) => conditionals.push(*span),
+                AstNode::Stmt(Stmt::If { span, .. }) => {
+                    close_ended(&mut conditionals, *span);
+                    conditionals.push(*span);
+                }
                 AstNode::Stmt(Stmt::Assign {
                     target,
                     value,
@@ -222,9 +232,8 @@ fn scope_placeholder_spans(stmts: &[Stmt], out: &mut DynamicClosures) {
                             current.remove(name);
                         }
                         let literals = value_function_literals(value);
-                        if conditionals.iter().any(|branch| {
-                            branch.start <= assign_span.start && assign_span.end <= branch.end
-                        }) {
+                        close_ended(&mut conditionals, *assign_span);
+                        if !conditionals.is_empty() {
                             values.entry(name.to_string()).or_default().extend(literals);
                         } else {
                             values.insert(name.to_string(), literals);

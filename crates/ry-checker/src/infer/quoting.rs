@@ -241,6 +241,14 @@ fn definitely_forced_identifier_in_stmt(
     statement: &Stmt,
     wanted: &str,
 ) -> Option<Span> {
+    ry_core::stack::grow(|| definitely_forced_identifier_in_stmt_inner(checker, statement, wanted))
+}
+
+fn definitely_forced_identifier_in_stmt_inner(
+    checker: &Checker,
+    statement: &Stmt,
+    wanted: &str,
+) -> Option<Span> {
     match statement {
         Stmt::Assign { value, .. } | Stmt::Expr(value) => {
             definitely_forced_identifier(checker, value, wanted)
@@ -298,6 +306,14 @@ fn opaque_binary_operator(op: &BinOpKind) -> bool {
 }
 
 fn definitely_forced_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Option<Span> {
+    ry_core::stack::grow(|| definitely_forced_identifier_inner(checker, expr, wanted))
+}
+
+fn definitely_forced_identifier_inner(
+    checker: &Checker,
+    expr: &Expr,
+    wanted: &str,
+) -> Option<Span> {
     match expr {
         Expr::BinOp { op, .. } if opaque_binary_operator(op) => None,
         Expr::If {
@@ -390,6 +406,14 @@ fn first_executed_identifier_in_stmt(
     statement: &Stmt,
     wanted: &str,
 ) -> Option<Span> {
+    ry_core::stack::grow(|| first_executed_identifier_in_stmt_inner(checker, statement, wanted))
+}
+
+fn first_executed_identifier_in_stmt_inner(
+    checker: &Checker,
+    statement: &Stmt,
+    wanted: &str,
+) -> Option<Span> {
     match statement {
         Stmt::Assign { value, .. } | Stmt::Expr(value) => {
             first_executed_identifier(checker, value, wanted)
@@ -460,6 +484,10 @@ fn plain_distinct_bindings(left: &str, right: &str) -> bool {
 }
 
 fn statement_preserves_binding(statement: &Stmt, wanted: &str) -> bool {
+    ry_core::stack::grow(|| statement_preserves_binding_inner(statement, wanted))
+}
+
+fn statement_preserves_binding_inner(statement: &Stmt, wanted: &str) -> bool {
     match statement {
         Stmt::Assign {
             target: Expr::Ident { name, .. },
@@ -485,6 +513,10 @@ fn statement_preserves_binding(statement: &Stmt, wanted: &str) -> bool {
 }
 
 fn expression_preserves_binding(expression: &Expr, wanted: &str) -> bool {
+    ry_core::stack::grow(|| expression_preserves_binding_inner(expression, wanted))
+}
+
+fn expression_preserves_binding_inner(expression: &Expr, wanted: &str) -> bool {
     match expression {
         Expr::Logical(_, _)
         | Expr::Integer(_, _)
@@ -519,6 +551,10 @@ fn expression_preserves_binding(expression: &Expr, wanted: &str) -> bool {
 }
 
 fn first_executed_identifier(checker: &Checker, expr: &Expr, wanted: &str) -> Option<Span> {
+    ry_core::stack::grow(|| first_executed_identifier_inner(checker, expr, wanted))
+}
+
+fn first_executed_identifier_inner(checker: &Checker, expr: &Expr, wanted: &str) -> Option<Span> {
     match expr {
         Expr::BinOp { op, .. } if opaque_binary_operator(op) => None,
         Expr::Ident { name, span } => (name == wanted).then_some(*span),
@@ -574,6 +610,14 @@ impl Checker {
     /// helpers can suppress their quoted arguments: other quoted-expression
     /// consumers, such as isolate(), capture and then execute their code.
     fn collect_executed_identifiers(
+        &self,
+        expr: &Expr,
+        names: &mut std::collections::BTreeSet<String>,
+    ) {
+        ry_core::stack::grow(|| self.collect_executed_identifiers_inner(expr, names))
+    }
+
+    fn collect_executed_identifiers_inner(
         &self,
         expr: &Expr,
         names: &mut std::collections::BTreeSet<String>,
@@ -645,6 +689,14 @@ impl Checker {
     }
 
     fn collect_injection_dependencies(
+        &self,
+        expr: &Expr,
+        names: &mut std::collections::BTreeSet<String>,
+    ) {
+        ry_core::stack::grow(|| self.collect_injection_dependencies_inner(expr, names))
+    }
+
+    fn collect_injection_dependencies_inner(
         &self,
         expr: &Expr,
         names: &mut std::collections::BTreeSet<String>,

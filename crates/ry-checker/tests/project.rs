@@ -2117,3 +2117,82 @@ fn binding_installer_toggle_matches_cold() {
         );
     }
 }
+
+/// #696: a flat `else if` chain nests one level per arm in the syntax tree,
+/// but it neither trips the nesting limit nor overflows a 2 MiB worker stack
+/// in the walks that recurse once per arm: statement, value, and trailing
+/// return positions, value chains nested in a braced `else`, a value chain
+/// whose arms all diverge, deep conditions and a deep last arm, and a last
+/// arm whose `then` nests deep in statement position, plain or diverging,
+/// and a chain whose arms all rebind the same name.
+#[test]
+fn long_else_if_chain_is_checked_on_a_small_stack() {
+    let chain = |indent: &str| {
+        let mut chain = format!("if (what == \"a0\") {{\n{indent}  0L\n");
+        for arm in 1..1000 {
+            chain.push_str(&format!(
+                "{indent}}} else if (what == \"a{arm}\") {{\n{indent}  {arm}L\n"
+            ));
+        }
+        chain + &format!("{indent}}}\n")
+    };
+    let nested = |tail: String| format!("{}{{ z <- {tail}; z }}", "if (x) 0L else ".repeat(499));
+    let later = "later <- function() undefined_thing + 1\n";
+    let sources = [
+        format!(
+            "statement <- function(what) {{\n  {}  NULL\n}}\n\
+             trailing <- function(what) {{\n  {}}}\n\
+             value <- function(what) {{\n  x <- {}  x\n}}\n{later}",
+            chain("  "),
+            chain("  "),
+            chain("  "),
+        ),
+        format!(
+            "f <- function(x) {{ v <- {}; v }}\n{later}",
+            nested(nested("0L".to_string()))
+        ),
+        format!(
+            "f <- function(x) {{ v <- {}stop(\"last\"); v }}\n{later}",
+            "if (x) stop(\"branch\") else ".repeat(999)
+        ),
+        format!(
+            "f <- function(x) {{ {}{{ y <- {}x; y }} }}\n{later}",
+            format!("if ({}x{}) 0L else ", "(".repeat(100), ")".repeat(100)).repeat(999),
+            "-".repeat(100),
+        ),
+        format!(
+            "f <- function(x) {{\n  {}if (x) {}0L{}\n}}\n{later}",
+            "if (x) 0L else ".repeat(999),
+            "{ if (x) ".repeat(57),
+            " }".repeat(57),
+        ),
+        format!(
+            "f <- function(x) {{\n  {}if (x) {}stop(\"t\") else stop(\"e\"){}\n}}\n{later}",
+            "if (x) stop(\"b\") else ".repeat(999),
+            "{ if (x) ".repeat(57),
+            " } else stop(\"e\")".repeat(57),
+        ),
+        format!(
+            "f <- function(x) {{\n  {}y <- 0L\n  y\n}}\n{later}",
+            "if (x) y <- 1L else ".repeat(999),
+        ),
+    ];
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            for source in sources {
+                let mut project = Project::new();
+                project.add_file("chain.R".to_string(), parse("chain.R", &source));
+                let codes: Vec<_> = project
+                    .check()
+                    .into_iter()
+                    .flat_map(|(_, diagnostics)| diagnostics)
+                    .map(|diagnostic| diagnostic.code)
+                    .collect();
+                assert_eq!(codes, ["RY010"]);
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

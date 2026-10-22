@@ -49,6 +49,8 @@ insta = { version = "1.48.0", features = ["yaml"] }
 proptest = "1.7"
 # parallelism (Project::check pass 3 + CLI parsing)
 rayon = "1"
+# On-demand stack growth for walks that recurse once per `else if` arm.
+stacker = "0.1"
 # Static inventory of R serialized data files (never evaluates R code).
 # 0.3.0 includes cycle-safe deduplication and parser resource limits.
 rds2rust = "0.3.0"

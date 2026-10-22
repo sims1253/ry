@@ -138,3 +138,17 @@ f <- function() {
   mtcars$mpg
 }
 g <- function() data(mtcars)$x
+
+## case: only a union with a function member shadows the data loader
+# no-diag
+# R's call lookup skips a function-free union, so `data(my_set)` still
+# binds `my_set`; a NULL-or-closure union is the callee instead.
+f <- function(flag) {
+  data <- if (flag) 1 else "a"
+  data(my_set)
+  my_set$x
+}
+g <- function(flag) {
+  data <- if (flag) NULL else function() list(x = 1)
+  data()$x
+}

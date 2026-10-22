@@ -446,14 +446,19 @@ impl Checker {
 
     /// Whether a local, parameter, or project binding of the bare call head
     /// `name` may be the function R calls, ahead of any same-named package
-    /// function. An opaque or union local may be a closure, as in call-head
-    /// resolution (#722).
+    /// function. An opaque local may be a closure; a union counts only with a
+    /// function member, since R's call lookup skips non-function values (#722).
     pub(crate) fn call_head_bound_locally(&self, name: &str, scope: &Scope) -> bool {
+        use ry_core::types::Mode;
         scope.is_lexical_function(name)
             || scope.is_parameter(name)
-            || scope
-                .get(name)
-                .is_some_and(|binding| binding.mode.may_be_function())
+            || scope.get(name).is_some_and(|binding| {
+                binding.mode == Mode::Function
+                    || binding.mode.is_unknown()
+                    || binding.members.as_ref().is_some_and(|members| {
+                        members.iter().any(|member| member.mode == Mode::Function)
+                    })
+            })
             || self.fn_table.functions.binds(name)
     }
 

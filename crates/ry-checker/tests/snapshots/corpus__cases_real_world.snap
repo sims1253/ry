@@ -48,3 +48,5 @@ expression: rows
       line: 140
       message: "$ operator is invalid for atomic vectors of mode `character`"
       severity: error
+- case: only a union with a function member shadows the data loader
+  diagnostics: []

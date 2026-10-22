@@ -1096,6 +1096,19 @@ impl Checker {
                 }
             }
         }
+        // `environment(f) <- rho` re-homes this closure (issue #716): its
+        // free variables resolve in `rho`, so what the defining frame
+        // binds (often an `x <- NULL` R CMD check placeholder) is unknown.
+        if self
+            .dynamic_closure_literals
+            .environment_replaced
+            .contains(&span)
+        {
+            let inherited: Vec<String> = fn_scope.bindings.keys().cloned().collect();
+            for name in inherited {
+                fn_scope.insert(name, RType::unknown());
+            }
+        }
         if named_binding && let Some(name) = function_name {
             insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
             // RY108 inspects the definition's own shape (formal defaults
@@ -1185,7 +1198,11 @@ impl Checker {
         if let Some(saved) = saved_vacuous_map {
             self.vacuous_map_results = saved;
         }
-        if let Some(kind) = self.dynamic_closure_literals.get(&span).copied()
+        if let Some(kind) = self
+            .dynamic_closure_literals
+            .placeholders
+            .get(&span)
+            .copied()
             && !self.discarding
         {
             // Only the placeholder-specific rules go; everything else

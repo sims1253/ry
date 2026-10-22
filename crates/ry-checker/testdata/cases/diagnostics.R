@@ -283,3 +283,37 @@ g <- function(x) {
   res <- list(nvalid = length(x), nvx = 1, total = sum(x))
   res$total / res$nv
 }
+
+## case: environment replacement hides the defining frame's NULL placeholder
+# no-diag
+# lme4's modular.R shape. After `environment<-`, `mkTheta` resolves in
+# `rho`, not in the frame that binds it to NULL.
+make_devfun <- function(rho) {
+  mkTheta <- NULL
+  devfun <- function(par) mkTheta(par)
+  environment(devfun) <- rho
+  devfun
+}
+
+## case: environment replacement reaches literals picked by an if value
+# no-diag
+# lme4's mkdevfun shape: the closure comes from an if/else value.
+make_branch <- function(rho, linear) {
+  mkTheta <- NULL
+  ff <- if (linear) {
+    function(par) mkTheta(par)
+  } else {
+    function(pars) mkTheta(pars[1])
+  }
+  environment(ff) <- rho
+  ff
+}
+
+## case: without environment replacement the NULL placeholder is what R calls
+# expect: RY070
+# R errors: could not find function "mkTheta".
+make_plain <- function() {
+  mkTheta <- NULL
+  devfun <- function(par) mkTheta(par)
+  devfun(3)
+}

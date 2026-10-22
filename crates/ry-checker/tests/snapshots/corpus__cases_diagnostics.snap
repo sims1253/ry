@@ -320,3 +320,13 @@ expression: rows
       line: 284
       message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
       severity: error
+- case: "environment replacement hides the defining frame's NULL placeholder"
+  diagnostics: []
+- case: environment replacement reaches literals picked by an if value
+  diagnostics: []
+- case: without environment replacement the NULL placeholder is what R calls
+  diagnostics:
+    - code: RY070
+      line: 317
+      message: "could not find function `mkTheta` (bound here as `NULL`)"
+      severity: error

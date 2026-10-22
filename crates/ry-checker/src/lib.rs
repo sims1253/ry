@@ -1509,7 +1509,9 @@ pub struct Checker {
     // Indexed once per pass-3 run by `emit_diagnostics`;
     // `enter_function_body` drops the placeholder-invalidated rules
     // (RY010; RY080 only under body<-) from such a literal's internals.
-    dynamic_closure_literals: FxMap<Span, infer::dynamic_closure::PlaceholderKind>,
+    // Literals whose closure later receives `environment(x) <-` (issue
+    // #716) are walked without the defining frame's bindings.
+    dynamic_closure_literals: infer::dynamic_closure::DynamicClosures,
 }
 
 impl Checker {
@@ -1681,7 +1683,7 @@ impl Checker {
             stmt_continuations: HashMap::new(),
             formal_shadows: Vec::new(),
             formal_reads: FxMap::default(),
-            dynamic_closure_literals: FxMap::default(),
+            dynamic_closure_literals: Default::default(),
         }
     }
 
@@ -1829,7 +1831,7 @@ impl Checker {
         );
         infer::index_formal_reads(&file.stmts, &mut self.formal_reads);
         self.index_vacuous_helpers(&file.stmts);
-        self.dynamic_closure_literals.clear();
+        self.dynamic_closure_literals = Default::default();
         infer::dynamic_closure::index_dynamic_closure_literals(
             &file.stmts,
             &mut self.dynamic_closure_literals,

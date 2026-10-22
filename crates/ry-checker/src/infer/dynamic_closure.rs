@@ -62,6 +62,18 @@
 //! `map_dbl(x, f)` callback, or arguments matched against recorded
 //! formals (RY090/RY091) — are still judged by the placeholder's
 //! recorded returns and formals even under `body<-`.
+//!
+//! `environment(x) <- rho` (issue #716) is tracked separately: it keeps
+//! the formals and body, but the closure's free variables then resolve
+//! in `rho`, not in the frame that wrote the literal. lme4 pairs it with
+//! `x <- NULL` placeholders that only exist to placate R CMD check, so
+//! the defining frame's bindings say nothing about what the body sees.
+//! Every function literal the name may be bound to at that point (an
+//! `if` or `switch` may pick one of several) is marked, and
+//! `enter_function_body` walks it with the defining frame's bindings
+//! shadowed by unknowns. Names bound nowhere stay reportable. A literal
+//! passed as a call argument in the value (a callback, not the value
+//! itself) is marked too; that over-approximation only silences.
 
 use super::*;
 
@@ -80,6 +92,49 @@ pub(crate) enum PlaceholderKind {
     BodyReplaced,
 }
 
+/// Function literals whose closures a replacement function rewrites,
+/// indexed once per file.
+#[derive(Debug, Default)]
+pub(crate) struct DynamicClosures {
+    /// `formals<-` / `body<-` placeholders, with the strongest
+    /// replacement in force.
+    pub(crate) placeholders: FxMap<Span, PlaceholderKind>,
+    /// Literals whose closure later receives `environment<-`: their free
+    /// variables do not resolve in the defining frame.
+    pub(crate) environment_replaced: FxSet<Span>,
+}
+
+/// Function literals the value of `x <- value` may evaluate to: the
+/// value itself or any literal reached through its branches and call
+/// arguments (`if (c) function(a) ... else function(b) ...`,
+/// `switch(k, ...)`). Nested function bodies and assignments inside
+/// blocks are skipped: those literals bind other names.
+fn value_function_literals(value: &Expr) -> Vec<Span> {
+    use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
+    use std::ops::ControlFlow;
+
+    let mut spans = Vec::new();
+    let _ = walk_expr(
+        value,
+        Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node, _: usize| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Expr(Expr::Function { span, .. })
+                | AstNode::Stmt(Stmt::FunctionDef { span, .. }) => spans.push(*span),
+                AstNode::Stmt(Stmt::Assign { .. }) => {
+                    return ControlFlow::Continue(Descend::Skip);
+                }
+                _ => {}
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+    spans
+}
+
 /// Whether `func` is a bare (possibly `pkg::`-qualified) `local` call
 /// head: `local({...})` evaluates its block in a fresh environment, so
 /// the enclosing scope's placeholder scan must not cross it.
@@ -91,7 +146,8 @@ fn is_local_call(func: &Expr) -> bool {
 /// statement list, in source order: a replacement assignment
 /// `formals(x) <- v` / `body(x) <- v` marks the function literal
 /// currently bound to `x`, and any rebind of `x` ends the association.
-fn scope_placeholder_spans(stmts: &[Stmt], out: &mut FxMap<Span, PlaceholderKind>) {
+/// `environment(x) <- v` marks every literal `x`'s value may be.
+fn scope_placeholder_spans(stmts: &[Stmt], out: &mut DynamicClosures) {
     use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
     use std::ops::ControlFlow;
 
@@ -101,6 +157,8 @@ fn scope_placeholder_spans(stmts: &[Stmt], out: &mut FxMap<Span, PlaceholderKind
     // not some earlier literal, so any rebind (to a literal or not)
     // replaces the entry.
     let mut current: FxMap<String, Span> = FxMap::default();
+    // Every literal the current value of each name may evaluate to.
+    let mut values: FxMap<String, Vec<Span>> = FxMap::default();
     let _ = walk_stmts(
         stmts,
         Walk {
@@ -131,12 +189,19 @@ fn scope_placeholder_spans(stmts: &[Stmt], out: &mut FxMap<Span, PlaceholderKind
                             // still in force.
                             "formals" => {
                                 if let Some(&span) = current.get(name) {
-                                    out.entry(span).or_insert(PlaceholderKind::FormalsOnly);
+                                    out.placeholders
+                                        .entry(span)
+                                        .or_insert(PlaceholderKind::FormalsOnly);
                                 }
                             }
                             "body" => {
                                 if let Some(&span) = current.get(name) {
-                                    out.insert(span, PlaceholderKind::BodyReplaced);
+                                    out.placeholders.insert(span, PlaceholderKind::BodyReplaced);
+                                }
+                            }
+                            "environment" => {
+                                if let Some(spans) = values.get(name) {
+                                    out.environment_replaced.extend(spans.iter().copied());
                                 }
                             }
                             _ => {}
@@ -147,6 +212,7 @@ fn scope_placeholder_spans(stmts: &[Stmt], out: &mut FxMap<Span, PlaceholderKind
                         } else {
                             current.remove(name);
                         }
+                        values.insert(name.to_string(), value_function_literals(value));
                     }
                 }
                 // local({...}) runs its block in a fresh environment: a
@@ -199,10 +265,7 @@ pub(crate) fn nested_function_literal_spans(body: &[Stmt]) -> Vec<Span> {
 /// `emit_diagnostics` runs this before the pass-3 walk, alongside the
 /// other pre-indexed facts; `enter_function_body` consults the map when
 /// it walks a literal.
-pub(crate) fn index_dynamic_closure_literals(
-    stmts: &[Stmt],
-    out: &mut FxMap<Span, PlaceholderKind>,
-) {
+pub(crate) fn index_dynamic_closure_literals(stmts: &[Stmt], out: &mut DynamicClosures) {
     scope_placeholder_spans(stmts, out);
     // Nested scopes: every function literal or definition body found
     // anywhere in this list gets its own target scan. `fn_bodies` stays

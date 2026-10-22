@@ -119,6 +119,8 @@ All notable changes to ry are documented in this file.
   (r-typeshed affe513f) now return a data frame from `read.table` and its
   `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
   double matrix from `gc` (#709).
+- Stop RY070 from reporting a call to a package S4 generic whose name a
+  value formal shares, such as `res()` next to `res = FALSE` (#712).
 
 ## [0.11.0] - 2026-09-22
 

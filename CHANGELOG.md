@@ -134,6 +134,10 @@ All notable changes to ry are documented in this file.
 - Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
   as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
   S3 generic, so ry dispatches to `cut.dendrogram` (#711).
+- Type a `$` or `[[` name missing from a list whose names ry only partly
+  knows (`list(...)`, an `lapply()` result, fields written to an argument
+  or environment) as unknown instead of NULL, removing RY001 false
+  positives in metafor, R.oo, terra, and gridGraphics (#689).
 
 ## [0.11.0] - 2026-09-22
 

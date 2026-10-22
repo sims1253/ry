@@ -115,6 +115,14 @@ All notable changes to ry are documented in this file.
   the 128-level syntax nesting limit. Up to 1024 `else if` arms may nest,
   counting chains inside chains; lavaan's `lav_object_inspect.R` is now
   checked (#696).
+- Follow R's partial matching for `$` on a plain list: a unique prefix such
+  as `res$nv` reads the `nvalid` field instead of NULL, removing a false
+  RY040 (#721).
+- Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
+  results such as `merge(a, b)[, 1] - 1`. The vendored base stubs
+  (r-typeshed affe513f) now return a data frame from `read.table` and its
+  `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
+  double matrix from `gc` (#709).
 
 ## [0.11.0] - 2026-09-22
 

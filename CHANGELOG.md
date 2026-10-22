@@ -127,6 +127,9 @@ All notable changes to ry are documented in this file.
   double matrix from `gc` (#709).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Read a literal `x[[N]]` on a partly named list by position: `list()`
+  numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
+  no longer reads the unnamed list and now reports RY061 on `$b` (#758).
 
 ## [0.11.0] - 2026-09-22
 

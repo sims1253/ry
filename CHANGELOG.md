@@ -116,6 +116,10 @@ All notable changes to ry are documented in this file.
   removing RY010 false positives in cli, pak, and rlang.
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
+- Check files with long flat `else if` chains instead of skipping them at
+  the 128-level syntax nesting limit. Up to 1024 `else if` arms may nest,
+  counting chains inside chains; lavaan's `lav_object_inspect.R` is now
+  checked (#696).
 - Treat a call head bound to an opaque or function-valued local or
   parameter as that callable instead of the same-named base function, so
   `dt()` on a `dt` argument no longer takes `stats::dt`'s arity or return
@@ -130,6 +134,9 @@ All notable changes to ry are documented in this file.
   double matrix from `gc` (#709).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
+  as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
+  S3 generic, so ry dispatches to `cut.dendrogram` (#711).
 
 ## [0.11.0] - 2026-09-22
 

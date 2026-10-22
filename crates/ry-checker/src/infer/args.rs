@@ -80,6 +80,10 @@ fn scan_stmts(stmts: &[Stmt], frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span,
 }
 
 fn scan_stmt(stmt: &Stmt, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
+    ry_core::stack::grow(|| scan_stmt_inner(stmt, frames, map))
+}
+
+fn scan_stmt_inner(stmt: &Stmt, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
     match stmt {
         Stmt::Assign { target, value, .. } => {
             scan_target(target, frames, map);
@@ -155,6 +159,10 @@ fn scan_target(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, F
 }
 
 fn scan_expr(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
+    ry_core::stack::grow(|| scan_expr_inner(expr, frames, map))
+}
+
+fn scan_expr_inner(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
     match expr {
         Expr::Function {
             params, body, span, ..

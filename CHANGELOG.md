@@ -99,6 +99,9 @@ All notable changes to ry are documented in this file.
 - Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 - Bind the target of a base `delayedAssign()` without evaluating its promise,
   removing false RY010 reports for lazily bound values (#349).
+- Apply the `data()` and `load()` loaders only when no local, parameter, or
+  project binding of that name may be the callee, removing false RY061
+  reports on Shiny's `data <- reactive(...)`; `data()$x` (#717).
 - Accept a logical `NA` callback result in purrr's typed maps, which widen it
   to the target's `NA` (#352).
 - End quietly instead of panicking when stdout closes early, as in
@@ -109,10 +112,17 @@ All notable changes to ry are documented in this file.
   scripts (#568).
 - Stop RY070 from reporting a call guarded by `is.function(x)` when ry
   inferred no function type for `x` (#741).
+- Stop mode guards such as `is.list(x)` and `is.numeric(x)` from keeping a
+  stale type for `x` when ry inferred none of the tested mode; the guarded
+  arm now sees an unknown value (#752).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
+- Check files with long flat `else if` chains instead of skipping them at
+  the 128-level syntax nesting limit. Up to 1024 `else if` arms may nest,
+  counting chains inside chains; lavaan's `lav_object_inspect.R` is now
+  checked (#696).
 - Treat a call head bound to an opaque or function-valued local or
   parameter as that callable instead of the same-named base function, so
   `dt()` on a `dt` argument no longer takes `stats::dt`'s arity or return
@@ -127,6 +137,12 @@ All notable changes to ry are documented in this file.
   double matrix from `gc` (#709).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
+  as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
+  S3 generic, so ry dispatches to `cut.dendrogram` (#711).
+- Keep a name assigned inside a `[` subscript bound when the receiver is
+  opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
+  reports in lme4 and DescTools (#713).
 - Read a literal `x[[N]]` on a partly named list by position: `list()`
   numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
   no longer reads the unnamed list and now reports RY061 on `$b` (#758).

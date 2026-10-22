@@ -113,6 +113,14 @@ All notable changes to ry are documented in this file.
   removing RY010 false positives in cli, pak, and rlang.
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
+- Follow R's partial matching for `$` on a plain list: a unique prefix such
+  as `res$nv` reads the `nvalid` field instead of NULL, removing a false
+  RY040 (#721).
+- Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
+  results such as `merge(a, b)[, 1] - 1`. The vendored base stubs
+  (r-typeshed affe513f) now return a data frame from `read.table` and its
+  `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
+  double matrix from `gc` (#709).
 
 ## [0.11.0] - 2026-09-22
 

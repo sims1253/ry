@@ -174,6 +174,12 @@ impl Checker {
                             // with after the diagnostic.
                         } else if matches!(bt.mode, Mode::List) && bt.class == ClassVector::empty()
                         {
+                            // Plain list `$` partially matches a unique
+                            // prefix. An unlisted field could still match
+                            // exactly or make the prefix ambiguous.
+                            if let Some(t) = schema.unique_prefix_match(name) {
+                                return if schema.complete { t } else { RType::unknown() };
+                            }
                             // Plain list `$` miss yields NULL in R.
                             return RType::new(Mode::Null, Length::Zero);
                         }
@@ -362,19 +368,6 @@ impl Checker {
                     && let Some(result) = subset_vector(&bt, &index_types[0], &args[0].value)
                 {
                     return result;
-                }
-                // A list without `dim` rejects `x[i, j]` ("incorrect number
-                // of dimensions"), so a list receiver indexed this way is a
-                // list matrix or a list-mode stub return that is really a
-                // data frame or matrix (`merge()`, `read.csv()`, `gc()`;
-                // #709). ry tracks neither dims nor that class, so the
-                // result is unknown rather than the receiver's list type.
-                let positional = args
-                    .iter()
-                    .filter(|arg| !matches!(arg.name.as_deref(), Some("drop" | "exact")))
-                    .count();
-                if bt.mode == Mode::List && positional >= 2 {
-                    return RType::unknown();
                 }
                 if bt.mode.is_unknown_or_non_vector() {
                     RType::unknown()
@@ -823,7 +816,10 @@ pub(crate) fn known_null_arithmetic_operand(expr: &Expr, other: &RType, scope: &
         .get(name)
         .and_then(|ty| ty.columns.as_ref())
         .is_some_and(|schema| {
-            schema.locally_constructed && schema.complete && schema.get(field).is_none()
+            schema.locally_constructed
+                && schema.complete
+                && schema.get(field).is_none()
+                && (*kind != IndexKind::Dollar || schema.unique_prefix_match(field).is_none())
         })
 }
 

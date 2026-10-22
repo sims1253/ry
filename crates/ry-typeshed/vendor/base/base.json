@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.28",
+  "version": "0.0.29",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -1852,10 +1852,7 @@
       "rchisq",
       "rcond",
       "read.DIF",
-      "read.csv2",
       "read.dcf",
-      "read.delim",
-      "read.delim2",
       "read.fortran",
       "read.ftable",
       "read.fwf",
@@ -4192,9 +4189,13 @@
     "gc": {
       "params": [],
       "return": {
-        "mode": "list",
+        "mode": "double",
         "length": "unknown",
-        "na": false
+        "na": true,
+        "class": [
+          "matrix",
+          "array"
+        ]
       }
     },
     "get": {
@@ -5290,9 +5291,9 @@
         "y"
       ],
       "return": {
-        "mode": "list",
+        "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "message": {
@@ -6388,7 +6389,49 @@
       "return": {
         "mode": "list",
         "length": "unknown",
-        "na": true
+        "na": true,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "read.csv2": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "read.delim": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.frame"
+        ]
+      }
+    },
+    "read.delim2": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.frame"
+        ]
       }
     },
     "read.table": {
@@ -6398,7 +6441,10 @@
       "return": {
         "mode": "list",
         "length": "unknown",
-        "na": true
+        "na": true,
+        "class": [
+          "data.frame"
+        ]
       }
     },
     "readLines": {

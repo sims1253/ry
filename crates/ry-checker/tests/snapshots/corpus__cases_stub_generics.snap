@@ -1,0 +1,14 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: "cut() on a dendrogram returns a list with `$upper`"
+  diagnostics: []
+- case: cut() on a known dendrogram dispatches to cut.dendrogram
+  diagnostics: []
+- case: "`$` on cut() of a numeric vector still errors"
+  diagnostics:
+    - code: RY061
+      line: 20
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error

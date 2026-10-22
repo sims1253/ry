@@ -6,6 +6,7 @@ pub mod declarations;
 pub mod parser;
 pub mod presentation;
 pub mod span;
+pub mod stack;
 pub mod types;
 pub mod walk;
 

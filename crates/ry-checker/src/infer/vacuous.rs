@@ -863,6 +863,14 @@ pub(crate) fn index_statement_continuations(
     map: &mut std::collections::HashMap<Span, Span>,
     shadows: &mut Vec<(String, Span)>,
 ) {
+    ry_core::stack::grow(|| index_statement_continuations_inner(stmts, map, shadows))
+}
+
+fn index_statement_continuations_inner(
+    stmts: &[Stmt],
+    map: &mut std::collections::HashMap<Span, Span>,
+    shadows: &mut Vec<(String, Span)>,
+) {
     for (index, statement) in stmts.iter().enumerate() {
         if index + 1 < stmts.len() {
             let start = stmt_span(&stmts[index + 1]);
@@ -912,6 +920,14 @@ fn index_formals(params: &[Param], span: Span, shadows: &mut Vec<(String, Span)>
 /// its own continuation ranges, so a guard at the end of one function
 /// cannot reach the next definition.
 fn index_expr_lists(
+    expr: &Expr,
+    map: &mut std::collections::HashMap<Span, Span>,
+    shadows: &mut Vec<(String, Span)>,
+) {
+    ry_core::stack::grow(|| index_expr_lists_inner(expr, map, shadows))
+}
+
+fn index_expr_lists_inner(
     expr: &Expr,
     map: &mut std::collections::HashMap<Span, Span>,
     shadows: &mut Vec<(String, Span)>,

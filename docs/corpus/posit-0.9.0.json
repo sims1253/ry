@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "415cf053a2a05b907f4736d2625f74d4b867c0447a03ba2aaaaf09bbb6775737",
-  "ry_commit": "3beab2047bfc13b85a15236b548a03f4e107f532",
+  "source_sha256": "637cd5ec7cfba2d34b76695fbfa3494ef2299b2ad81fc48589580c02f8bbfff3",
+  "ry_commit": "e1628a4f72aee4f5e2ec73de64c5c8730504d196",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -152,7 +152,7 @@
       "repo": "tidyverse/lubridate",
       "stars": 801,
       "commit": "8e9f2b289ee8384d9499e2527fb1e449c97e5370",
-      "diagnostics": 5
+      "diagnostics": 3
     },
     {
       "name": "infer",
@@ -1909,24 +1909,6 @@
       "column": 64,
       "label": "true_positive",
       "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/ops-compare.r",
-      "line": 20,
-      "column": 64,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/ops-compare.r",
-      "line": 55,
-      "column": 14,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
     },
     {
       "package": "lubridate",
@@ -3874,13 +3856,13 @@
     }
   ],
   "classification": {
-    "false_positive": 292,
+    "false_positive": 290,
     "true_positive": 89
   },
   "audit_group_counts": {
     "reassign-scope": 2,
     "type-narrowing": 34,
-    "manual-audit": 138,
+    "manual-audit": 136,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 1,
     "test-fixture": 80,
@@ -3935,6 +3917,7 @@
     "RY033 limited to ordering comparisons (#699): `==`/`!=` between a character value and a non-character value compare the formatted strings, so RY033 now fires only for `<`, `>`, `<=`, `>=`. 11 RY033 identities disappear and none is added. Five are false positives (type-narrowing): broom R/deprecated-0-7-0.R:290:11, R/utilities.R:108:11 and sparklyr R/tidiers_utils.R:74:11 (`rownames(x) == seq_len(nrow(x))`), cli R/onload.R:44:22 (`Sys.getenv(\"RSTUDIO\") == 1`), flexdashboard R/flex_dashboard.R:173:7 (`resize_reload == 'no'`). Six were labelled true_positive (upstream-package) and are removed as equality comparisons R evaluates as intended: plumber R/plumber.R:474:82 (`endCount == 1` with `endCount <- as.character(...)`), torch R/install.R:699:4 (`toupper(x) == TRUE`), R/package.R:42:37 (`Sys.getenv(\"TORCH_INSTALL\", unset = 2) != 0`) and 88:15 (`Sys.getenv(\"TORCH_LOAD\", unset = 1) != 0`), tests/testthat.R:4:5 (`Sys.getenv(\"TORCH_TEST\", unset = 0) == 1`, the shape the cli entry already labels false_positive), and shiny-r R/bookmark-state.R:138:18 (`length(inputVals != 0)`), whose misplaced parenthesis stays reported as the true_positive RY093 at the same span. Every other true positive remains.",
     "RY040 literal NULL beside a dispatchable operand (#707): a literal NULL arithmetic operand now reports only when the other operand is NULL or a known atomic without a class attribute. The two identities removed are both s3-method-dispatch false positives: ggplot2 tests/testthat/test-geom-curve.R:17:8, a ggplot(df) + geom_curve(...) chain ending in `+ NULL` (line 46) that ggplot2's S7 `+` methods (R/plot-construction.R:66-74) accept, and glue tests/testthat/test-glue.R:595:20, as_glue(\"hello\") + NULL, which dispatches to +.glue (R/glue.R:387) and is expected to return character(). No identity is added; every true positive remains.",
     "Block-frame closures shadow base stubs (#718): a `name <- function(...)` bound inside an R6Class() member list, a local() block or a testthat block is now a lexical callable, as in a plain function body. Three reviewed false positives disappear, all dplyr function-shadowing (the #350 sites): R/data-mask.R:112:7, R/data-mask.R:117:7 and R/data-mask.R:131:7, RY091 `eval()` missing `expr` where the R6 method calls its own local `eval` closure. No identity is added and every true positive remains; the tidyverse ledger drops the same three identities (P4a).",
-    "If-arm bindings merge wherever the if sits (#694): an `if` used as a value and an `if` ending a `{}` block or braced call argument now merge their arm bindings into the enclosing frame like a statement `if`, so later reads no longer report RY010. Four reviewed false positives disappear: blogdown R/serve.R:164:22 (reassign-scope) and R/serve.R:166:38 (type-narrowing), `proc` bound in the processx arm of `pid = if (is_psx <- ...) {...}` and read only under `if (is_psx && ...)`; dplyr R/summarise.R:342:34 (reassign-scope, the #350 site), `group_sizes` bound in both arms of the `if` ending withCallingHandlers({...}); and tinytex R/install.R:335:31 (type-narrowing), `tmp` bound in the `add` arm of `cmd = if (add) {...}` and read only under `if (add && ret == 0)`. No identity is added and every true positive remains; the tidyverse ledger drops the same dplyr identity."
+    "If-arm bindings merge wherever the if sits (#694): an `if` used as a value and an `if` ending a `{}` block or braced call argument now merge their arm bindings into the enclosing frame like a statement `if`, so later reads no longer report RY010. Four reviewed false positives disappear: blogdown R/serve.R:164:22 (reassign-scope) and R/serve.R:166:38 (type-narrowing), `proc` bound in the processx arm of `pid = if (is_psx <- ...) {...}` and read only under `if (is_psx && ...)`; dplyr R/summarise.R:342:34 (reassign-scope, the #350 site), `group_sizes` bound in both arms of the `if` ending withCallingHandlers({...}); and tinytex R/install.R:335:31 (type-narrowing), `tmp` bound in the `add` arm of `cmd = if (add) {...}` and read only under `if (add && ret == 0)`. No identity is added and every true positive remains; the tidyverse ledger drops the same dplyr identity.",
+    "S3 dispatcher bindings (#348): a helper registered with registerS3method()/.S3method() inside a top-level evalqOnLoad() block, when it is the name's only global literal, now binds .Generic, .Class, .Method, and .Group like any S3 method. Two reviewed false positives disappear (manual-audit): lubridate R/ops-compare.r:20:64 and :55:14, RY010 on `.Generic` in comp_posix_date, which evalqOnLoad registers as the Date/POSIXt comparison method. No identity is added and every true positive remains."
   ]
 }

@@ -156,6 +156,9 @@ All notable changes to ry are documented in this file.
 - Keep a name assigned inside a `[` subscript bound when the receiver is
   opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
   reports in lme4 and DescTools (#713).
+- Stop typing a callee's formal as the caller's forwarded default when a
+  condition in the caller tests that argument before the call, as in
+  `if (!is.null(save_period)) cb_save(save_period)` (#719).
 
 ## [0.11.0] - 2026-09-22
 

@@ -93,6 +93,50 @@ pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_start: 
     })
 }
 
+/// A condition that reads `source` before the call, as in an enclosing
+/// `if (!is.null(source))`, an early `if (is.null(source)) return()`, or
+/// `!is.null(source) && callee(source)`, may exclude the default from the
+/// call. Source order does not prove the guard dominates the call.
+pub(crate) fn may_guard_source_before(body: &[Stmt], source: &str, call_start: usize) -> bool {
+    let source = semantic_argument_name(source);
+    let walk = Walk {
+        fn_bodies: false,
+        ..Walk::ALL
+    };
+    let reads_source = |condition: &Expr| {
+        span_of(condition).start < call_start
+            && walk_expr(condition, walk, |node, _| match node {
+                AstNode::Expr(Expr::Ident { name, .. })
+                    if semantic_argument_name(name) == source =>
+                {
+                    ControlFlow::Break(())
+                }
+                _ => ControlFlow::Continue(Descend::Into),
+            })
+            .is_break()
+    };
+    body.iter().any(|statement| {
+        walk_stmt(statement, walk, |node, _| {
+            let condition = match node {
+                AstNode::Stmt(Stmt::If { cond, .. } | Stmt::While { cond, .. }) => cond,
+                AstNode::Expr(Expr::If { cond, .. }) => cond.as_ref(),
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::AndAnd | BinOpKind::OrOr,
+                    lhs,
+                    ..
+                }) => lhs.as_ref(),
+                _ => return ControlFlow::Continue(Descend::Into),
+            };
+            if reads_source(condition) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(Descend::Into)
+            }
+        })
+        .is_break()
+    })
+}
+
 impl Checker {
     /// Diagnose the narrow, provable lazy-default ordering bug where a
     /// parameter is used by an earlier top-level statement than the direct

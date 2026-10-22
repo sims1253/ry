@@ -1,0 +1,18 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: a guard around the forwarding call drops the forwarded default
+  diagnostics: []
+- case: a type-predicate guard drops the forwarded default
+  diagnostics: []
+- case: an early-return guard drops the forwarded default
+  diagnostics: []
+- case: a short-circuit guard drops the forwarded default
+  diagnostics: []
+- case: an unguarded forwarding call still forwards the NULL default
+  diagnostics:
+    - code: RY001
+      line: 40
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning

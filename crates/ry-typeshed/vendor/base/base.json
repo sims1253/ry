@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.29",
+  "version": "0.0.30",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -228,7 +228,8 @@
       "anova",
       "str",
       "terms",
-      "quantile"
+      "quantile",
+      "cut"
     ],
     "s3_split_denylist": [
       "t.test",
@@ -22071,6 +22072,59 @@
       "class": "warnings",
       "params": [
         "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "cut",
+      "class": "Date",
+      "params": [
+        "x",
+        "breaks",
+        "labels",
+        "start.on.monday",
+        "right",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "cut",
+      "class": "POSIXt",
+      "params": [
+        "x",
+        "breaks",
+        "labels",
+        "start.on.monday",
+        "right",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "cut",
+      "class": "default",
+      "params": [
+        "x",
+        "breaks",
+        "labels",
+        "include.lowest",
+        "right",
+        "dig.lab",
+        "ordered_result",
         "..."
       ],
       "return": {

@@ -1353,8 +1353,10 @@ impl Checker {
         // `data(name)` loads one or more datasets into the current
         // environment. Bare names and string literals are data identifiers,
         // not reads of existing variables, and become bindings for following
-        // statements. Package/control arguments are not introduced.
-        if semantic_name == "data" {
+        // statements. Package/control arguments are not introduced. A local
+        // `data` (Shiny's `data <- reactive(...)`) or `load` is an ordinary
+        // call instead (#717).
+        if semantic_name == "data" && !self.call_head_bound_locally(semantic_name, scope) {
             scope.mark_search_path_unknown();
             for argument in args {
                 if argument.name.is_some() {
@@ -1374,7 +1376,7 @@ impl Checker {
             return Some(RType::new(Mode::Character, Length::Unknown));
         }
 
-        if semantic_name == "load" {
+        if semantic_name == "load" && !self.call_head_bound_locally(semantic_name, scope) {
             scope.mark_search_path_unknown();
             self.infer_args_for_diagnostics(args, scope);
             if let Some(bindings) = self.load_bindings.get(&span.start).cloned() {

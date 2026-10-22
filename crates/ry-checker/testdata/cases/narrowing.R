@@ -872,3 +872,45 @@ degrees_unguarded <- function(z, flag) {
   if (flag) dof <- "auto"
   dof(length(z))
 }
+
+## case: is.list on a local union with no list member gives the arm an unknown value
+# no-diag
+# The arm is reachable only if ry's inference missed a list, so `$` there
+# cannot be proven to fail (#752).
+pick_list <- function(p) {
+  x <- 2L
+  if (p) x <- "a"
+  if (is.list(x)) x$a
+}
+
+## case: the else arm of a negated is.list gives a local union an unknown value
+# no-diag
+pick_list_else <- function(p) {
+  x <- 2L
+  if (p) x <- "a"
+  if (!is.list(x)) NULL else x$a
+}
+
+## case: is.numeric on a local union with no numeric member gives the arm an unknown value
+# no-diag
+add_numeric <- function(p) {
+  x <- "a"
+  if (p) x <- list(1)
+  if (is.numeric(x)) x + 1
+}
+
+## case: arithmetic inside a dead is.character guard on a numeric local stays quiet
+# no-diag
+dead_character_arith <- function(z) {
+  dof <- length(z)
+  if (is.character(dof)) dof <- dof + 1
+  dof
+}
+
+## case: a local union with no list member and no guard still reports `$`
+# expect: RY061
+pick_unguarded <- function(p) {
+  x <- 2L
+  if (p) x <- "a"
+  x$a
+}

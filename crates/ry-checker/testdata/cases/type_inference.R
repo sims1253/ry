@@ -1344,6 +1344,15 @@ f <- function(i) {
   x[[1]]$a + y[[1]]$a
 }
 
+## case: a positional replacement in a partly named list forgets the elements
+# no-diag
+# `list()` keys only the unnamed element as `[[1]]`, but `x[[1]]` is `a`.
+f <- function() {
+  x <- list(a = 1, list(b = 2))
+  x[[1]] <- list(c = 3)
+  x[[2]]$b + x$a$c
+}
+
 ## case: dollar on a recorded double element still reports RY061
 # expect: RY061
 f <- function() {

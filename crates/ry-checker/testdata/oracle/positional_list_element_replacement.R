@@ -37,3 +37,8 @@ single <- function(i) {
   w[[1]]$a
 }
 stopifnot(identical(single(1), 1))
+
+# In a partly named list, `[[1]]` is the first position, the named `a`.
+m <- list(a = 1, list(b = 2))
+m[[1]] <- list(c = 3)
+stopifnot(identical(m[[2]]$b, 2), identical(m$a$c, 3))

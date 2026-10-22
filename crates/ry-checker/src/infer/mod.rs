@@ -2918,8 +2918,10 @@ impl Checker {
         }
         if matches!(kind, IndexKind::Double) && matches!(base_t.mode, Mode::List) {
             // `x[[N]] <- v` replaces a recorded `[[N]]` element like `$<-`
-            // does. A value that may be NULL could drop the element and
-            // shift the rest, so it takes the computed-index path below.
+            // does. `list()` numbers only unnamed elements, so the key is the
+            // position only when no element is named. A value that may be
+            // NULL could drop the element and shift the rest. Both take the
+            // computed-index path below.
             let key = match args.first().map(|arg| &arg.value) {
                 Some(Expr::Integer(i, _)) => Some(format!("[[{i}]]")),
                 Some(Expr::Double(f, _)) => Some(format!("[[{}]]", *f as i64)),
@@ -2928,10 +2930,10 @@ impl Checker {
             if let Some(key) = key.filter(|key| {
                 !vt.mode.is_unknown()
                     && !matches!(vt.mode, Mode::Null | Mode::Union)
-                    && base_t
-                        .columns
-                        .as_ref()
-                        .is_some_and(|schema| schema.get(key).is_some())
+                    && base_t.columns.as_ref().is_some_and(|schema| {
+                        schema.get(key).is_some()
+                            && schema.names().iter().all(|name| name.starts_with("[["))
+                    })
             }) {
                 scope.insert(
                     base_name.clone(),

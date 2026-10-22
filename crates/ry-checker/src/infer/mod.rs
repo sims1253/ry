@@ -2916,11 +2916,36 @@ impl Checker {
             scope.insert(base_name.clone(), updated);
             return true;
         }
+        if matches!(kind, IndexKind::Double) && matches!(base_t.mode, Mode::List) {
+            // `x[[N]] <- v` replaces a recorded `[[N]]` element like `$<-`
+            // does. A value that may be NULL could drop the element and
+            // shift the rest, so it takes the computed-index path below.
+            let key = match args.first().map(|arg| &arg.value) {
+                Some(Expr::Integer(i, _)) => Some(format!("[[{i}]]")),
+                Some(Expr::Double(f, _)) => Some(format!("[[{}]]", *f as i64)),
+                _ => None,
+            };
+            if let Some(key) = key.filter(|key| {
+                !vt.mode.is_unknown()
+                    && !matches!(vt.mode, Mode::Null | Mode::Union)
+                    && base_t
+                        .columns
+                        .as_ref()
+                        .is_some_and(|schema| schema.get(key).is_some())
+            }) {
+                scope.insert(
+                    base_name.clone(),
+                    type_with_assigned_column(base_t, &key, vt),
+                );
+                return true;
+            }
+        }
         let Some(col) = assigned_column_name(kind, args) else {
             // A dynamic `$`/`[[` write proves that the record may contain
             // additional fields. Preserve known fields but mark the schema
             // incomplete so a later unknown-field read degrades to opaque
-            // instead of emitting RY060.
+            // instead of emitting RY060. A computed `[[` on a plain list may
+            // replace or drop any element, so it forgets the element types.
             if matches!(
                 kind,
                 IndexKind::Dollar | IndexKind::Double | IndexKind::Single
@@ -2931,6 +2956,9 @@ impl Checker {
                     .as_ref()
                     .map(|schema| (**schema).clone())
                     .unwrap_or_default();
+                if matches!(kind, IndexKind::Double) && !base_t.class.contains("data.frame") {
+                    schema.columns.clear();
+                }
                 schema.complete = false;
                 scope.insert(base_name.clone(), base_t.with_columns(Arc::new(schema)));
                 return true;

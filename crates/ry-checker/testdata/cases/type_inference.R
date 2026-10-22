@@ -1306,3 +1306,37 @@ fit <- function(x, grad = NULL) {
 # expect: RY070
 z <- if (runif(1) > 0.5) NULL else 1
 z()
+
+## case: a literal positional replacement replaces the element type
+# no-diag
+# ade4's shape: `list(0)` records a double, then `[[1]] <-` stores a list.
+mk <- function(a) list(dg2 = a, Ng = a)
+f <- function(a) {
+  util <- list(0)
+  util[[1]] <- mk(a)
+  util[[1]]$dg2
+}
+
+## case: a computed positional replacement forgets the element types
+# no-diag
+mk <- function(a) list(dg2 = a, Ng = a)
+f <- function(a, i) {
+  util <- list(0)
+  util[[i]] <- mk(a)
+  util[[1]]$dg2
+}
+
+## case: a positional NULL replacement shifts the later elements
+# no-diag
+f <- function() {
+  x <- list(0, list(f = 1))
+  x[[1]] <- NULL
+  x[[1]]$f
+}
+
+## case: dollar on a recorded double element still reports RY061
+# expect: RY061
+f <- function() {
+  util <- list(0)
+  util[[1]]$dg2
+}

@@ -116,6 +116,9 @@ All notable changes to ry are documented in this file.
   (r-typeshed affe513f) now return a data frame from `read.table` and its
   `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
   double matrix from `gc` (#709).
+- Let a literal positional `x[[1]] <- value` replace the element type a
+  list recorded, and make a computed `x[[i]] <- value` forget the recorded
+  element types, removing RY061 false positives in ade4 (#715).
 
 ## [0.11.0] - 2026-09-22
 

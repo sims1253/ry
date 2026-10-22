@@ -117,6 +117,9 @@ All notable changes to ry are documented in this file.
   arm now sees an unknown value (#752).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
+- Report a serialized workspace the parser stops reading early, such as an
+  `R/sysdata.rda` that holds an external pointer, as a degraded scope instead
+  of a complete inventory (#714).
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
 - Stop checking a closure's free variables against its defining frame once

@@ -1306,3 +1306,19 @@ fit <- function(x, grad = NULL) {
 # expect: RY070
 z <- if (runif(1) > 0.5) NULL else 1
 z()
+
+## case: a value formal does not hide a package S4 generic of its name
+# no-diag
+# R's call lookup skips the logical `res` and finds the generic.
+setGeneric("res", function(x) standardGeneric("res"))
+setMethod("res", "numeric", function(x) x)
+compare <- function(x, res = FALSE) {
+  r <- res(x)
+  if (res) r else NULL
+}
+check_all <- function(x) compare(x)
+
+## case: a value formal with no function of its name is still not callable
+# expect: RY070
+compare <- function(x, widen = FALSE) widen(x)
+check_all <- function(x) compare(x)

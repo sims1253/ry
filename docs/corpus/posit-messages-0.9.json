@@ -1746,15 +1746,6 @@
       "severity": "error",
       "message": "could not find function `path` (bound here as `NULL`)"
     },
-    "pkgdown::RY091::R/topics.R:271:16": {
-      "package": "pkgdown",
-      "code": "RY091",
-      "path": "R/topics.R",
-      "line": 271,
-      "column": 16,
-      "severity": "warning",
-      "message": "missing required argument `call` in call to `error_call`"
-    },
     "pkgdown::RY105::R/render.R:219:7": {
       "package": "pkgdown",
       "code": "RY105",
@@ -3327,24 +3318,6 @@
       "path": "tests/testthat/test-ignite.R",
       "line": 266,
       "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-save.R:415:30": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-save.R",
-      "line": 415,
-      "column": 30,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-save.R:416:30": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-save.R",
-      "line": 416,
-      "column": 30,
       "severity": "error",
       "message": "$ operator is invalid for atomic vectors of mode `double`"
     },

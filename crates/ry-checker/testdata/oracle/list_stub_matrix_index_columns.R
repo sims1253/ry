@@ -1,14 +1,14 @@
 # oracle: must-pass
-# The base stubs type merge(), read.csv() and gc() as class-less lists,
-# but R returns data frames and a double matrix, so matrix indexing
-# yields columns that take arithmetic (#709). A plain list without
-# `dim` rejects `x[i, j]` outright, so ry keeps such a result opaque
-# instead of reporting list arithmetic.
+# merge() and read.csv() return data frames and gc() a double matrix,
+# so matrix indexing yields columns that take arithmetic (#709). The
+# vendored base stubs type these returns as a data frame, an opaque
+# value, and a double matrix; they used to claim class-less lists.
 a <- data.frame(k = 1:3, x = c(1, 2, 3))
 b <- data.frame(k = 1:3, y = c(4, 5, 6))
 m <- merge(a, b, by = 1)
 stopifnot(identical(class(m), "data.frame"))
 stopifnot(identical(m[, 1] - 1, c(0, 1, 2)))
+stopifnot(is.data.frame(merge(a, a)[1] + 1))
 
 r <- read.csv(text = "x,y\n1,2\n3,4")
 stopifnot(identical(class(r), "data.frame"))

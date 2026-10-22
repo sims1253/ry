@@ -26,15 +26,17 @@ expression: rows
   diagnostics: []
 - case: a gc() matrix column takes arithmetic
   diagnostics: []
+- case: a one-index merge() subset takes arithmetic
+  diagnostics: []
 - case: a one-index subset of a plain list stays a list
   diagnostics:
     - code: RY040
-      line: 94
+      line: 99
       message: "cannot apply arithmetic op to `list` and `double`"
       severity: error
 - case: "a data frame's character column still rejects arithmetic"
   diagnostics:
     - code: RY040
-      line: 101
+      line: 106
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error

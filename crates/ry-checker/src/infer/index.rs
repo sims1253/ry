@@ -369,19 +369,6 @@ impl Checker {
                 {
                     return result;
                 }
-                // A list without `dim` rejects `x[i, j]` ("incorrect number
-                // of dimensions"), so a list receiver indexed this way is a
-                // list matrix or a list-mode stub return that is really a
-                // data frame or matrix (`merge()`, `read.csv()`, `gc()`;
-                // #709). ry tracks neither dims nor that class, so the
-                // result is unknown rather than the receiver's list type.
-                let positional = args
-                    .iter()
-                    .filter(|arg| !matches!(arg.name.as_deref(), Some("drop" | "exact")))
-                    .count();
-                if bt.mode == Mode::List && positional >= 2 {
-                    return RType::unknown();
-                }
                 if bt.mode.is_unknown_or_non_vector() {
                     RType::unknown()
                 } else {

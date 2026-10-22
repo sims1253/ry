@@ -320,3 +320,21 @@ expression: rows
       line: 284
       message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
       severity: error
+- case: an assignment in a subscript of an opaque receiver binds in the frame
+  diagnostics: []
+- case: an assignment in a two-subscript index binds in the frame
+  diagnostics: []
+- case: an assignment in a matrix subscript binds at top level
+  diagnostics: []
+- case: a proven data.table keeps a subscript assignment in its own frame
+  diagnostics:
+    - code: RY010
+      line: 312
+      message: "variable `k` is not bound in this scope"
+      severity: warning
+- case: a closure inside a subscript does not bind its locals in the frame
+  diagnostics:
+    - code: RY010
+      line: 318
+      message: "variable `hidden` is not bound in this scope"
+      severity: warning

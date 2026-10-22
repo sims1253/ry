@@ -283,3 +283,37 @@ g <- function(x) {
   res <- list(nvalid = length(x), nvx = 1, total = sum(x))
   res$total / res$nv
 }
+
+## case: an assignment in a subscript of an opaque receiver binds in the frame
+# no-diag
+# lme4's mlist2vec: base `[` evaluates its subscripts in the calling frame.
+ff <- function(x) {
+  if (all(x[iu <- upper.tri(x)] == 0)) t(x[!iu]) else t(x)[!iu]
+}
+
+## case: an assignment in a two-subscript index binds in the frame
+# no-diag
+# DescTools' PlotBag: the second call argument reads `h`.
+loop_points <- function(five) {
+  segments(five[h <- c(1, 5), 1], five[h, 2])
+}
+
+## case: an assignment in a matrix subscript binds at top level
+# no-diag
+m <- matrix(1:4, 2)
+z <- m[j <- 1, 2]
+print(j)
+
+## case: a proven data.table keeps a subscript assignment in its own frame
+# expect: RY010
+# `[.data.table` evaluates `i` and `j` in its own environment.
+dt <- structure(list(a = 1), class = c("data.table", "data.frame"))
+dt[k <- 1]
+print(k)
+
+## case: a closure inside a subscript does not bind its locals in the frame
+# expect: RY010
+f <- function(x) {
+  x[vapply(x, function(v) hidden <- v, numeric(1))]
+  hidden
+}

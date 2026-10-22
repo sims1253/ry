@@ -127,6 +127,9 @@ All notable changes to ry are documented in this file.
   double matrix from `gc` (#709).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Keep a name assigned inside a `[` subscript bound when the receiver is
+  opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
+  reports in lme4 and DescTools (#713).
 
 ## [0.11.0] - 2026-09-22
 

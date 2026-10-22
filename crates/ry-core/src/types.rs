@@ -382,6 +382,17 @@ impl ColumnSchema {
             .map(|(_, t)| t.clone())
     }
 
+    /// The one column whose name starts with `name`: R's `$` on a plain
+    /// list falls back to this partial match after an exact miss. `None`
+    /// when no column or several match.
+    pub fn unique_prefix_match(&self, name: &str) -> Option<RType> {
+        let mut hits = self.columns.iter().filter(|(n, _)| n.starts_with(name));
+        match (hits.next(), hits.next()) {
+            (Some((_, t)), None) => Some(t.clone()),
+            _ => None,
+        }
+    }
+
     /// All column names in declared order. Used for diagnostic messages.
     pub fn names(&self) -> Vec<&str> {
         self.columns.iter().map(|(n, _)| n.as_str()).collect()

@@ -312,3 +312,11 @@ expression: rows
       line: 268
       message: "variable `value` is not bound in this scope"
       severity: warning
+- case: "`$` on a local list partially matches a unique prefix"
+  diagnostics: []
+- case: "`$` with an ambiguous prefix is NULL"
+  diagnostics:
+    - code: RY040
+      line: 284
+      message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
+      severity: error

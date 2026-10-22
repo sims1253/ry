@@ -1108,7 +1108,9 @@ impl Checker {
             }
         }
         if named_binding && let Some(name) = function_name {
-            insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
+            if self.runs_as_s3_method(name, &self.path, span) {
+                insert_s3_dispatch_context(&mut fn_scope);
+            }
             // RY108 inspects the definition's own shape (formal defaults
             // vs. `missing()` guards), not the walked body's types, so it
             // runs before the parameter defaults are inserted below.

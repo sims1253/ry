@@ -531,6 +531,45 @@ impl Checker {
                 })
     }
 
+    /// Whether R's dispatcher runs the literal bound to `name` at `span` as an
+    /// S3 method, giving it [`crate::infer::insert_s3_dispatch_context`]. Its
+    /// name is `generic.class` for a base, operator, or NAMESPACE-registered
+    /// generic, or a top-level `evalqOnLoad()` registration names `name`,
+    /// whose only binding is this global literal (#348). The proof ignores
+    /// writes no name summarizes (`do.call()`, `eval()`), which lubridate
+    /// makes elsewhere.
+    pub(crate) fn runs_as_s3_method(&self, name: &str, path: &str, span: Span) -> bool {
+        let name = semantic_argument_name(name);
+        let method_of = |generic: &str| {
+            name.strip_prefix(generic)
+                .and_then(|rest| rest.strip_prefix('.'))
+                .filter(|class| !class.is_empty())
+        };
+        let table = &self.fn_table;
+        let key = (path.to_string(), span.start, span.end);
+        split_s3_method_name(name, &self.typeshed.globals).is_some()
+            || semantic_lists::OPERATORS
+                .iter()
+                .chain(&["!", "&", "|", "%*%", "[", "[[", "$", "[<-", "[[<-", "$<-"])
+                .any(|generic| method_of(generic).is_some())
+            || self
+                .external_s3_methods
+                .iter()
+                .any(|(generic, class)| method_of(generic) == Some(class))
+            || (table.registered_s3_methods.contains(name)
+                && !["registerS3method", ".S3method", "evalqOnLoad"]
+                    .iter()
+                    .any(|function| table.known_vars.contains(*function))
+                && table.functions.has_single_definition(name)
+                && !table.unrecorded_global_literals.contains(name)
+                // `` `hel\x70er` `` may rebind `helper` unseen.
+                && !table.has_escaped_binding_names
+                && table
+                    .capture_literal_bindings
+                    .get(name)
+                    .is_some_and(|literals| literals.len() == 1 && literals.contains(&key)))
+    }
+
     pub(crate) fn user_s3_dispatch_return(&self, generic: &str, first: &RType) -> Option<RType> {
         for class in first
             .class

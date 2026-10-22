@@ -52,7 +52,7 @@
     {
       "name": "lubridate",
       "commit": "8e9f2b289ee8384d9499e2527fb1e449c97e5370",
-      "diagnostics": 5
+      "diagnostics": 3
     },
     {
       "name": "haven",
@@ -677,24 +677,6 @@
     },
     {
       "package": "lubridate",
-      "code": "RY010",
-      "path": "R/ops-compare.r",
-      "line": 20,
-      "column": 64,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/ops-compare.r",
-      "line": 55,
-      "column": 14,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "lubridate",
       "code": "RY109",
       "path": "R/parse.r",
       "line": 975,
@@ -886,7 +868,7 @@
   "classification": {
     "true_positive": 37,
     "false_positive": 29,
-    "unowned": 18
+    "unowned": 16
   },
   "audit_group_counts": {
     "upstream-ggplot2": 4,
@@ -898,7 +880,7 @@
     "P8": 0,
     "P7b": 3,
     "upstream-glue": 1,
-    "plan-32-33": 18,
+    "plan-32-33": 16,
     "pr195-nse-stubs": 6,
     "ifelse-mode": 2,
     "ry109-self-defaults": 10,
@@ -935,8 +917,9 @@
     "RY033 limited to ordering comparisons (#699): `==`/`!=` between a character value and a non-character value compare the formatted strings, so RY033 now fires only for `<`, `>`, `<=`, `>=`. One reviewed false positive disappears: duckplyr R/fallback.R:75:21 (P8, `Sys.getenv(\"DUCKPLYR_FALLBACK_INFO\") == TRUE`). No identity is added; every true positive remains.",
     "RY040 literal NULL beside a dispatchable operand (#707): a literal NULL arithmetic operand now reports only when the other operand is NULL or a known atomic without a class attribute. The two identities removed are both P7a false positives: ggplot2 tests/testthat/test-geom-curve.R:17:8, a ggplot(df) + geom_curve(...) chain ending in `+ NULL` (line 46) that ggplot2's S7 `+` methods (R/plot-construction.R:66-74) accept, and glue tests/testthat/test-glue.R:595:20, as_glue(\"hello\") + NULL, which dispatches to +.glue (R/glue.R:387) and is expected to return character(). No identity is added; every true positive remains, and the P7a group stays at zero.",
     "Block-frame closures shadow base stubs (#718): a `name <- function(...)` bound inside an R6Class() member list, a local() block or a testthat block is now a lexical callable, as in a plain function body. Three reviewed false positives disappear, all dplyr P4a (the #350 sites): R/data-mask.R:112:7, R/data-mask.R:117:7 and R/data-mask.R:131:7, RY091 `eval()` missing `expr` where the R6 method calls its own local `eval` closure. No identity is added and every true positive remains; the Posit ledger drops the same three identities (function-shadowing).",
-    "If-arm bindings merge wherever the if sits (#694): an `if` used as a value and an `if` ending a `{}` block or braced call argument now merge their arm bindings into the enclosing frame like a statement `if`. One reviewed false positive disappears: dplyr R/summarise.R:342:34 (P4c, the #350 site), RY010 on `group_sizes`, which both arms of the `if` ending withCallingHandlers({...}) bind. No identity is added and every true positive remains; the Posit ledger drops the same identity plus three blogdown and tinytex false positives."
+    "If-arm bindings merge wherever the if sits (#694): an `if` used as a value and an `if` ending a `{}` block or braced call argument now merge their arm bindings into the enclosing frame like a statement `if`. One reviewed false positive disappears: dplyr R/summarise.R:342:34 (P4c, the #350 site), RY010 on `group_sizes`, which both arms of the `if` ending withCallingHandlers({...}) bind. No identity is added and every true positive remains; the Posit ledger drops the same identity plus three blogdown and tinytex false positives.",
+    "S3 dispatcher bindings (#348): a helper registered with registerS3method()/.S3method() inside a top-level evalqOnLoad() block, when it is the name's only global literal, now binds .Generic, .Class, .Method, and .Group like any S3 method. Two unowned identities disappear (plan-32-33): lubridate R/ops-compare.r:20:64 and :55:14, RY010 on `.Generic` in comp_posix_date, which evalqOnLoad registers as the Date/POSIXt comparison method (getS3method(\"<\", \"Date\") resolves to it). No identity is added and every true positive remains."
   ],
-  "ry_commit": "3beab2047bfc13b85a15236b548a03f4e107f532",
-  "source_sha256": "4d09e983c5f5dd5c116ecb365fcffbdb297646f8c4f13f2c59e06e2ae62018db"
+  "ry_commit": "6dd0b48adf87ec26b9355a96a769d9a3225f542a",
+  "source_sha256": "db9ac6173f4eddd75bdfe3d5654db586ef54228719de5bce70ce1fc8c1c9047c"
 }

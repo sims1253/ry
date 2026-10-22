@@ -3294,51 +3294,6 @@
       "severity": "error",
       "message": "$ operator is invalid for atomic vectors of mode `double`"
     },
-    "torch::RY061::tests/testthat/test-ignite.R:196:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 196,
-      "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-ignite.R:248:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 248,
-      "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-ignite.R:251:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 251,
-      "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-ignite.R:265:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 265,
-      "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-ignite.R:266:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 266,
-      "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
     "torch::RY111::R/nnf-activation.R:384:45": {
       "package": "torch",
       "code": "RY111",

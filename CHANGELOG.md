@@ -119,6 +119,9 @@ All notable changes to ry are documented in this file.
   removing RY010 false positives in cli, pak, and rlang.
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
+- Stop checking a closure's free variables against its defining frame once
+  `environment(f) <- rho` re-homes it, removing false RY070 reports on
+  lme4's `mkTheta <- NULL` R CMD check placeholders (#716).
 - Check files with long flat `else if` chains instead of skipping them at
   the 128-level syntax nesting limit. Up to 1024 `else if` arms may nest,
   counting chains inside chains; lavaan's `lav_object_inspect.R` is now

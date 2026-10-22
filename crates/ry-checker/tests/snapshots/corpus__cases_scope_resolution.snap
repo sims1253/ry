@@ -302,3 +302,29 @@ expression: rows
       line: 651
       message: "variable `hidden` is not bound in this scope"
       severity: warning
+- case: an opaque parameter call head is not the same-named stats function
+  diagnostics: []
+- case: an opaque local call head is not the same-named base function
+  diagnostics: []
+- case: a NULL-or-function local call head is not the same-named base function
+  diagnostics: []
+- case: a function-valued local call head is not the same-named base function
+  diagnostics:
+    - code: RY061
+      line: 687
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: a closure capturing a definite callable is not the same-named base function
+  diagnostics: []
+- case: a write that may escape an unproven block keeps the base function
+  diagnostics:
+    - code: RY091
+      line: 717
+      message: "missing required argument `x` in call to `nchar`"
+      severity: warning
+- case: a known non-function local still calls the base function
+  diagnostics:
+    - code: RY061
+      line: 724
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error

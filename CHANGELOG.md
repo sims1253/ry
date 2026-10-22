@@ -127,6 +127,9 @@ All notable changes to ry are documented in this file.
   double matrix from `gc` (#709).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
+  as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
+  S3 generic, so ry dispatches to `cut.dendrogram` (#711).
 
 ## [0.11.0] - 2026-09-22
 

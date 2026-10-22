@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "a628914f4fe8abe8a9f6036049b6e743b586b686e771f6ce1e04b91cbac03346",
-  "ry_commit": "146e0b36ba38da31ec6baca07edd4f82f52dac0b",
+  "source_sha256": "5765afb32a7d56e645cfd3599c4fa5971ec1a5bde8861e6cee3b52d4127b3f7c",
+  "ry_commit": "a33877383c710c4c90f31af0c475c10080e514e1",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -103,21 +103,21 @@
       "repo": "r-lib/httr",
       "stars": 980,
       "commit": "34b956569ebaa20cd955150fad765cd834f38be4",
-      "diagnostics": 3
+      "diagnostics": 2
     },
     {
       "name": "sparklyr",
       "repo": "sparklyr/sparklyr",
       "stars": 972,
       "commit": "7f006a6d5c01a4e7a36d203d1ace56c53261900e",
-      "diagnostics": 9
+      "diagnostics": 8
     },
     {
       "name": "testthat",
       "repo": "r-lib/testthat",
       "stars": 938,
       "commit": "9b6f12b9f50c297b4b5f485f728a2a19305770eb",
-      "diagnostics": 2
+      "diagnostics": 1
     },
     {
       "name": "usethis",
@@ -236,7 +236,7 @@
       "repo": "mlverse/torch",
       "stars": 567,
       "commit": "c67c2fb2909fc77e8fc127ec2867e1a551ee1bf3",
-      "diagnostics": 14
+      "diagnostics": 9
     },
     {
       "name": "bigrquery",
@@ -1702,15 +1702,6 @@
       "column": 18,
       "label": "true_positive",
       "audit_group": "ifelse-mode"
-    },
-    {
-      "package": "httr",
-      "code": "RY070",
-      "path": "R/callback.R",
-      "line": 100,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
     },
     {
       "package": "httr",
@@ -3226,15 +3217,6 @@
     },
     {
       "package": "sparklyr",
-      "code": "RY001",
-      "path": "R/config.R",
-      "line": 375,
-      "column": 9,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "sparklyr",
       "code": "RY032",
       "path": "R/connection.R",
       "line": 273,
@@ -3358,15 +3340,6 @@
       "column": 6,
       "label": "false_positive",
       "audit_group": "manual-audit"
-    },
-    {
-      "package": "testthat",
-      "code": "RY001",
-      "path": "R/parallel-taskq.R",
-      "line": 205,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
     },
     {
       "package": "testthat",
@@ -3518,51 +3491,6 @@
       "path": "R/wrapers.R",
       "line": 179,
       "column": 15,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 196,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 248,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 251,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 265,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 266,
-      "column": 16,
       "label": "false_positive",
       "audit_group": "type-narrowing"
     },
@@ -3847,12 +3775,12 @@
     }
   ],
   "classification": {
-    "false_positive": 290,
-    "true_positive": 88
+    "false_positive": 283,
+    "true_positive": 87
   },
   "audit_group_counts": {
     "reassign-scope": 2,
-    "type-narrowing": 32,
+    "type-narrowing": 25,
     "manual-audit": 138,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 1,
@@ -3860,7 +3788,7 @@
     "s3-method-dispatch": 1,
     "delayed-assign": 1,
     "function-shadowing": 0,
-    "upstream-package": 25,
+    "upstream-package": 24,
     "ifelse-mode": 3,
     "numeric-if-idiom": 3,
     "namespace-on-load": 46,
@@ -3909,6 +3837,7 @@
     "RY040 literal NULL beside a dispatchable operand (#707): a literal NULL arithmetic operand now reports only when the other operand is NULL or a known atomic without a class attribute. The two identities removed are both s3-method-dispatch false positives: ggplot2 tests/testthat/test-geom-curve.R:17:8, a ggplot(df) + geom_curve(...) chain ending in `+ NULL` (line 46) that ggplot2's S7 `+` methods (R/plot-construction.R:66-74) accept, and glue tests/testthat/test-glue.R:595:20, as_glue(\"hello\") + NULL, which dispatches to +.glue (R/glue.R:387) and is expected to return character(). No identity is added; every true positive remains.",
     "Block-frame closures shadow base stubs (#718): a `name <- function(...)` bound inside an R6Class() member list, a local() block or a testthat block is now a lexical callable, as in a plain function body. Three reviewed false positives disappear, all dplyr function-shadowing (the #350 sites): R/data-mask.R:112:7, R/data-mask.R:117:7 and R/data-mask.R:131:7, RY091 `eval()` missing `expr` where the R6 method calls its own local `eval` closure. No identity is added and every true positive remains; the tidyverse ledger drops the same three identities (P4a).",
     "If-arm bindings merge wherever the if sits (#694): an `if` used as a value and an `if` ending a `{}` block or braced call argument now merge their arm bindings into the enclosing frame like a statement `if`, so later reads no longer report RY010. Four reviewed false positives disappear: blogdown R/serve.R:164:22 (reassign-scope) and R/serve.R:166:38 (type-narrowing), `proc` bound in the processx arm of `pid = if (is_psx <- ...) {...}` and read only under `if (is_psx && ...)`; dplyr R/summarise.R:342:34 (reassign-scope, the #350 site), `group_sizes` bound in both arms of the `if` ending withCallingHandlers({...}); and tinytex R/install.R:335:31 (type-narrowing), `tmp` bound in the `add` arm of `cmd = if (add) {...}` and read only under `if (add && ret == 0)`. No identity is added and every true positive remains; the tidyverse ledger drops the same dplyr identity.",
-    "An opaque call head is not the same-named stub (#722): a parameter or unknown call result bound to a call head's name may be a function, and R's call lookup stops at it, so ry no longer applies the base/stats signature or return type there. Two reviewed false positives disappear: torch tests/testthat/test-save.R:415:30 and :416:30 (type-narrowing), `d$x` and `d$y` on `d <- dt()` where `dt <- dataset(...)` was typed as `stats::dt`. One reviewed true positive is dropped: pkgdown R/topics.R:271:16 RY091 (upstream-package), which read the default `error_call = error_call()` as rlang's error_call() missing `call`. R never reaches rlang::error_call there: the call head resolves to the formal itself, and forcing it errors with 'promise already under evaluation'. The real bug stays reported by RY109 at the same location, which this ledger keeps as a true positive. No identity is added; the tidyverse ledger is unchanged."
+    "An opaque call head is not the same-named stub (#722): a parameter or unknown call result bound to a call head's name may be a function, and R's call lookup stops at it, so ry no longer applies the base/stats signature or return type there. Two reviewed false positives disappear: torch tests/testthat/test-save.R:415:30 and :416:30 (type-narrowing), `d$x` and `d$y` on `d <- dt()` where `dt <- dataset(...)` was typed as `stats::dt`. One reviewed true positive is dropped: pkgdown R/topics.R:271:16 RY091 (upstream-package), which read the default `error_call = error_call()` as rlang's error_call() missing `call`. R never reaches rlang::error_call there: the call head resolves to the formal itself, and forcing it errors with 'promise already under evaluation'. The real bug stays reported by RY109 at the same location, which this ledger keeps as a true positive. No identity is added; the tidyverse ledger is unchanged.",
+    "A `$`/`[[` miss on a partly known list is unknown (#689): a `$` name missing from a list whose names ry only partly knows (`list(...)`, an `lapply()` result, fields written to an opaque value or environment) is no longer NULL, and a `[[` miss on such a schema no longer takes the recorded fields' common type. Seven reviewed false positives disappear, all type-narrowing: httr R/callback.R:100:5 (RY070, `callback_env[[name]]` typed as the seeded `callback_env$request <- NULL`), testthat R/parallel-taskq.R:205:13 (RY001, `private$tasks$idle[i]` after `$<-` writes to other fields of the opaque `private$tasks`), and torch tests/testthat/test-ignite.R:196:16, :248:16, :251:16, :265:16 and :266:16 (RY061, `o$param_groups[[1]]$...` where `$<-` writes had recorded one field of the opaque optimizer). One reviewed true positive is dropped: sparklyr R/config.R:375:9 (RY001, upstream-package), `additional_configs$method %in% ...` with `additional_configs <- list(...)`. ry claimed `$method` is NULL only because it treated the fields of `list(...)` as known; the package's own caller (R/connection.R:264) always passes `method = method`, and only a direct call to the exported spark_config_packages() with rapids and no `method` reaches the empty condition. No identity is added; the tidyverse ledger is unchanged."
   ]
 }

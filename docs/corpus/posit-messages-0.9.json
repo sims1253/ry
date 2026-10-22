@@ -1395,15 +1395,6 @@
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
-    "httr::RY070::R/callback.R:100:5": {
-      "package": "httr",
-      "code": "RY070",
-      "path": "R/callback.R",
-      "line": 100,
-      "column": 5,
-      "severity": "error",
-      "message": "could not find function `callback` (bound here as `NULL`)"
-    },
     "httr::RY109::R/config.r:189:34": {
       "package": "httr",
       "code": "RY109",
@@ -2970,15 +2961,6 @@
       "severity": "warning",
       "message": "argument `autoDestroy = TRUE` to `observe` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `autoDestroy` value is silently ignored; forward it as `autoDestroy = autoDestroy` instead"
     },
-    "sparklyr::RY001::R/config.R:375:9": {
-      "package": "sparklyr",
-      "code": "RY001",
-      "path": "R/config.R",
-      "line": 375,
-      "column": 9,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
     "sparklyr::RY001::R/ml_utils.R:181:13": {
       "package": "sparklyr",
       "code": "RY001",
@@ -3122,15 +3104,6 @@
       "column": 1,
       "severity": "error",
       "message": "syntax error: unparseable region (recovered tree may be unreliable)"
-    },
-    "testthat::RY001::R/parallel-taskq.R:205:13": {
-      "package": "testthat",
-      "code": "RY001",
-      "path": "R/parallel-taskq.R",
-      "line": 205,
-      "column": 13,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "tidyr::RY010::R/chop.R:386:27": {
       "package": "tidyr",
@@ -3291,51 +3264,6 @@
       "path": "R/wrapers.R",
       "line": 179,
       "column": 15,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-ignite.R:196:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 196,
-      "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-ignite.R:248:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 248,
-      "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-ignite.R:251:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 251,
-      "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-ignite.R:265:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 265,
-      "column": 16,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::tests/testthat/test-ignite.R:266:16": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "tests/testthat/test-ignite.R",
-      "line": 266,
-      "column": 16,
       "severity": "error",
       "message": "$ operator is invalid for atomic vectors of mode `double`"
     },

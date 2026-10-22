@@ -937,6 +937,6 @@
     "Block-frame closures shadow base stubs (#718): a `name <- function(...)` bound inside an R6Class() member list, a local() block or a testthat block is now a lexical callable, as in a plain function body. Three reviewed false positives disappear, all dplyr P4a (the #350 sites): R/data-mask.R:112:7, R/data-mask.R:117:7 and R/data-mask.R:131:7, RY091 `eval()` missing `expr` where the R6 method calls its own local `eval` closure. No identity is added and every true positive remains; the Posit ledger drops the same three identities (function-shadowing).",
     "If-arm bindings merge wherever the if sits (#694): an `if` used as a value and an `if` ending a `{}` block or braced call argument now merge their arm bindings into the enclosing frame like a statement `if`. One reviewed false positive disappears: dplyr R/summarise.R:342:34 (P4c, the #350 site), RY010 on `group_sizes`, which both arms of the `if` ending withCallingHandlers({...}) bind. No identity is added and every true positive remains; the Posit ledger drops the same identity plus three blogdown and tinytex false positives."
   ],
-  "ry_commit": "3beab2047bfc13b85a15236b548a03f4e107f532",
-  "source_sha256": "4d09e983c5f5dd5c116ecb365fcffbdb297646f8c4f13f2c59e06e2ae62018db"
+  "ry_commit": "a33877383c710c4c90f31af0c475c10080e514e1",
+  "source_sha256": "d0939c3345d289f415f58c921ee11ccea3915507ba72273d295af9e7e111f205"
 }

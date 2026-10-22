@@ -423,6 +423,13 @@ impl Checker {
             },
         );
         self.collect_capture_writes(stmts);
+        let mut registered = FxSet::default();
+        s3_registrations(stmts, &mut registered);
+        if !registered.is_empty() {
+            Arc::make_mut(&mut self.fn_table)
+                .registered_s3_methods
+                .extend(registered);
+        }
         if function_outward_writes(&[], stmts).opaque {
             Arc::make_mut(&mut self.fn_table).unproven_top_level = true;
         }
@@ -493,17 +500,21 @@ impl Checker {
         for (name, spans) in literal_names {
             for span in spans {
                 let key = (self.path.clone(), span.start, span.end);
-                if global_literals.contains(&span)
-                    && table
-                        .functions
-                        .get(&FunctionId::new(&self.path, span))
-                        .is_some()
+                if !global_literals.contains(&span) {
+                    continue;
+                }
+                if table
+                    .functions
+                    .get(&FunctionId::new(&self.path, span))
+                    .is_some()
                 {
                     table
                         .capture_literal_bindings
                         .entry(name.clone())
                         .or_default()
                         .insert(key);
+                } else {
+                    table.unrecorded_global_literals.insert(name.clone());
                 }
             }
         }
@@ -931,7 +942,9 @@ impl Checker {
         }
         // The function's own name stays unbound here, so recursive calls
         // resolve through the function table and read its return slot.
-        insert_s3_dispatch_context(name, &mut scope, &self.typeshed.globals);
+        if self.runs_as_s3_method(name, &function.source_path, function.definition_span) {
+            insert_s3_dispatch_context(&mut scope);
+        }
 
         // Keep deferred expressions (notably `on.exit(expr)`) in the same
         // exit-time lexical context during fixpoint inference as during the
@@ -1606,6 +1619,93 @@ fn string_literal(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::String(value, _) => Some(value),
         _ => None,
+    }
+}
+
+/// Names a top-level `evalqOnLoad()` block registers with
+/// `registerS3method(generic, class, name)` or
+/// `.S3method(generic, class, name)` (#348). R runs the block in the
+/// namespace after sourcing every file, so `name` then has its final
+/// global binding. Only calls the block always runs count: directly, in
+/// braces, or in a `for` over nonempty string literals without `break` or
+/// `next`. Calls under `if`, `local()`, `quote()`, or a function body, and
+/// plain top-level calls, which may run before the definition, prove
+/// nothing.
+fn s3_registrations(stmts: &[Stmt], names: &mut FxSet<String>) {
+    for stmt in stmts {
+        if let Stmt::Expr(Expr::Call { func, args, .. }) = stmt
+            && matches!(func.as_ref(), Expr::Ident { name, .. } if name == "evalqOnLoad")
+            // A `where` argument evaluates the block in another environment.
+            && let [block] = args.as_slice()
+            && block.name.is_none()
+        {
+            expr_s3_registrations(&block.value, names);
+        }
+    }
+}
+
+fn block_s3_registrations(stmts: &[Stmt], names: &mut FxSet<String>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Expr(expr) => expr_s3_registrations(expr, names),
+            Stmt::For {
+                name, iter, body, ..
+            } if nonempty_strings(iter) && !exits_loop_early(body) => {
+                let mut registered = FxSet::default();
+                block_s3_registrations(body, &mut registered);
+                // Inside the loop, its variable names a string.
+                registered.remove(semantic_argument_name(name));
+                names.extend(registered);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn expr_s3_registrations(expr: &Expr, names: &mut FxSet<String>) {
+    match expr {
+        Expr::Block { body, .. } => block_s3_registrations(body, names),
+        Expr::Call { func, args, .. }
+            if matches!(
+                func.as_ref(),
+                Expr::Ident { name, .. } if name == "registerS3method" || name == ".S3method"
+            ) =>
+        {
+            if let [generic, class, method, ..] = args.as_slice()
+                && [generic, class, method]
+                    .iter()
+                    .all(|arg| arg.name.is_none())
+                && let Expr::Ident { name, .. } = &method.value
+                && let Some(name) = identifier_name(name)
+            {
+                names.insert(name.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether a loop body contains `break` or `next` anywhere.
+fn exits_loop_early(body: &[Stmt]) -> bool {
+    walk_stmts(body, Walk::ALL, |node, _| match node {
+        AstNode::Expr(Expr::Ident { name, .. }) if name == "break" || name == "next" => {
+            ControlFlow::Break(())
+        }
+        _ => ControlFlow::Continue(Descend::Into),
+    })
+    .is_break()
+}
+
+/// `"a"` or `c("a", ...)`: a `for` over it runs its body at least once.
+fn nonempty_strings(expr: &Expr) -> bool {
+    match expr {
+        Expr::String(..) => true,
+        Expr::Call { func, args, .. } => {
+            matches!(func.as_ref(), Expr::Ident { name, .. } if name == "c")
+                && !args.is_empty()
+                && args.iter().all(|arg| string_literal(&arg.value).is_some())
+        }
+        _ => false,
     }
 }
 

@@ -1162,6 +1162,13 @@ pub(crate) struct FnTable {
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
     pub(crate) s3_methods: FxMap<(String, String), usize>,
+    // Names an unconditional top-level `registerS3method()`/`.S3method()`
+    // registers as S3 methods, whatever their spelling (#348).
+    pub(crate) registered_s3_methods: FxSet<String>,
+    // Names a global-frame literal binds where the definition collector
+    // does not record it (braces, `local()`, expression position), so
+    // `capture_literal_bindings` misses that definition.
+    pub(crate) unrecorded_global_literals: FxSet<String>,
     // Names of all top-level variable assignments across all files in
     // the project. Used to suppress RY010 for cross-file references:
     // when an identifier is not in the current scope but IS in this
@@ -1279,6 +1286,10 @@ impl FnTable {
                 .iter()
                 .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
         );
+        self.registered_s3_methods
+            .extend(collected.registered_s3_methods.iter().cloned());
+        self.unrecorded_global_literals
+            .extend(collected.unrecorded_global_literals.iter().cloned());
         self.known_vars.extend(collected.known_vars.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());

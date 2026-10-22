@@ -123,6 +123,11 @@ All notable changes to ry are documented in this file.
   double matrix from `gc` (#709).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Bind `.Generic`, `.Class`, `.Method`, and `.Group` in S3 methods named for
+  a known or NAMESPACE-registered generic, and in a helper that
+  `registerS3method()` or `.S3method()` registers in a top-level
+  `evalqOnLoad()` block, removing RY010 false positives such as lubridate's
+  `comp_posix_date` (#348).
 
 ## [0.11.0] - 2026-09-22
 

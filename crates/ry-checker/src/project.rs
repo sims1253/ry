@@ -127,6 +127,10 @@ pub(crate) struct CollectedFile {
 struct TableSnapshot {
     /// Non-function bindings across files (RY010).
     known_vars: HashSet<String>,
+    /// Another file's registration, or literal binding, changes whether a
+    /// method gets its dispatch bindings.
+    registered_s3_methods: FxSet<String>,
+    unrecorded_global_literals: FxSet<String>,
     /// A write-only edit can change which captured declaration is provable.
     capture_rebounds: FxSet<(String, usize, usize)>,
     /// Another file's top-level effects can remove a deferred call's
@@ -146,6 +150,8 @@ impl TableSnapshot {
     fn of(table: &FnTable) -> Self {
         Self {
             known_vars: table.known_vars.clone(),
+            registered_s3_methods: table.registered_s3_methods.clone(),
+            unrecorded_global_literals: table.unrecorded_global_literals.clone(),
             capture_rebounds: table.rebound_after_capture.clone(),
             unproven_top_level: table.unproven_top_level,
             callable_vars: table.callable_vars.clone(),
@@ -590,6 +596,8 @@ impl Project {
             || prev.escaped_operator_names != self.fn_table.has_escaped_operator_names
             || prev.escaped_slot_names != self.fn_table.has_escaped_slot_names
             || prev.may_install_bindings != self.fn_table.may_install_bindings
+            // A registration changes another file's method frame.
+            || prev.registered_s3_methods != self.fn_table.registered_s3_methods
         {
             return None;
         }
@@ -599,6 +607,19 @@ impl Project {
         // Functions defined in dirty files, plus definitions removed or
         // renamed by those edits, seed the affected set.
         let mut affected = self.invalidated_fns.clone();
+        // Any file's write can withdraw a registered method's dispatch
+        // bindings (#348).
+        affected.extend(
+            self.fn_table
+                .functions
+                .names()
+                .filter(|name| {
+                    self.fn_table
+                        .registered_s3_methods
+                        .contains(crate::infer::semantic_argument_name(name))
+                })
+                .cloned(),
+        );
         for dirty_path in &self.dirty_paths {
             if let Some(collected) = self.collected_files.get(dirty_path) {
                 affected.extend(collected.fn_table.functions.names().cloned());
@@ -1093,6 +1114,45 @@ mod tests {
         for (order, expected) in [("\"y\", \"x\"", false), ("\"x\", \"y\"", true)] {
             project.update_file("generic.R".into(), generic(order).into());
             assert_eq!(flagged(&assert_matches_cold(&mut project)), expected);
+        }
+    }
+
+    #[test]
+    fn another_files_s3_registration_gives_dispatch_bindings() {
+        let mut project = Project::new();
+        project.add_file(
+            "method.R".into(),
+            parse_file("method.R", "compare <- function(e1, e2) .Generic\n"),
+        );
+        let registration = "evalqOnLoad(registerS3method(\"<\", \"widget\", compare))\n";
+        project.add_file("zzz.R".into(), parse_file("zzz.R", registration));
+        project.add_file("other.R".into(), parse_file("other.R", "x <- 1\n"));
+        let flagged = |diagnostics: &[(String, Vec<Diagnostic>)]| {
+            diagnostics
+                .iter()
+                .any(|(path, found)| path == "method.R" && found.iter().any(|d| d.code == "RY010"))
+        };
+        assert!(!flagged(&project.check()));
+        // Editing the registration, or rebinding `compare` in a third file,
+        // withdraws the bindings; undoing the edit restores them.
+        for (path, source, expected) in [
+            (
+                "zzz.R",
+                "evalqOnLoad(if (FALSE) registerS3method(\"<\", \"widget\", compare))\n",
+                true,
+            ),
+            ("zzz.R", registration, false),
+            ("other.R", "compare <- 2\n", true),
+            ("other.R", "x <- 1\n", false),
+            ("other.R", "{\n  compare <- function(e1, e2) e1\n}\n", true),
+            ("other.R", "x <- 1\n", false),
+        ] {
+            project.update_file(path.into(), parse_file(path, source).into());
+            assert_eq!(
+                flagged(&assert_matches_cold(&mut project)),
+                expected,
+                "{path}: {source}"
+            );
         }
     }
 

@@ -1,8 +1,1319 @@
 {
   "schema_version": "2",
   "package": "future",
-  "version": "0.0.1",
+  "version": "0.0.2",
+  "datasets": {
+    "FUTURE": {
+      "mode": "character",
+      "length": "1",
+      "na": false
+    }
+  },
   "functions": {
-    "%<-%": {"params": ["x", "value"], "eval": {"x": "quoted_expression"}, "return": {"mode": "opaque", "length": "unknown", "na": false}}
+    "%->%": {
+      "params": [
+        {
+          "name": "value",
+          "required": true
+        },
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "eval": {
+        "value": "quoted_expression",
+        "x": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%<-%": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "eval": {
+        "x": "quoted_expression",
+        "value": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "%conditions%": {
+      "params": [
+        {
+          "name": "fassignment",
+          "required": true
+        },
+        {
+          "name": "capture",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%globals%": {
+      "params": [
+        {
+          "name": "fassignment",
+          "required": true
+        },
+        {
+          "name": "globals",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%label%": {
+      "params": [
+        {
+          "name": "fassignment",
+          "required": true
+        },
+        {
+          "name": "label",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%lazy%": {
+      "params": [
+        {
+          "name": "fassignment",
+          "required": true
+        },
+        {
+          "name": "lazy",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%packages%": {
+      "params": [
+        {
+          "name": "fassignment",
+          "required": true
+        },
+        {
+          "name": "packages",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%plan%": {
+      "params": [
+        {
+          "name": "fassignment",
+          "required": true
+        },
+        {
+          "name": "strategy",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%seed%": {
+      "params": [
+        {
+          "name": "fassignment",
+          "required": true
+        },
+        {
+          "name": "seed",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%stdout%": {
+      "params": [
+        {
+          "name": "fassignment",
+          "required": true
+        },
+        {
+          "name": "capture",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%tweak%": {
+      "params": [
+        {
+          "name": "fassignment",
+          "required": true
+        },
+        {
+          "name": "tweaks",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ClusterFutureBackend": {
+      "params": [
+        "workers",
+        "gc",
+        "earlySignal",
+        "interrupts",
+        "persistent",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ConnectionMisuseFutureCondition": {
+      "params": [
+        "message",
+        "call",
+        "...",
+        "differences",
+        "uuid",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ConnectionMisuseFutureError": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ConnectionMisuseFutureWarning": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "DefaultDeviceMisuseFutureCondition": {
+      "params": [
+        "message",
+        "call",
+        "...",
+        "incidents",
+        "uuid",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "DefaultDeviceMisuseFutureError": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "DefaultDeviceMisuseFutureWarning": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "DeviceMisuseFutureCondition": {
+      "params": [
+        "message",
+        "call",
+        "...",
+        "differences",
+        "uuid",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "DeviceMisuseFutureError": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "DeviceMisuseFutureWarning": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Future": {
+      "params": [
+        "expr",
+        "envir",
+        "substitute",
+        "stdout",
+        "conditions",
+        "globals",
+        "packages",
+        "seed",
+        "lazy",
+        "label",
+        "..."
+      ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureBackend": {
+      "params": [
+        "...",
+        "earlySignal",
+        "gc",
+        "maxSizeOfObjects",
+        "interrupts",
+        "hooks"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureCanceledError": {
+      "params": [
+        "...",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureCondition": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        "call",
+        "by",
+        "when",
+        "uuid",
+        "label",
+        "future",
+        "drop"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureDroppedError": {
+      "params": [
+        "...",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureError": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        "call",
+        "...",
+        "uuid",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureGlobals": {
+      "params": [
+        "object",
+        "resolved",
+        "total_size",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureInterruptError": {
+      "params": [
+        "message",
+        "when",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureJournalCondition": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        {
+          "name": "journal",
+          "required": true
+        },
+        "call",
+        "uuid",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureLaunchError": {
+      "params": [
+        "...",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureMessage": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        "call",
+        "...",
+        "uuid",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureResult": {
+      "params": [
+        "value",
+        "visible",
+        "stdout",
+        "conditions",
+        "rng",
+        "...",
+        "uuid",
+        "started",
+        "finished",
+        "version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "FutureWarning": {
+      "params": [
+        {
+          "name": "message",
+          "required": true
+        },
+        "call",
+        "...",
+        "uuid",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "GlobalEnvMisuseFutureCondition": {
+      "params": [
+        "message",
+        "call",
+        "...",
+        "differences",
+        "uuid",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "GlobalEnvMisuseFutureError": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "GlobalEnvMisuseFutureWarning": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "MulticoreFutureBackend": {
+      "params": [
+        "workers",
+        "maxSizeOfObjects",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "MultiprocessFuture": {
+      "params": [
+        "expr",
+        "substitute",
+        "envir",
+        "..."
+      ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "MultiprocessFutureBackend": {
+      "params": [
+        "...",
+        "wait.timeout",
+        "wait.interval",
+        "wait.alpha"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "MultisessionFutureBackend": {
+      "params": [
+        "workers",
+        "rscript_libs",
+        "interrupts",
+        "gc",
+        "earlySignal",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "RngFutureCondition": {
+      "params": [
+        "message",
+        "call",
+        "...",
+        "uuid",
+        "future"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "RngFutureError": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "RngFutureWarning": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "SequentialFutureBackend": {
+      "params": [
+        "...",
+        "maxSizeOfObjects"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "UnexpectedFutureResultError": {
+      "params": [
+        {
+          "name": "future",
+          "required": true
+        },
+        "hint"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "UniprocessFuture": {
+      "params": [
+        "expr",
+        "substitute",
+        "envir",
+        "..."
+      ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.FutureGlobals": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "availableCores": {
+      "params": [
+        "constraints",
+        "methods",
+        "na.rm",
+        "logical",
+        "default",
+        "which",
+        "fraction",
+        "omit",
+        "max"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "availableWorkers": {
+      "params": [
+        "constraints",
+        "methods",
+        "na.rm",
+        "logical",
+        "default",
+        "which",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "backtrace": {
+      "params": [
+        {
+          "name": "future",
+          "required": true
+        },
+        "envir",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cancel": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "interrupt",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cluster": {
+      "params": [
+        "...",
+        "workers",
+        "persistent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "future": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "envir",
+        "substitute",
+        "lazy",
+        "seed",
+        "globals",
+        "packages",
+        "stdout",
+        "conditions",
+        "label",
+        "..."
+      ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "futureAssign": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        },
+        "envir",
+        "substitute",
+        "lazy",
+        "seed",
+        "globals",
+        "packages",
+        "stdout",
+        "conditions",
+        "label",
+        "...",
+        "assign.env"
+      ],
+      "eval": {
+        "value": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "futureCall": {
+      "params": [
+        {
+          "name": "FUN",
+          "required": true
+        },
+        "args",
+        "envir",
+        "lazy",
+        "seed",
+        "globals",
+        "packages",
+        "stdout",
+        "conditions",
+        "label",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "futureOf": {
+      "params": [
+        "var",
+        "envir",
+        "mustExist",
+        "default",
+        "drop"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "futureSessionInfo": {
+      "params": [
+        "test",
+        "anonymize"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "futures": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "getExpression": {
+      "params": [
+        {
+          "name": "future",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "getGlobalsAndPackages": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "envir",
+        "tweak",
+        "globals",
+        "locals",
+        "resolve",
+        "persistent",
+        "maxSize",
+        "onReference",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "interruptFuture": {
+      "params": [
+        {
+          "name": "backend",
+          "required": true
+        },
+        {
+          "name": "future",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "launchFuture": {
+      "params": [
+        {
+          "name": "backend",
+          "required": true
+        },
+        {
+          "name": "future",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "listFutures": {
+      "params": [
+        {
+          "name": "backend",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeClusterFuture": {
+      "params": [
+        "specs",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeClusterPSOCK": {
+      "params": [
+        {
+          "name": "workers",
+          "required": true
+        },
+        "makeNode",
+        "port",
+        "user",
+        "...",
+        "autoStop",
+        "tries",
+        "delay",
+        "validate",
+        "verbose"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mandelbrot": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mandelbrot_tiles": {
+      "params": [
+        "xmid",
+        "ymid",
+        "side",
+        "nrow",
+        "ncol",
+        "resolution",
+        "truncate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "minifuture": {
+      "params": [
+        {
+          "name": "expr",
+          "required": true
+        },
+        "substitute",
+        "globals",
+        "packages",
+        "stdout",
+        "conditions",
+        "seed",
+        "...",
+        "envir"
+      ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "multicore": {
+      "params": [
+        "...",
+        "workers"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "multisession": {
+      "params": [
+        "...",
+        "workers",
+        "rscript_libs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nbrOfFreeWorkers": {
+      "params": [
+        "evaluator",
+        "background",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nbrOfWorkers": {
+      "params": [
+        "evaluator"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "plan": {
+      "params": [
+        "strategy",
+        "...",
+        "substitute",
+        ".skip",
+        ".call",
+        ".cleanup",
+        ".init"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reset": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "resetWorkers": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "resolve": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "idxs",
+        "recursive",
+        "result",
+        "stdout",
+        "signal",
+        "force",
+        "sleep",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "resolved": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "result": {
+      "params": [
+        {
+          "name": "future",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "run": {
+      "params": [
+        {
+          "name": "future",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sequential": {
+      "params": [
+        "...",
+        "envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sessionDetails": {
+      "params": [
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stopWorkers": {
+      "params": [
+        {
+          "name": "backend",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "supportsMulticore": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "tweak": {
+      "params": [
+        {
+          "name": "strategy",
+          "required": true
+        },
+        "...",
+        "penvir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "validateFutureGlobals": {
+      "params": [
+        {
+          "name": "backend",
+          "required": true
+        },
+        {
+          "name": "future",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "value": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
   }
 }

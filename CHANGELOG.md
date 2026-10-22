@@ -140,6 +140,9 @@ All notable changes to ry are documented in this file.
 - Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
   as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
   S3 generic, so ry dispatches to `cut.dendrogram` (#711).
+- Keep a name assigned inside a `[` subscript bound when the receiver is
+  opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
+  reports in lme4 and DescTools (#713).
 
 ## [0.11.0] - 2026-09-22
 

@@ -317,3 +317,24 @@ make_plain <- function() {
   devfun <- function(par) mkTheta(par)
   devfun(3)
 }
+
+## case: environment replacement reaches literals bound in if and else branches
+# no-diag
+make_branch_assign <- function(rho, linear) {
+  mkTheta <- NULL
+  if (linear) ff <- function(par) mkTheta(par) else ff <- function(pars) mkTheta(pars[1])
+  environment(ff) <- rho
+  ff
+}
+
+## case: environment replacement after a rebind leaves the earlier closure checked
+# expect: RY070
+# Only the second literal is re-homed; the first runs in the NULL frame.
+make_rebind <- function(rho) {
+  mkTheta <- NULL
+  ff <- function(par) mkTheta(par)
+  ff(1)
+  ff <- function(par) par
+  environment(ff) <- rho
+  ff
+}

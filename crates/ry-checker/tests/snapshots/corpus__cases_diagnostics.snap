@@ -330,3 +330,11 @@ expression: rows
       line: 317
       message: "could not find function `mkTheta` (bound here as `NULL`)"
       severity: error
+- case: environment replacement reaches literals bound in if and else branches
+  diagnostics: []
+- case: environment replacement after a rebind leaves the earlier closure checked
+  diagnostics:
+    - code: RY070
+      line: 335
+      message: "could not find function `mkTheta` (bound here as `NULL`)"
+      severity: error

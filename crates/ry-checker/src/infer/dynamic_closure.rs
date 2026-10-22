@@ -159,6 +159,9 @@ fn scope_placeholder_spans(stmts: &[Stmt], out: &mut DynamicClosures) {
     let mut current: FxMap<String, Span> = FxMap::default();
     // Every literal the current value of each name may evaluate to.
     let mut values: FxMap<String, Vec<Span>> = FxMap::default();
+    // `if` statements seen so far: an assignment inside one may not run,
+    // so it adds to a name's possible literals instead of replacing them.
+    let mut conditionals: Vec<Span> = Vec::new();
     let _ = walk_stmts(
         stmts,
         Walk {
@@ -176,7 +179,13 @@ fn scope_placeholder_spans(stmts: &[Stmt], out: &mut DynamicClosures) {
         },
         |node, _: usize| -> ControlFlow<(), Descend> {
             match node {
-                AstNode::Stmt(Stmt::Assign { target, value, .. }) => {
+                AstNode::Stmt(Stmt::If { span, .. }) => conditionals.push(*span),
+                AstNode::Stmt(Stmt::Assign {
+                    target,
+                    value,
+                    span: assign_span,
+                    ..
+                }) => {
                     if let Expr::Call { func, args, .. } = target
                         && let Some(accessor) = ident_name(func)
                         && let Some(argument) = args.first()
@@ -212,7 +221,14 @@ fn scope_placeholder_spans(stmts: &[Stmt], out: &mut DynamicClosures) {
                         } else {
                             current.remove(name);
                         }
-                        values.insert(name.to_string(), value_function_literals(value));
+                        let literals = value_function_literals(value);
+                        if conditionals.iter().any(|branch| {
+                            branch.start <= assign_span.start && assign_span.end <= branch.end
+                        }) {
+                            values.entry(name.to_string()).or_default().extend(literals);
+                        } else {
+                            values.insert(name.to_string(), literals);
+                        }
                     }
                 }
                 // local({...}) runs its block in a fresh environment: a

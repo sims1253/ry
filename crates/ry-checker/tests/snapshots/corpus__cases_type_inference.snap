@@ -868,15 +868,11 @@ expression: rows
       line: 1308
       message: "could not find function `z` (bound here as `union`)"
       severity: error
-- case: a literal positional replacement replaces the element type
+- case: a value formal does not hide a package S4 generic of its name
   diagnostics: []
-- case: a computed positional replacement forgets the element types
-  diagnostics: []
-- case: a positional NULL replacement shifts the later elements
-  diagnostics: []
-- case: dollar on a recorded double element still reports RY061
+- case: a value formal with no function of its name is still not callable
   diagnostics:
-    - code: RY061
-      line: 1341
-      message: "$ operator is invalid for atomic vectors of mode `double`"
+    - code: RY070
+      line: 1323
+      message: "could not find function `widen` (bound here as `logical`)"
       severity: error

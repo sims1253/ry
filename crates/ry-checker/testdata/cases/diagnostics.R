@@ -266,3 +266,20 @@ hasArg(top_level)
 gettextf("select %s then %s", "first")
 sprintf("value=%s %%", "ok")
 sprintf(dynamic_format, value)
+
+## case: `$` on a local list partially matches a unique prefix
+# no-diag
+# R's `$` on a list returns the one field a name prefixes, so `res$nv`
+# is `res$nvalid`, not NULL (#721, DescTools' Desc.R).
+f <- function(x) {
+  res <- list(nvalid = length(x), total = sum(x))
+  res$total / res$nv
+}
+
+## case: `$` with an ambiguous prefix is NULL
+# expect: RY040
+# Two fields share the prefix, so R's `$` returns NULL.
+g <- function(x) {
+  res <- list(nvalid = length(x), nvx = 1, total = sum(x))
+  res$total / res$nv
+}

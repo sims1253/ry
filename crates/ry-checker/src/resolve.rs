@@ -331,6 +331,7 @@ impl Checker {
         self.has_external_function(name)
             || self.fn_table.functions.binds(name)
             || self.fn_table.callable_vars.contains(name)
+            || self.fn_table.functions.s4().may_bind_generic(name)
     }
 
     /// Function candidates outside the current project's execution frame.

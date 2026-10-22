@@ -553,6 +553,10 @@ fn apply_single_narrowing_branch<'a>(
             // class targets and incompatible parameter defaults
             // do install.
             if let Some(existing) = scope.get(var).cloned() {
+                if disjoint_function_guard(scope, var, &existing, target) {
+                    scope.insert_narrowed(var.clone(), RType::unknown());
+                    return Some(var.as_str());
+                }
                 let class_narrowing = target.class.has_known_class();
                 let incompatible_parameter_default =
                     scope.is_default_parameter(var) && !types_intersect(&existing, target);
@@ -691,10 +695,27 @@ fn apply_single_narrowing_branch<'a>(
     None
 }
 
+/// A passing function guard on a binding ry typed with no function member,
+/// other than a default parameter (which installs the function). Either the
+/// branch is dead or a caller passed what ry's type misses. Calling the value
+/// cannot fail there, but a function type would make dead branches report
+/// arithmetic on it, so the branch sees an unknown value instead (#741).
+fn disjoint_function_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
+    target.mode == Mode::Function
+        && !existing.mode.is_unknown_or_non_vector()
+        && existing.mode != Mode::Null
+        && !scope.is_default_parameter(var)
+        && !types_intersect(existing, target)
+}
+
 fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> bool {
     let Some(existing) = scope.get(var).cloned() else {
         return false;
     };
+    if disjoint_function_guard(scope, var, &existing, target) {
+        scope.insert_narrowed(var.to_string(), RType::unknown());
+        return true;
+    }
     let class_narrowing = target.class.has_known_class();
     let incompatible_parameter_default =
         scope.is_default_parameter(var) && !types_intersect(&existing, target);

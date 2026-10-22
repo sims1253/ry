@@ -514,6 +514,11 @@ pub struct Scope {
     /// Exact source identity for a directly bound nested function. A name
     /// alone cannot select among same-spelled functions in different frames.
     pub(crate) lexical_definitions: PersistentMap<String, Span>,
+    /// Names a block whose evaluating verb is unproven (`local()`,
+    /// `test_that()`) may have written into this frame. Such a binding is
+    /// only possible, so a call head of that name keeps its stub (#722).
+    /// Monotone: a stale entry only restores the stub fallback.
+    pub(crate) possible_block_writes: FxSet<String>,
     pub data_mask_unknown: bool,
     pub(crate) data_mask: Option<Arc<DataMaskFrame>>,
     pub(crate) tidy_injection: Option<InjectionMode>,

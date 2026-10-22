@@ -107,15 +107,26 @@ All notable changes to ry are documented in this file.
   where R finds base before attached packages. The `switch` EXPR check now
   reports a NULL selector inside such packages, as it already did in
   scripts (#568).
+- Stop RY070 from reporting a call guarded by `is.function(x)` when ry
+  inferred no function type for `x` (#741).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
+- Treat a call head bound to an opaque or function-valued local or
+  parameter as that callable instead of the same-named base function, so
+  `dt()` on a `dt` argument no longer takes `stats::dt`'s arity or return
+  type (#722).
+- Follow R's partial matching for `$` on a plain list: a unique prefix such
+  as `res$nv` reads the `nvalid` field instead of NULL, removing a false
+  RY040 (#721).
 - Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
   results such as `merge(a, b)[, 1] - 1`. The vendored base stubs
   (r-typeshed affe513f) now return a data frame from `read.table` and its
   `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
   double matrix from `gc` (#709).
+- Stop RY070 from reporting a call to a package S4 generic whose name a
+  value formal shares, such as `res()` next to `res = FALSE` (#712).
 - Check files with thousands of top-level functions in linear time. torch's
   generated `RcppExports.R` took 22 s alone and now takes under 2 s (#697).
 

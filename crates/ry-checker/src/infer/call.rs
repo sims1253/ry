@@ -641,7 +641,8 @@ impl Checker {
                     scope.invalidate_data_mask_env();
                 }
                 for name in delta.changed.into_keys() {
-                    scope.insert(name, RType::unknown());
+                    scope.insert(name.clone(), RType::unknown());
+                    scope.possible_block_writes.insert(name);
                 }
                 return Some(RType::unknown());
             }
@@ -742,7 +743,8 @@ impl Checker {
                     scope.invalidate_data_mask_env();
                 }
                 for changed in delta.changed.into_keys() {
-                    scope.insert(changed, RType::unknown());
+                    scope.insert(changed.clone(), RType::unknown());
+                    scope.possible_block_writes.insert(changed);
                 }
                 return Some(RType::unknown());
             }
@@ -1877,6 +1879,11 @@ impl Checker {
         }
         if let Some(result) = self.callable_function_union(t, args, arg_types) {
             return Some(result);
+        }
+        if head.opaque_callable && head.user_function().is_none() {
+            // A binding that may be a function stops R's call lookup, so
+            // no same-named stub applies (#722).
+            return Some(RType::unknown());
         }
         if !t.mode.is_unknown() {
             // R's function/value namespace separation: when a name is

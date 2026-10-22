@@ -668,6 +668,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bindings_count_each_escaped_name_once() {
+        let mut bindings = Bindings::default();
+        bindings.insert(r"a\b".to_string(), RType::unknown());
+        // Overwriting an escaped name must not count it twice.
+        bindings.insert(r"a\b".to_string(), RType::unknown());
+        bindings.insert("plain".to_string(), RType::unknown());
+        assert!(bindings.has_escaped_names());
+        assert!(bindings.remove(r"a\b").is_some());
+        assert!(!bindings.has_escaped_names());
+        assert!(bindings.remove(r"a\b").is_none());
+        bindings.insert(r"c\d".to_string(), RType::unknown());
+        assert!(bindings.has_escaped_names());
+        bindings.clear();
+        assert!(!bindings.has_escaped_names());
+    }
+
+    #[test]
     fn assignment_undo_restores_interleaved_metadata_and_skips_only_full_noops() {
         let mut scope = Scope::default();
         let integer = RType::new(Mode::Integer, Length::One);

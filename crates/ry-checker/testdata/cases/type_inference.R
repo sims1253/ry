@@ -1334,6 +1334,16 @@ f <- function() {
   x[[1]]$f
 }
 
+## case: a single-bracket positional replacement forgets the element types
+# no-diag
+f <- function(i) {
+  x <- list(0)
+  x[1] <- list(list(a = 1))
+  y <- list(0)
+  y[i] <- list(list(a = 1))
+  x[[1]]$a + y[[1]]$a
+}
+
 ## case: dollar on a recorded double element still reports RY061
 # expect: RY061
 f <- function() {

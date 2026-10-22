@@ -2944,8 +2944,9 @@ impl Checker {
             // A dynamic `$`/`[[` write proves that the record may contain
             // additional fields. Preserve known fields but mark the schema
             // incomplete so a later unknown-field read degrades to opaque
-            // instead of emitting RY060. A computed `[[` on a plain list may
-            // replace or drop any element, so it forgets the element types.
+            // instead of emitting RY060. A positional `[[` or `[` write on a
+            // plain list may replace or drop any element, so it forgets the
+            // element types.
             if matches!(
                 kind,
                 IndexKind::Dollar | IndexKind::Double | IndexKind::Single
@@ -2956,7 +2957,9 @@ impl Checker {
                     .as_ref()
                     .map(|schema| (**schema).clone())
                     .unwrap_or_default();
-                if matches!(kind, IndexKind::Double) && !base_t.class.contains("data.frame") {
+                if matches!(kind, IndexKind::Double | IndexKind::Single)
+                    && !base_t.class.contains("data.frame")
+                {
                     schema.columns.clear();
                 }
                 schema.complete = false;

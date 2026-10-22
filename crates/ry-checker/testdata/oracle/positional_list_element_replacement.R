@@ -26,3 +26,14 @@ y <- list(0, list(f = 1))
 y[[1]] <- NULL
 stopifnot(identical(y[[1]]$f, 1))
 
+
+# `x[1] <- list(v)` replaces the first element too.
+z <- list(0)
+z[1] <- list(list(a = 1))
+stopifnot(identical(z[[1]]$a, 1))
+single <- function(i) {
+  w <- list(0)
+  w[i] <- list(list(a = 1))
+  w[[1]]$a
+}
+stopifnot(identical(single(1), 1))

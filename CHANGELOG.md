@@ -116,6 +116,10 @@ All notable changes to ry are documented in this file.
 - Stop checking a closure's free variables against its defining frame once
   `environment(f) <- rho` re-homes it, removing false RY070 reports on
   lme4's `mkTheta <- NULL` R CMD check placeholders (#716).
+- Treat a call head bound to an opaque or function-valued local or
+  parameter as that callable instead of the same-named base function, so
+  `dt()` on a `dt` argument no longer takes `stats::dt`'s arity or return
+  type (#722).
 - Follow R's partial matching for `$` on a plain list: a unique prefix such
   as `res$nv` reads the `nvalid` field instead of NULL, removing a false
   RY040 (#721).
@@ -124,6 +128,8 @@ All notable changes to ry are documented in this file.
   (r-typeshed affe513f) now return a data frame from `read.table` and its
   `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
   double matrix from `gc` (#709).
+- Stop RY070 from reporting a call to a package S4 generic whose name a
+  value formal shares, such as `res()` next to `res = FALSE` (#712).
 
 ## [0.11.0] - 2026-09-22
 

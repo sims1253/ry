@@ -1619,8 +1619,21 @@ impl Checker {
         // Equal inferred function types do not prove equal lexical targets.
         // Drop an adopted declaration identity if any reaching branch may
         // bind the name to a different definition, even when its RType is
-        // unchanged and the ordinary type merge skips that binding.
-        let lexical_names: Vec<_> = scope.lexical_definitions.keys().cloned().collect();
+        // unchanged and the ordinary type merge skips that binding. A name
+        // neither arm changed agrees, so only the deltas are visited: the
+        // enclosing frames' definitions can number in the thousands (#697).
+        let lexical_names: Vec<_> = then_delta
+            .changed
+            .keys()
+            .chain(
+                else_delta
+                    .changed
+                    .keys()
+                    .filter(|name| !then_delta.changed.contains_key(*name)),
+            )
+            .filter(|name| scope.lexical_definitions.contains_key(*name))
+            .cloned()
+            .collect();
         for name in lexical_names {
             let original = scope.lexical_definition(&name);
             let then_agrees =

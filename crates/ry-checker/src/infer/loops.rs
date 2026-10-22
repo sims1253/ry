@@ -17,16 +17,15 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
         *paths = Some(Box::new(incoming.clone()));
         return;
     };
-    for (name, ty) in &mut joined.bindings {
+    for (name, ty) in joined.bindings.iter_mut() {
         *ty = incoming
             .get(name)
             .map_or_else(RType::unknown, |other| ty.clone().join(other.clone()));
     }
     for name in incoming.bindings.keys() {
-        joined
-            .bindings
-            .entry(name.clone())
-            .or_insert_with(RType::unknown);
+        if !joined.bindings.contains_key(name) {
+            joined.bindings.insert(name.clone(), RType::unknown());
+        }
     }
     joined
         .list_origin_bindings

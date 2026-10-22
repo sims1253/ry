@@ -116,6 +116,8 @@ All notable changes to ry are documented in this file.
   (r-typeshed affe513f) now return a data frame from `read.table` and its
   `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
   double matrix from `gc` (#709).
+- Check files with thousands of top-level functions in linear time. torch's
+  generated `RcppExports.R` took 22 s alone and now takes under 2 s (#697).
 
 ## [0.11.0] - 2026-09-22
 

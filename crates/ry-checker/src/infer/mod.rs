@@ -2703,26 +2703,41 @@ impl Checker {
         value: RType,
         scope: &mut Scope,
     ) -> bool {
-        fn path(expr: &Expr, fields: &mut Vec<String>) -> Option<String> {
+        // Each step is the field it names, or `None` for one ry does not
+        // model (`[[i]]`, `[[1]]`, `[i]`).
+        fn path(expr: &Expr, steps: &mut Vec<Option<String>>) -> Option<String> {
             match expr {
                 Expr::Ident { name, .. } => Some(name.clone()),
                 Expr::Index {
                     base, kind, args, ..
                 } => {
-                    let root = path(base, fields)?;
-                    if matches!(kind, IndexKind::Dollar | IndexKind::Double) {
-                        if let Some(field) = assigned_column_name(*kind, args) {
-                            fields.push(field.to_string());
-                        }
-                    }
+                    let root = path(base, steps)?;
+                    steps.push(assigned_column_name(*kind, args).map(str::to_string));
                     Some(root)
                 }
                 _ => None,
             }
         }
-        fn write(base: RType, fields: &[String], value: RType) -> RType {
-            let Some((field, rest)) = fields.split_first() else {
+        fn write(base: RType, steps: &[Option<String>], value: RType) -> RType {
+            let Some((step, rest)) = steps.split_first() else {
                 return value;
+            };
+            let Some(field) = step else {
+                // An unmodelled step may replace any element of `base`, so
+                // `base` forgets its element types rather than letting the
+                // write land on a field the path never named (#708).
+                if !matches!(base.mode, Mode::List | Mode::Null) {
+                    return RType::unknown();
+                }
+                let mut schema = match &base.columns {
+                    Some(schema) if base.class.contains("data.frame") => (**schema).clone(),
+                    _ => ColumnSchema::default(),
+                };
+                schema.complete = false;
+                let mut base = base.with_columns(Arc::new(schema));
+                base.mode = Mode::List;
+                base.length = Length::Unknown;
+                return base;
             };
             if rest.is_empty() {
                 return type_with_assigned_column(base, field, value);
@@ -2743,17 +2758,18 @@ impl Checker {
             type_with_assigned_column(base, field, child)
         }
 
-        let mut fields = Vec::new();
-        let Some(root) = path(target, &mut fields) else {
+        let mut steps = Vec::new();
+        let Some(root) = path(target, &mut steps) else {
             return false;
         };
-        if fields.len() < 2 {
+        // `x[...] <- v` and `x$f[...] <- v` belong to `assign_index_target`.
+        if steps.len() < 2 || matches!(steps.as_slice(), [Some(_), None]) {
             return false;
         }
         let Some(root_type) = scope.get(&root).cloned() else {
             return false;
         };
-        scope.insert(root, write(root_type, &fields, value));
+        scope.insert(root, write(root_type, &steps, value));
         true
     }
 

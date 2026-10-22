@@ -127,6 +127,10 @@ All notable changes to ry are documented in this file.
   double matrix from `gc` (#709).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Keep every step of a nested replacement such as `x$f[[i]]$g <- v`: an
+  index step ry does not model makes `x$f` forget its element types instead
+  of recording `x$f$g`, removing RY061 false positives in torch, forecast,
+  openxlsx, and rgl (#708).
 
 ## [0.11.0] - 2026-09-22
 

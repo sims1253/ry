@@ -2807,7 +2807,9 @@ impl Checker {
             return false;
         };
         // `x[...] <- v` and `x$f[...] <- v` belong to `assign_index_target`.
-        if steps.len() < 2 || matches!(steps.as_slice(), [Some(_), None]) {
+        // A path starting with an unmodelled step (`x[[i]]$f <- v`) keeps the
+        // read-side fallback, which checks the inner getters.
+        if !matches!(steps.as_slice(), [Some(_), Some(_)] | [Some(_), _, _, ..]) {
             return false;
         }
         let Some(root_type) = scope.get(&root).cloned() else {

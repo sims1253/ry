@@ -31,3 +31,18 @@ k <- function() {
   x$a$b <- 1
   x$a$b$c
 }
+
+## case: a nested replacement through an atomic element still reports RY061
+# expect: RY061
+# R evaluates the inner getter `*tmp*`$f on the double `e[1]` and errors.
+f <- function() {
+  e <- c(1, 2)
+  e[1]$f$g <- 2
+}
+
+## case: a nested replacement through a data frame column still reports RY061
+# expect: RY061
+g <- function() {
+  df <- data.frame(a = 1)
+  df[[1]]$f <- 2
+}

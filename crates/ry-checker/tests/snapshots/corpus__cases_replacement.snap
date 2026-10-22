@@ -12,3 +12,15 @@ expression: rows
       line: 32
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
+- case: a nested replacement through an atomic element still reports RY061
+  diagnostics:
+    - code: RY061
+      line: 40
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a nested replacement through a data frame column still reports RY061
+  diagnostics:
+    - code: RY061
+      line: 47
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error

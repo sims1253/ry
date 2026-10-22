@@ -17,6 +17,11 @@ u <- function(flag) {
   nchar <- if (flag) NULL else function() list(x = 1)
   nchar()$x
 }
+make_nchar <- function() function() "n"
+k <- function() {
+  nchar <- make_nchar()
+  nchar()
+}
 m <- function() {
   c <- 1
   c(2, 3)
@@ -26,4 +31,5 @@ stopifnot(identical(f(function() list(x = 1)), 1))
 stopifnot(identical(g(make), 1))
 stopifnot(identical(h(make), 1))
 stopifnot(identical(u(FALSE), 1))
+stopifnot(identical(k(), "n"))
 stopifnot(identical(m(), c(2, 3)))

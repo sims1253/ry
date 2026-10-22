@@ -31,6 +31,8 @@ pub(super) struct CallHead {
     pub(super) declaration_function: Option<UserFn>,
     pub(super) unforced_args: Vec<bool>,
     pub(super) lexical_binding: Option<RType>,
+    /// The lexical binding may be a function and hides a same-named stub.
+    pub(super) opaque_callable: bool,
     pub(super) function_evidence: CallHeadFunctionEvidence,
     pub(super) generic_receiver: Option<usize>,
     check_project_arguments: bool,
@@ -181,15 +183,22 @@ impl Checker {
             .flatten();
         let function_evidence = self.call_head_function_evidence(name, scope);
         // R's call lookup stops at the first binding that may be a function,
-        // so an opaque local, or a union with a closure member (#700), hides
-        // a same-named stub (#722). Project functions keep their own proof.
-        let may_be_function = lexical_binding.as_ref().is_some_and(|binding| {
-            binding.mode.is_unknown()
+        // so a function or opaque value, or a union with a closure member
+        // (#700), hides a same-named stub when this frame certainly binds it:
+        // a parameter, or a name no enclosing frame may supply (#722). An
+        // inherited name may be only a possible binding, such as a write
+        // escaping a `local()`/`test_that()` block whose verb is unproven, so
+        // it keeps the stub. Project functions keep their own proof.
+        let opaque_callable = lexical_binding.as_ref().is_some_and(|binding| {
+            (binding.mode == Mode::Function
+                || binding.mode.is_unknown()
                 || binding.members.as_ref().is_some_and(|members| {
                     members.iter().any(|member| member.mode == Mode::Function)
-                })
+                }))
+                && (scope.is_parameter(lookup_name)
+                    || !scope.has_possible_outward_function(lookup_name))
         });
-        let (target, metadata) = match (function, lexical_callable || may_be_function, signature) {
+        let (target, metadata) = match (function, lexical_callable || opaque_callable, signature) {
             (Some(function), _, signature) => (CallTarget::User(function), signature),
             (None, true, signature) => (CallTarget::Lexical, signature),
             (None, false, Some(signature)) => (CallTarget::Stub, Some(signature)),
@@ -202,6 +211,7 @@ impl Checker {
             declaration_function,
             unforced_args,
             lexical_binding,
+            opaque_callable,
             function_evidence,
             generic_receiver,
             check_project_arguments,

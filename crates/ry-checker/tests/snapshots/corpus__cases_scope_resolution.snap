@@ -308,9 +308,11 @@ expression: rows
   diagnostics: []
 - case: a NULL-or-function local call head is not the same-named base function
   diagnostics: []
+- case: a function-valued local call head is not the same-named base function
+  diagnostics: []
 - case: a known non-function local still calls the base function
   diagnostics:
     - code: RY061
-      line: 685
+      line: 694
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error

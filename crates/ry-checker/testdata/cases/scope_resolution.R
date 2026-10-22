@@ -677,6 +677,15 @@ h <- function(flag) {
   nchar()$x
 }
 
+## case: a function-valued local call head is not the same-named base function
+# no-diag
+# A factory result is a closure, not a literal, and takes no `x`.
+make_nchar <- function() function() "n"
+f <- function() {
+  nchar <- make_nchar()
+  nchar()
+}
+
 ## case: a known non-function local still calls the base function
 # expect: RY061
 # R skips the double `c` and calls base `c`, whose result has no `$`.

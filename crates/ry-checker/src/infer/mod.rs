@@ -2916,9 +2916,12 @@ impl Checker {
             scope.insert(base_name.clone(), updated);
             return true;
         }
-        if matches!(kind, IndexKind::Double) && matches!(base_t.mode, Mode::List) {
-            // `x[[N]] <- v` replaces a recorded `[[N]]` element like `$<-`
-            // does. `list()` numbers only unnamed elements, so the key is the
+        if matches!(kind, IndexKind::Double)
+            && matches!(base_t.mode, Mode::List)
+            && base_t.class.is_classless()
+        {
+            // On a class-less list `x[[N]] <- v` replaces a recorded `[[N]]`
+            // element like `$<-` does. `list()` numbers only unnamed elements, so the key is the
             // position only when no element is named. A value that may be
             // NULL could drop the element and shift the rest. Both take the
             // computed-index path below.
@@ -2947,8 +2950,8 @@ impl Checker {
             // additional fields. Preserve known fields but mark the schema
             // incomplete so a later unknown-field read degrades to opaque
             // instead of emitting RY060. A positional `[[` or `[` write on a
-            // plain list may replace or drop any element, so it forgets the
-            // element types.
+            // class-less list may replace or drop any element, so it forgets
+            // the element types. A classed list may have its own method.
             if matches!(
                 kind,
                 IndexKind::Dollar | IndexKind::Double | IndexKind::Single
@@ -2960,7 +2963,7 @@ impl Checker {
                     .map(|schema| (**schema).clone())
                     .unwrap_or_default();
                 if matches!(kind, IndexKind::Double | IndexKind::Single)
-                    && !base_t.class.contains("data.frame")
+                    && base_t.class.is_classless()
                 {
                     schema.columns.clear();
                 }

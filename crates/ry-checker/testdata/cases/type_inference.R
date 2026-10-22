@@ -1362,6 +1362,20 @@ f <- function() {
   x[[1]] + 1
 }
 
+## case: a classed list keeps its own positional replacement
+# no-diag
+# `[[<-.foo` decides what is stored, so ry does not record `"a"` here.
+`[[<-.foo` <- function(x, i, value) {
+  x <- unclass(x)
+  x[[i]] <- nchar(value)
+  structure(x, class = "foo")
+}
+f <- function() {
+  x <- structure(list(0), class = "foo")
+  x[[1]] <- "a"
+  x[[1]] + 1
+}
+
 ## case: dollar on a recorded double element still reports RY061
 # expect: RY061
 f <- function() {

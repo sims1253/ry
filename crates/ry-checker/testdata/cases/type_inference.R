@@ -1353,6 +1353,15 @@ f <- function() {
   x[[2]]$b + x$a$c
 }
 
+## case: a literal positional replacement records the new element type
+# expect: RY040
+# Only the replacement knows `x[[1]]` is now character; forgetting is silent.
+f <- function() {
+  x <- list(0, 1)
+  x[[1]] <- "a"
+  x[[1]] + 1
+}
+
 ## case: dollar on a recorded double element still reports RY061
 # expect: RY061
 f <- function() {

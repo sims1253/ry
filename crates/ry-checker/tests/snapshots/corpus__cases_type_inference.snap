@@ -878,10 +878,16 @@ expression: rows
   diagnostics: []
 - case: a positional replacement in a partly named list forgets the elements
   diagnostics: []
+- case: a literal positional replacement records the new element type
+  diagnostics:
+    - code: RY040
+      line: 1362
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
 - case: dollar on a recorded double element still reports RY061
   diagnostics:
     - code: RY061
-      line: 1360
+      line: 1369
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
 - case: a value formal does not hide a package S4 generic of its name
@@ -889,6 +895,6 @@ expression: rows
 - case: a value formal with no function of its name is still not callable
   diagnostics:
     - code: RY070
-      line: 1376
+      line: 1385
       message: "could not find function `widen` (bound here as `logical`)"
       severity: error

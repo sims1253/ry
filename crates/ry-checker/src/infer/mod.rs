@@ -2747,8 +2747,8 @@ impl Checker {
         value: RType,
         scope: &mut Scope,
     ) -> bool {
-        // Each step is the field it names, or `None` for one ry does not
-        // model (`[[i]]`, `[[1]]`, `[i]`).
+        // Each step is the field it names, or `None` for one that ry does
+        // not model (`[[i]]`, `[[1]]`, `[i]`).
         fn path(expr: &Expr, steps: &mut Vec<Option<String>>) -> Option<String> {
             match expr {
                 Expr::Ident { name, .. } => Some(name.clone()),

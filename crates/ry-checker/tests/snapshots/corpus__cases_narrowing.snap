@@ -371,15 +371,19 @@ expression: rows
       line: 812
       message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
-- case: is.function installs a function over a local union with no function member
+- case: is.function makes a local union with no function member callable
   diagnostics: []
-- case: is.function installs a function over a parameter typed by its caller
+- case: is.function makes a parameter typed by its caller callable
   diagnostics: []
-- case: the else arm of a negated is.function installs a function over a local value
+- case: the else arm of a negated is.function makes a local value callable
+  diagnostics: []
+- case: arithmetic inside a dead is.function guard on a numeric local stays quiet
+  diagnostics: []
+- case: a logical operator inside a dead is.function guard on a numeric local stays quiet
   diagnostics: []
 - case: a local union with no function member and no guard is still not callable
   diagnostics:
     - code: RY070
-      line: 851
+      line: 873
       message: "could not find function `dof` (bound here as `union`)"
       severity: error

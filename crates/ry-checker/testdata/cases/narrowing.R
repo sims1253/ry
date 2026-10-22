@@ -813,7 +813,7 @@ f <- function() {
   }
 }
 
-## case: is.function installs a function over a local union with no function member
+## case: is.function makes a local union with no function member callable
 # no-diag
 # The guarded path holds a function whatever ry inferred, so the call cannot
 # fail there (spatstat.explore R/roc.R: `degfreeU` is a number or a function).
@@ -824,7 +824,7 @@ degrees <- function(z, flag) {
   dof
 }
 
-## case: is.function installs a function over a parameter typed by its caller
+## case: is.function makes a parameter typed by its caller callable
 # no-diag
 # The call chain passes `Inf`, so ry walks `scale_dof` with a number for
 # `dof`. Another caller can still pass a function.
@@ -836,11 +836,33 @@ scale_dof <- function(z, dof = length(z)) {
   dof
 }
 
-## case: the else arm of a negated is.function installs a function over a local value
+## case: the else arm of a negated is.function makes a local value callable
 # no-diag
 degrees_else <- function(z) {
   dof <- length(z)
   if (!is.function(dof)) dof else dof(length(z))
+}
+
+## case: arithmetic inside a dead is.function guard on a numeric local stays quiet
+# no-diag
+# The guard installs an unknown value, not a function type, so the dead arm
+# does not report arithmetic on a function.
+dead_guard_arith <- function(z) {
+  dof <- length(z)
+  if (is.function(dof)) {
+    dof <- dof + 1
+  }
+  dof
+}
+
+## case: a logical operator inside a dead is.function guard on a numeric local stays quiet
+# no-diag
+dead_guard_logic <- function(z) {
+  dof <- length(z)
+  if (is.function(dof)) {
+    dof <- dof & TRUE
+  }
+  dof
 }
 
 ## case: a local union with no function member and no guard is still not callable

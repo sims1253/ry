@@ -553,9 +553,14 @@ fn apply_single_narrowing_branch<'a>(
             // class targets and incompatible parameter defaults
             // do install.
             if let Some(existing) = scope.get(var).cloned() {
+                if disjoint_function_guard(scope, var, &existing, target) {
+                    scope.insert_narrowed(var.clone(), RType::unknown());
+                    return Some(var.as_str());
+                }
                 let class_narrowing = target.class.has_known_class();
-                let disjoint_guard = guard_replaces_disjoint_type(scope, var, &existing, target);
-                let should_install = disjoint_guard
+                let incompatible_parameter_default =
+                    scope.is_default_parameter(var) && !types_intersect(&existing, target);
+                let should_install = incompatible_parameter_default
                     || class_narrowing
                     || match existing.mode {
                         mode if mode.is_unknown_or_non_vector() => true,
@@ -595,7 +600,7 @@ fn apply_single_narrowing_branch<'a>(
                         }
                     };
                 if should_install
-                    && (disjoint_guard
+                    && (incompatible_parameter_default
                         || class_narrowing
                         || existing.mode.is_unknown_or_non_vector()
                         || matches!(existing.mode, Mode::Null | Mode::Union))
@@ -690,18 +695,16 @@ fn apply_single_narrowing_branch<'a>(
     None
 }
 
-/// Whether a passing guard replaces a binding none of whose members
-/// satisfies `target`. A default parameter's type describes only the
-/// omitted call, so a caller can pass the tested mode. A function guard
-/// replaces any such binding: on the guarded path the value is a
-/// function whatever ry inferred, so calling it cannot fail (#741).
-fn guard_replaces_disjoint_type(
-    scope: &Scope,
-    var: &str,
-    existing: &RType,
-    target: &RType,
-) -> bool {
-    (scope.is_default_parameter(var) || target.mode == Mode::Function)
+/// A passing function guard on a binding ry typed with no function member,
+/// other than a default parameter (which installs the function). Either the
+/// branch is dead or a caller passed what ry's type misses. Calling the value
+/// cannot fail there, but a function type would make dead branches report
+/// arithmetic on it, so the branch sees an unknown value instead (#741).
+fn disjoint_function_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
+    target.mode == Mode::Function
+        && !existing.mode.is_unknown_or_non_vector()
+        && existing.mode != Mode::Null
+        && !scope.is_default_parameter(var)
         && !types_intersect(existing, target)
 }
 
@@ -709,9 +712,14 @@ fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> b
     let Some(existing) = scope.get(var).cloned() else {
         return false;
     };
+    if disjoint_function_guard(scope, var, &existing, target) {
+        scope.insert_narrowed(var.to_string(), RType::unknown());
+        return true;
+    }
     let class_narrowing = target.class.has_known_class();
-    let disjoint_guard = guard_replaces_disjoint_type(scope, var, &existing, target);
-    let should_install = disjoint_guard
+    let incompatible_parameter_default =
+        scope.is_default_parameter(var) && !types_intersect(&existing, target);
+    let should_install = incompatible_parameter_default
         || class_narrowing
         || existing.mode.is_unknown_or_non_vector()
         || matches!(existing.mode, Mode::Null | Mode::Union);

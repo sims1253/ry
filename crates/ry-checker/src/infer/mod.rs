@@ -1431,6 +1431,10 @@ impl Checker {
     /// intentional side-effect calls as bugs while covering common missing
     /// assignment mistakes (`paste0(x, ...)`, `read_*()`, and arithmetic).
     fn check_discarded_branch_results(&mut self, body: &[Stmt]) {
+        ry_core::stack::grow(|| self.check_discarded_branch_results_inner(body))
+    }
+
+    fn check_discarded_branch_results_inner(&mut self, body: &[Stmt]) {
         for (index, statement) in body.iter().enumerate() {
             if index + 1 < body.len()
                 && let Stmt::If {
@@ -2038,20 +2042,37 @@ impl Checker {
         visited: &mut HashSet<String>,
         view: DivergenceView,
     ) -> bool {
+        // Recurses once per `else if` arm and per nesting level.
+        ry_core::stack::grow(|| self.stmt_diverges_inner(statement, visited, view))
+    }
+
+    fn stmt_diverges_inner(
+        &self,
+        statement: &Stmt,
+        visited: &mut HashSet<String>,
+        view: DivergenceView,
+    ) -> bool {
         match statement {
             Stmt::Return { .. } => true,
             Stmt::Expr(expression) => self.expr_diverges(expression, visited, view),
             Stmt::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
                 self.block_diverges_with_visited(then, visited, view)
-                    && ry_core::stack::grow(|| {
-                        self.block_diverges_with_visited(else_, visited, view)
-                    })
+                    && self.block_diverges_with_visited(else_, visited, view)
             }),
             _ => false,
         }
     }
 
     fn expr_diverges(
+        &self,
+        expression: &Expr,
+        visited: &mut HashSet<String>,
+        view: DivergenceView,
+    ) -> bool {
+        ry_core::stack::grow(|| self.expr_diverges_inner(expression, visited, view))
+    }
+
+    fn expr_diverges_inner(
         &self,
         expression: &Expr,
         visited: &mut HashSet<String>,
@@ -2099,8 +2120,7 @@ impl Checker {
             }
             Expr::Block { body, .. } => self.block_diverges_with_visited(body, visited, view),
             Expr::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
-                self.expr_diverges(then, visited, view)
-                    && ry_core::stack::grow(|| self.expr_diverges(else_, visited, view))
+                self.expr_diverges(then, visited, view) && self.expr_diverges(else_, visited, view)
             }),
             _ => false,
         }
@@ -2243,6 +2263,16 @@ impl Checker {
         scope: &mut Scope,
         depth: usize,
     ) -> Option<RType> {
+        // Recurses once per `else if` arm and per nesting level.
+        ry_core::stack::grow(|| self.trailing_return_type_inner(body, scope, depth))
+    }
+
+    fn trailing_return_type_inner(
+        &mut self,
+        body: &[Stmt],
+        scope: &mut Scope,
+        depth: usize,
+    ) -> Option<RType> {
         // `walk_stmt` marks paths after an unconditional return/throw as
         // unreachable. Such a syntactic tail is not an implicit return and
         // must not be joined into the function's result.
@@ -2270,11 +2300,8 @@ impl Checker {
                 // return value: the join of its branches' tail types.
                 // Without an `else`, R returns NULL on the FALSE arm.
                 let then_t = self.trailing_return_type(then, &mut scope.clone(), depth);
-                // An `else if` chain recurses here once per arm.
                 let else_t = match else_ {
-                    Some(block) => ry_core::stack::grow(|| {
-                        self.trailing_return_type(block, &mut scope.clone(), depth)
-                    }),
+                    Some(block) => self.trailing_return_type(block, &mut scope.clone(), depth),
                     None => Some(RType::new(Mode::Null, Length::Zero)),
                 };
                 match (then_t, else_t) {
@@ -3007,6 +3034,10 @@ impl Checker {
     }
 
     pub(crate) fn infer_stmt_value(&mut self, stmt: &Stmt, scope: &mut Scope) -> RType {
+        ry_core::stack::grow(|| self.infer_stmt_value_inner(stmt, scope))
+    }
+
+    fn infer_stmt_value_inner(&mut self, stmt: &Stmt, scope: &mut Scope) -> RType {
         if scope.unreachable {
             return RType::unknown();
         }
@@ -3773,6 +3804,10 @@ pub(crate) fn embraced_symbol(body: &[Stmt]) -> Option<(&str, Span)> {
 /// Names assigned on every path that reaches the end of this block.
 /// Loops, calls, and nested function bodies cannot establish this fact.
 fn definitely_assigned_names(body: &[Stmt]) -> HashSet<&str> {
+    ry_core::stack::grow(|| definitely_assigned_names_inner(body))
+}
+
+fn definitely_assigned_names_inner(body: &[Stmt]) -> HashSet<&str> {
     let mut names = HashSet::new();
     for statement in body {
         match statement {

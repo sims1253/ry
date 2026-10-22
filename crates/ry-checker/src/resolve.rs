@@ -443,6 +443,19 @@ impl Checker {
         self.resolves_to_base_impl(name, scope, true)
     }
 
+    /// Whether a local, parameter, or project binding of the bare call head
+    /// `name` may be the function R calls, ahead of any same-named package
+    /// function. An opaque or union local may be a closure, as in call-head
+    /// resolution (#722).
+    pub(crate) fn call_head_bound_locally(&self, name: &str, scope: &Scope) -> bool {
+        scope.is_lexical_function(name)
+            || scope.is_parameter(name)
+            || scope
+                .get(name)
+                .is_some_and(|binding| binding.mode.may_be_function())
+            || self.fn_table.functions.binds(name)
+    }
+
     /// Shared body of the two base-resolution predicates. `guard_search_path`
     /// toggles step 8 of the documented lookup order: the strict variant
     /// refuses to conclude base resolution while an attached package may

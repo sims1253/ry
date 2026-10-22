@@ -105,3 +105,36 @@ k <- function() {
   df <- data.frame(x = 1, y = "a")
   df[, "y"] + 1
 }
+
+## case: a local data or load function is not the utils or base loader
+# no-diag
+# The Shiny `data <- reactive(...)` idiom (visNetwork): `data()` calls the local
+# closure, whose result is not a character vector of dataset names (#717).
+library(shiny)
+server <- function(input, output, session) {
+  data <- reactive({
+    list(nodes = 1, edges = 2)
+  })
+  output$net <- renderVisNetwork({
+    visNetwork(data()$nodes, data()$edges)
+  })
+}
+f <- function() {
+  data <- function() list(nodes = 1)
+  data()$nodes
+}
+g <- function() {
+  load <- function(path) list(a = 1)
+  load("x")$a
+}
+k <- function(data) data()$nodes
+
+## case: data still binds the dataset it loads
+# expect: RY061
+# Control for #717: without a local binding, `data(mtcars)` loads the
+# dataset for later reads and returns the dataset names.
+f <- function() {
+  data(mtcars)
+  mtcars$mpg
+}
+g <- function() data(mtcars)$x

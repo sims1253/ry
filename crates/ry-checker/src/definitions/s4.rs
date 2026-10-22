@@ -128,6 +128,13 @@ impl S4Inventory {
         self.all_incomplete = true;
     }
 
+    /// Whether a registration may bind a generic function named `name` in
+    /// the package. `setGeneric` assigns the generic, and `setMethod` needs
+    /// an existing function, so every recorded name is a function.
+    pub(crate) fn may_bind_generic(&self, name: &str) -> bool {
+        self.computed_name || self.generics.contains_key(name)
+    }
+
     /// Whether the project registers a method, interpretable or not, for a
     /// generic `generic` accepts.
     pub(crate) fn defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {

@@ -650,3 +650,76 @@ f <- function(flag) {
   n <- if (flag) { helper <- function() hidden <- 1; 1 } else 2
   hidden
 }
+
+## case: an opaque parameter call head is not the same-named stats function
+# no-diag
+# `dt` may be a function argument; R's call lookup stops at it (#722).
+f <- function(dt) dt()$x
+
+## case: an opaque local call head is not the same-named base function
+# no-diag
+# Unknown call results may be functions: no `nchar` arity or return applies.
+g <- function(make) {
+  dt <- make()
+  d <- dt()
+  d$x
+}
+h <- function(make) {
+  nchar <- make()
+  nchar()$x
+}
+
+## case: a NULL-or-function local call head is not the same-named base function
+# no-diag
+# Only the closure arm can be called, and it takes no `x`.
+h <- function(flag) {
+  nchar <- if (flag) NULL else function() list(x = 1)
+  nchar()$x
+}
+
+## case: a function-valued local call head is not the same-named base function
+# expect: RY061
+# A factory result is a closure, not a literal: it takes no `x` (no RY091),
+# and its own character result has no `$`.
+make_nchar <- function() function() "n"
+f <- function() {
+  nchar <- make_nchar()
+  nchar()$x
+}
+
+## case: a closure capturing a definite callable is not the same-named base function
+# no-diag
+# R's lookup from the inner frame stops at the enclosing binding.
+get_nchar <- function() function() "n"
+f <- function(nchar) {
+  g <- function() nchar()
+  g()
+}
+wrapper <- function() {
+  nchar <- get_nchar()
+  inner <- function() nchar()
+  inner()
+}
+opaque <- function(make) {
+  nchar <- make()
+  inner <- function() nchar()$x
+  inner()
+}
+
+## case: a write that may escape an unproven block keeps the base function
+# expect: RY091
+# ry cannot prove this `test_that` runs its block in a fresh frame, so
+# `nchar` is only possibly bound there; R calls base `nchar`.
+library(testthat)
+test_that("a", {
+  nchar <- function() "n"
+})
+nchar()
+
+## case: a known non-function local still calls the base function
+# expect: RY061
+# R skips the double `c` and calls base `c`, whose result has no `$`.
+m <- function() {
+  c <- 1
+  c(2, 3)$x
+}

@@ -99,6 +99,9 @@ All notable changes to ry are documented in this file.
 - Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 - Bind the target of a base `delayedAssign()` without evaluating its promise,
   removing false RY010 reports for lazily bound values (#349).
+- Apply the `data()` and `load()` loaders only when no local, parameter, or
+  project binding of that name may be the callee, removing false RY061
+  reports on Shiny's `data <- reactive(...)`; `data()$x` (#717).
 - Accept a logical `NA` callback result in purrr's typed maps, which widen it
   to the target's `NA` (#352).
 - End quietly instead of panicking when stdout closes early, as in
@@ -142,6 +145,9 @@ All notable changes to ry are documented in this file.
 - Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
   as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
   S3 generic, so ry dispatches to `cut.dendrogram` (#711).
+- Keep a name assigned inside a `[` subscript bound when the receiver is
+  opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
+  reports in lme4 and DescTools (#713).
 
 ## [0.11.0] - 2026-09-22
 

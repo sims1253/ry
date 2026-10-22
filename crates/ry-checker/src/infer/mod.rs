@@ -656,6 +656,17 @@ impl Checker {
         &mut self,
         s: &Stmt,
         scope: &mut Scope,
+        returns: Option<&mut Vec<RType>>,
+    ) {
+        // Statement and expression walks recurse once per `else if` arm
+        // and per nesting level.
+        ry_core::stack::grow(|| self.walk_stmt_inner(s, scope, returns))
+    }
+
+    fn walk_stmt_inner(
+        &mut self,
+        s: &Stmt,
+        scope: &mut Scope,
         mut returns: Option<&mut Vec<RType>>,
     ) {
         if scope.unreachable {
@@ -1587,21 +1598,6 @@ impl Checker {
         literal_cond: Option<bool>,
         then: IfArm<'_>,
         else_: Option<IfArm<'_>>,
-        walk: IfWalk<'_>,
-    ) -> RType {
-        // An `else if` chain recurses here once per arm.
-        ry_core::stack::grow(|| {
-            self.walk_journal_if_inner(scope, narrowing, literal_cond, then, else_, walk)
-        })
-    }
-
-    fn walk_journal_if_inner(
-        &mut self,
-        scope: &mut Scope,
-        narrowing: &Narrowing,
-        literal_cond: Option<bool>,
-        then: IfArm<'_>,
-        else_: Option<IfArm<'_>>,
         mut walk: IfWalk<'_>,
     ) -> RType {
         let mut narrowed = HashSet::new();
@@ -2047,7 +2043,9 @@ impl Checker {
             Stmt::Expr(expression) => self.expr_diverges(expression, visited, view),
             Stmt::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
                 self.block_diverges_with_visited(then, visited, view)
-                    && self.block_diverges_with_visited(else_, visited, view)
+                    && ry_core::stack::grow(|| {
+                        self.block_diverges_with_visited(else_, visited, view)
+                    })
             }),
             _ => false,
         }
@@ -2101,7 +2099,8 @@ impl Checker {
             }
             Expr::Block { body, .. } => self.block_diverges_with_visited(body, visited, view),
             Expr::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
-                self.expr_diverges(then, visited, view) && self.expr_diverges(else_, visited, view)
+                self.expr_diverges(then, visited, view)
+                    && ry_core::stack::grow(|| self.expr_diverges(else_, visited, view))
             }),
             _ => false,
         }
@@ -3263,6 +3262,10 @@ impl Checker {
 
     /// Infer the type of an expression, emitting diagnostics for misuse.
     pub(crate) fn infer(&mut self, e: &Expr, scope: &mut Scope) -> RType {
+        ry_core::stack::grow(|| self.infer_inner(e, scope))
+    }
+
+    fn infer_inner(&mut self, e: &Expr, scope: &mut Scope) -> RType {
         if scope.unreachable {
             return RType::unknown();
         }

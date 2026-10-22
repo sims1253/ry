@@ -2,12 +2,13 @@
 //! bound.
 //!
 //! An `else if` arm keeps its parent's syntax depth (R code writes the chain
-//! flat), but the lowering and inference walks still recurse once per arm,
-//! at several KiB a step. Those walks call [`grow`] so a long chain moves to
-//! a heap-allocated stack segment instead of overflowing a 2 MiB worker.
+//! flat), but lowering, inference, and cloning still recurse once per arm,
+//! at several KiB a step in debug builds. Those recursions call [`grow`] at
+//! their entry points, so a long chain, or deep code inside one, moves to a
+//! heap-allocated stack segment instead of overflowing a 2 MiB worker.
 
 /// Stack that must remain before a step runs on the current segment. It
-/// covers one arm's recursion plus ordinary nested work inside the arm.
+/// covers the frames between two `grow` calls.
 const RED_ZONE: usize = 256 * 1024;
 
 /// Size of each segment added when less than [`RED_ZONE`] remains.

@@ -2120,8 +2120,9 @@ fn binding_installer_toggle_matches_cold() {
 
 /// #696: a flat `else if` chain nests one level per arm in the syntax tree,
 /// but it neither trips the nesting limit nor overflows a 2 MiB worker stack
-/// in the walks that recurse once per arm (statement, value, and trailing
-/// return positions).
+/// in the walks that recurse once per arm: statement, value, and trailing
+/// return positions, value chains nested in a braced `else`, a value chain
+/// whose arms all diverge, and deep conditions and a deep last arm.
 #[test]
 fn long_else_if_chain_is_checked_on_a_small_stack() {
     let chain = |indent: &str| {
@@ -2133,27 +2134,45 @@ fn long_else_if_chain_is_checked_on_a_small_stack() {
         }
         chain + &format!("{indent}}}\n")
     };
-    let source = format!(
-        "statement <- function(what) {{\n  {}  NULL\n}}\n\
-         trailing <- function(what) {{\n  {}}}\n\
-         value <- function(what) {{\n  x <- {}  x\n}}\n\
-         later <- function() undefined_thing + 1\n",
-        chain("  "),
-        chain("  "),
-        chain("  "),
-    );
+    let nested = |tail: String| format!("{}{{ z <- {tail}; z }}", "if (x) 0L else ".repeat(499));
+    let later = "later <- function() undefined_thing + 1\n";
+    let sources = [
+        format!(
+            "statement <- function(what) {{\n  {}  NULL\n}}\n\
+             trailing <- function(what) {{\n  {}}}\n\
+             value <- function(what) {{\n  x <- {}  x\n}}\n{later}",
+            chain("  "),
+            chain("  "),
+            chain("  "),
+        ),
+        format!(
+            "f <- function(x) {{ v <- {}; v }}\n{later}",
+            nested(nested("0L".to_string()))
+        ),
+        format!(
+            "f <- function(x) {{ v <- {}stop(\"last\"); v }}\n{later}",
+            "if (x) stop(\"branch\") else ".repeat(999)
+        ),
+        format!(
+            "f <- function(x) {{ {}{{ y <- {}x; y }} }}\n{later}",
+            format!("if ({}x{}) 0L else ", "(".repeat(100), ")".repeat(100)).repeat(999),
+            "-".repeat(100),
+        ),
+    ];
     std::thread::Builder::new()
         .stack_size(2 * 1024 * 1024)
         .spawn(move || {
-            let mut project = Project::new();
-            project.add_file("chain.R".to_string(), parse("chain.R", &source));
-            let codes: Vec<_> = project
-                .check()
-                .into_iter()
-                .flat_map(|(_, diagnostics)| diagnostics)
-                .map(|diagnostic| diagnostic.code)
-                .collect();
-            assert_eq!(codes, ["RY010"]);
+            for source in sources {
+                let mut project = Project::new();
+                project.add_file("chain.R".to_string(), parse("chain.R", &source));
+                let codes: Vec<_> = project
+                    .check()
+                    .into_iter()
+                    .flat_map(|(_, diagnostics)| diagnostics)
+                    .map(|diagnostic| diagnostic.code)
+                    .collect();
+                assert_eq!(codes, ["RY010"]);
+            }
         })
         .unwrap()
         .join()

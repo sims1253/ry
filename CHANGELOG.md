@@ -112,8 +112,9 @@ All notable changes to ry are documented in this file.
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
 - Check files with long flat `else if` chains instead of skipping them at
-  the 128-level syntax nesting limit. Each chain may have up to 1024
-  `else if` arms; lavaan's `lav_object_inspect.R` is now checked (#696).
+  the 128-level syntax nesting limit. Up to 1024 `else if` arms may nest,
+  counting chains inside chains; lavaan's `lav_object_inspect.R` is now
+  checked (#696).
 
 ## [0.11.0] - 2026-09-22
 

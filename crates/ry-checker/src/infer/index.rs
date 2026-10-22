@@ -38,14 +38,47 @@ fn light_table_mask(scope: &Scope) -> bool {
 /// mask is a scratch scope, so copy those writes back as opaque bindings:
 /// an opaque receiver may be a matrix or a data.table, and data.table's
 /// `[` keeps the write in its own frame. A proven data.table keeps every
-/// write local.
+/// write local. `<<-` writes an enclosing frame, never this one.
 fn merge_subscript_assignments(scope: &mut Scope, mask: &Scope, args: &[Arg], receiver: &RType) {
     if receiver.class.contains("data.table") {
         return;
     }
     let mut names = HashSet::new();
     for argument in args {
-        binop::collect_condition_assignment_names(&argument.value, &mut names);
+        let _ = walk_expr(
+            &argument.value,
+            Walk {
+                assign_targets: false,
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                let target = match node {
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::Assign,
+                        lhs,
+                        ..
+                    }) => lhs.as_ref(),
+                    // The statement form `x <<- v` keeps its marker on the value.
+                    AstNode::Stmt(Stmt::Assign { target, value, .. })
+                        if !matches!(
+                            value,
+                            Expr::BinOp {
+                                op: BinOpKind::SuperAssign,
+                                ..
+                            }
+                        ) =>
+                    {
+                        target
+                    }
+                    _ => return ControlFlow::Continue(Descend::Into),
+                };
+                if let Expr::Ident { name, .. } = target {
+                    names.insert(name.clone());
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
     }
     for name in names {
         if mask.get(&name).is_some() {

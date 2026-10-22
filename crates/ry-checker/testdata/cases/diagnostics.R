@@ -317,3 +317,12 @@ f <- function(x) {
   x[vapply(x, function(v) hidden <- v, numeric(1))]
   hidden
 }
+
+## case: a superassignment in a subscript leaves the local binding alone
+# expect: RY040
+# `<<-` writes an enclosing frame, so the local `n` is still character.
+f <- function(x) {
+  n <- "a"
+  x[n <<- 2]
+  n + 1
+}

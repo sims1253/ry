@@ -22,3 +22,11 @@ opaque <- function(x) {
   n
 }
 stopifnot(identical(opaque(list(7)), 1))
+
+# `<<-` writes an enclosing frame, never the calling one.
+outer <- function(x) {
+  n <- 1L
+  x[n <<- 2]
+  n
+}
+stopifnot(identical(outer(1:3), 1L))

@@ -338,3 +338,9 @@ expression: rows
       line: 318
       message: "variable `hidden` is not bound in this scope"
       severity: warning
+- case: a superassignment in a subscript leaves the local binding alone
+  diagnostics:
+    - code: RY040
+      line: 327
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error

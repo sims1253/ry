@@ -678,13 +678,43 @@ h <- function(flag) {
 }
 
 ## case: a function-valued local call head is not the same-named base function
-# no-diag
-# A factory result is a closure, not a literal, and takes no `x`.
+# expect: RY061
+# A factory result is a closure, not a literal: it takes no `x` (no RY091),
+# and its own character result has no `$`.
 make_nchar <- function() function() "n"
 f <- function() {
   nchar <- make_nchar()
-  nchar()
+  nchar()$x
 }
+
+## case: a closure capturing a definite callable is not the same-named base function
+# no-diag
+# R's lookup from the inner frame stops at the enclosing binding.
+get_nchar <- function() function() "n"
+f <- function(nchar) {
+  g <- function() nchar()
+  g()
+}
+wrapper <- function() {
+  nchar <- get_nchar()
+  inner <- function() nchar()
+  inner()
+}
+opaque <- function(make) {
+  nchar <- make()
+  inner <- function() nchar()$x
+  inner()
+}
+
+## case: a write that may escape an unproven block keeps the base function
+# expect: RY091
+# ry cannot prove this `test_that` runs its block in a fresh frame, so
+# `nchar` is only possibly bound there; R calls base `nchar`.
+library(testthat)
+test_that("a", {
+  nchar <- function() "n"
+})
+nchar()
 
 ## case: a known non-function local still calls the base function
 # expect: RY061

@@ -22,6 +22,11 @@ k <- function() {
   nchar <- make_nchar()
   nchar()
 }
+captured <- function(make) {
+  nchar <- make()
+  inner <- function() nchar()$x
+  inner()
+}
 m <- function() {
   c <- 1
   c(2, 3)
@@ -32,4 +37,5 @@ stopifnot(identical(g(make), 1))
 stopifnot(identical(h(make), 1))
 stopifnot(identical(u(FALSE), 1))
 stopifnot(identical(k(), "n"))
+stopifnot(identical(captured(make), 1))
 stopifnot(identical(m(), c(2, 3)))

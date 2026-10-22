@@ -641,7 +641,8 @@ impl Checker {
                     scope.invalidate_data_mask_env();
                 }
                 for name in delta.changed.into_keys() {
-                    scope.insert(name, RType::unknown());
+                    scope.insert(name.clone(), RType::unknown());
+                    scope.possible_block_writes.insert(name);
                 }
                 return Some(RType::unknown());
             }
@@ -742,7 +743,8 @@ impl Checker {
                     scope.invalidate_data_mask_env();
                 }
                 for changed in delta.changed.into_keys() {
-                    scope.insert(changed, RType::unknown());
+                    scope.insert(changed.clone(), RType::unknown());
+                    scope.possible_block_writes.insert(changed);
                 }
                 return Some(RType::unknown());
             }

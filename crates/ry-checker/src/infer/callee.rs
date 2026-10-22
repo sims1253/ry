@@ -184,20 +184,18 @@ impl Checker {
         let function_evidence = self.call_head_function_evidence(name, scope);
         // R's call lookup stops at the first binding that may be a function,
         // so a function or opaque value, or a union with a closure member
-        // (#700), hides a same-named stub when this frame certainly binds it:
-        // a parameter, or a name no enclosing frame may supply (#722). An
-        // inherited name may be only a possible binding, such as a write
-        // escaping a `local()`/`test_that()` block whose verb is unproven, so
-        // it keeps the stub. Project functions keep their own proof.
-        let opaque_callable = lexical_binding.as_ref().is_some_and(|binding| {
-            (binding.mode == Mode::Function
-                || binding.mode.is_unknown()
-                || binding.members.as_ref().is_some_and(|members| {
-                    members.iter().any(|member| member.mode == Mode::Function)
-                }))
-                && (scope.is_parameter(lookup_name)
-                    || !scope.has_possible_outward_function(lookup_name))
-        });
+        // (#700), hides a same-named stub (#722). A write that may have
+        // escaped an unproven `local()`/`test_that()` block is only a
+        // possible binding, so it keeps the stub. Project functions keep
+        // their own proof.
+        let opaque_callable = !scope.possible_block_writes.contains(lookup_name)
+            && lexical_binding.as_ref().is_some_and(|binding| {
+                binding.mode == Mode::Function
+                    || binding.mode.is_unknown()
+                    || binding.members.as_ref().is_some_and(|members| {
+                        members.iter().any(|member| member.mode == Mode::Function)
+                    })
+            });
         let (target, metadata) = match (function, lexical_callable || opaque_callable, signature) {
             (Some(function), _, signature) => (CallTarget::User(function), signature),
             (None, true, signature) => (CallTarget::Lexical, signature),

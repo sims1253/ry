@@ -858,3 +858,13 @@ expression: rows
       line: 1283
       message: "cannot apply arithmetic op to `character` and `integer`"
       severity: error
+- case: a helper returning NULL or a function gives a callable head
+  diagnostics: []
+- case: an optional callback guarded by its source argument is callable
+  diagnostics: []
+- case: a union with no function member is still not callable
+  diagnostics:
+    - code: RY070
+      line: 1308
+      message: "could not find function `z` (bound here as `union`)"
+      severity: error

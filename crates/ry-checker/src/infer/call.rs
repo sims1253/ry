@@ -1907,9 +1907,11 @@ impl Checker {
         None
     }
 
-    /// Returns a value for a union call only when every member is a closure.
-    /// A NULL/function union deliberately stays non-callable: the NULL arm is
-    /// an unguarded runtime error, not an overload.
+    /// Returns a value for a union call when some member is a closure.
+    /// A union that also holds a non-function (NULL-or-function,
+    /// value-or-function) is opaque: R's function lookup calls the closure
+    /// on its path and skips the other arm, so the call fails only on paths
+    /// whose reachability depends on invariants outside the call (#700).
     fn callable_function_union(
         &mut self,
         ty: &RType,
@@ -1917,11 +1919,11 @@ impl Checker {
         arg_types: &[RType],
     ) -> Option<RType> {
         let members = ty.members.as_ref()?;
-        if ty.mode != Mode::Union
-            || members.is_empty()
-            || members.iter().any(|member| member.mode != Mode::Function)
-        {
+        if ty.mode != Mode::Union || !members.iter().any(|member| member.mode == Mode::Function) {
             return None;
+        }
+        if members.iter().any(|member| member.mode != Mode::Function) {
+            return Some(RType::unknown());
         }
 
         let signatures: Vec<_> = members

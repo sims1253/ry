@@ -246,30 +246,14 @@ expression: rows
   diagnostics: []
 - case: nested branches that all install a function make it callable
   diagnostics: []
-- case: an if without else keeps the NULL path for the call
-  diagnostics:
-    - code: RY070
-      line: 448
-      message: "could not find function `g` (bound here as `union`)"
-      severity: error
-- case: an else branch that keeps NULL still reports the call
-  diagnostics:
-    - code: RY070
-      line: 452
-      message: "could not find function `g` (bound here as `union`)"
-      severity: error
-- case: an else branch that installs an integer still reports the call
-  diagnostics:
-    - code: RY070
-      line: 456
-      message: "could not find function `g` (bound here as `union`)"
-      severity: error
-- case: a nested if without else keeps the NULL path for the call
-  diagnostics:
-    - code: RY070
-      line: 460
-      message: "could not find function `g` (bound here as `union`)"
-      severity: error
+- case: an if without else leaves a callable NULL or function join
+  diagnostics: []
+- case: an else branch that keeps NULL leaves a callable join
+  diagnostics: []
+- case: an else branch that installs an integer leaves a callable join
+  diagnostics: []
+- case: a nested if without else leaves a callable NULL or function join
+  diagnostics: []
 - case: a return in the then branch does not bring back NULL
   diagnostics: []
 - case: a return in the else branch does not bring back NULL

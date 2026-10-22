@@ -182,11 +182,13 @@ fn all_function_union_is_callable_with_intersection_argument_checks() {
 }
 
 #[test]
-fn null_function_union_remains_unguarded_call_error() {
+fn null_function_union_call_is_not_a_certain_error() {
+    // R calls the closure on the function path; only the NULL path can
+    // fail, so "could not find function" is not a certain runtime error.
     let diags = check("f <- if (flag) NULL else function() 1L\nf()\n");
     assert!(
-        diags.iter().any(|d| d.code == "RY070"),
-        "NULL/function unions are not callable without narrowing: {diags:?}"
+        diags.iter().all(|d| d.code != "RY070"),
+        "a union with a function member is callable: {diags:?}"
     );
 }
 

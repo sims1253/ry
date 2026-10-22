@@ -1282,3 +1282,27 @@ f <- function() {
   x <- tryCatch(error = function(e) "a", "b")
   x + 1L
 }
+
+## case: a helper returning NULL or a function gives a callable head
+# no-diag
+# R's function lookup calls the closure on the function path. Only the NULL
+# path can fail, and whether it is reached depends on the caller.
+pick <- function(flag) if (flag) NULL else function(x) x + 1
+use <- function(x, flag) {
+  fn <- pick(flag)
+  fn(x)
+}
+
+## case: an optional callback guarded by its source argument is callable
+# no-diag
+# loo's shape: the call is guarded by `grad`, not by `g` itself.
+fit <- function(x, grad = NULL) {
+  g <- NULL
+  if (!is.null(grad)) g <- function(p) grad(p) * 2
+  if (!is.null(grad)) g(x) else x
+}
+
+## case: a union with no function member is still not callable
+# expect: RY070
+z <- if (runif(1) > 0.5) NULL else 1
+z()

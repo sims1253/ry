@@ -343,6 +343,15 @@ fn branch_narrowing_without_reassignment_keeps_parent_members() {
 }
 
 #[test]
+fn single_branch_function_install_keeps_the_null_member() {
+    let (_, scope) = check_with_scope("g <- NULL\nif (flag) g <- function(x) x\n");
+    let ty = scope.get("g").unwrap();
+    let members = ty.members.as_ref().expect("g should be a union");
+    assert!(members.iter().any(|ty| ty.mode == Mode::Null));
+    assert!(members.iter().any(|ty| ty.mode == Mode::Function));
+}
+
+#[test]
 fn zero_iteration_loop_retains_the_prebranch_nonfunction_path() {
     // Loop inference may make the binding opaque. It must never claim
     // every path installs a function when the loop can run zero times.

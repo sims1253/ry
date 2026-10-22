@@ -109,6 +109,9 @@ All notable changes to ry are documented in this file.
   scripts (#568).
 - Stop RY070 from reporting a call guarded by `is.function(x)` when ry
   inferred no function type for `x` (#741).
+- Stop mode guards such as `is.list(x)` and `is.numeric(x)` from keeping a
+  stale type for `x` when ry inferred none of the tested mode; the guarded
+  arm now sees an unknown value (#752).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
 - Stop RY070 from reporting a call head bound to a NULL-or-function or

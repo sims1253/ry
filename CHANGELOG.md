@@ -107,6 +107,8 @@ All notable changes to ry are documented in this file.
   where R finds base before attached packages. The `switch` EXPR check now
   reports a NULL selector inside such packages, as it already did in
   scripts (#568).
+- Stop RY070 from reporting a call guarded by `is.function(x)` when ry
+  inferred no function type for `x` (#741).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
 - Stop RY070 from reporting a call head bound to a NULL-or-function or

@@ -812,3 +812,41 @@ f <- function() {
     if (x == "a") 1 else 2
   }
 }
+
+## case: is.function installs a function over a local union with no function member
+# no-diag
+# The guarded path holds a function whatever ry inferred, so the call cannot
+# fail there (spatstat.explore R/roc.R: `degfreeU` is a number or a function).
+degrees <- function(z, flag) {
+  dof <- length(z)
+  if (flag) dof <- "auto"
+  if (is.function(dof)) dof <- dof(length(z))
+  dof
+}
+
+## case: is.function installs a function over a parameter typed by its caller
+# no-diag
+# The call chain passes `Inf`, so ry walks `scale_dof` with a number for
+# `dof`. Another caller can still pass a function.
+fit_outer <- function(z) fit_middle(z)
+fit_middle <- function(z, dof = Inf) scale_dof(z, dof = dof)
+scale_dof <- function(z, dof = length(z)) {
+  if (is.null(dof)) dof <- length(z)
+  if (is.function(dof)) dof <- dof(length(z))
+  dof
+}
+
+## case: the else arm of a negated is.function installs a function over a local value
+# no-diag
+degrees_else <- function(z) {
+  dof <- length(z)
+  if (!is.function(dof)) dof else dof(length(z))
+}
+
+## case: a local union with no function member and no guard is still not callable
+# expect: RY070
+degrees_unguarded <- function(z, flag) {
+  dof <- length(z)
+  if (flag) dof <- "auto"
+  dof(length(z))
+}

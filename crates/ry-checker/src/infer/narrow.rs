@@ -554,9 +554,8 @@ fn apply_single_narrowing_branch<'a>(
             // do install.
             if let Some(existing) = scope.get(var).cloned() {
                 let class_narrowing = target.class.has_known_class();
-                let incompatible_parameter_default =
-                    scope.is_default_parameter(var) && !types_intersect(&existing, target);
-                let should_install = incompatible_parameter_default
+                let disjoint_guard = guard_replaces_disjoint_type(scope, var, &existing, target);
+                let should_install = disjoint_guard
                     || class_narrowing
                     || match existing.mode {
                         mode if mode.is_unknown_or_non_vector() => true,
@@ -596,7 +595,7 @@ fn apply_single_narrowing_branch<'a>(
                         }
                     };
                 if should_install
-                    && (incompatible_parameter_default
+                    && (disjoint_guard
                         || class_narrowing
                         || existing.mode.is_unknown_or_non_vector()
                         || matches!(existing.mode, Mode::Null | Mode::Union))
@@ -691,14 +690,28 @@ fn apply_single_narrowing_branch<'a>(
     None
 }
 
+/// Whether a passing guard replaces a binding none of whose members
+/// satisfies `target`. A default parameter's type describes only the
+/// omitted call, so a caller can pass the tested mode. A function guard
+/// replaces any such binding: on the guarded path the value is a
+/// function whatever ry inferred, so calling it cannot fail (#741).
+fn guard_replaces_disjoint_type(
+    scope: &Scope,
+    var: &str,
+    existing: &RType,
+    target: &RType,
+) -> bool {
+    (scope.is_default_parameter(var) || target.mode == Mode::Function)
+        && !types_intersect(existing, target)
+}
+
 fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> bool {
     let Some(existing) = scope.get(var).cloned() else {
         return false;
     };
     let class_narrowing = target.class.has_known_class();
-    let incompatible_parameter_default =
-        scope.is_default_parameter(var) && !types_intersect(&existing, target);
-    let should_install = incompatible_parameter_default
+    let disjoint_guard = guard_replaces_disjoint_type(scope, var, &existing, target);
+    let should_install = disjoint_guard
         || class_narrowing
         || existing.mode.is_unknown_or_non_vector()
         || matches!(existing.mode, Mode::Null | Mode::Union);

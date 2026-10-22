@@ -326,3 +326,11 @@ f <- function(x) {
   x[n <<- 2]
   n + 1
 }
+
+## case: an assignment inside an if body of a subscript block binds in the frame
+# no-diag
+# Silent like the statement form of a one-armed if.
+f <- function(x, p) {
+  x[{ a <- 1; if (p) b <- 2; a }]
+  b
+}

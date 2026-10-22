@@ -344,3 +344,5 @@ expression: rows
       line: 327
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
+- case: an assignment inside an if body of a subscript block binds in the frame
+  diagnostics: []

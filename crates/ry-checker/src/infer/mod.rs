@@ -2995,12 +2995,14 @@ impl Checker {
         if matches!(kind, IndexKind::Double)
             && matches!(base_t.mode, Mode::List)
             && base_t.class.is_classless()
+            && self.resolves_to_base("[[<-", scope)
+            && !ops_chooser::operator_rebound(self, "[[<-", scope)
         {
-            // On a class-less list `x[[N]] <- v` replaces a recorded `[[N]]`
-            // element like `$<-` does. `list()` numbers only unnamed elements, so the key is the
-            // position only when no element is named. A value that may be
-            // NULL could drop the element and shift the rest. Both take the
-            // computed-index path below.
+            // On a class-less list base `x[[N]] <- v` replaces a recorded
+            // `[[N]]` element like `$<-` does. `list()` numbers only unnamed
+            // elements, so the key is the position only when no element is
+            // named. A value that may be NULL could drop the element and
+            // shift the rest. Both take the computed-index path below.
             let key = match args.first().map(|arg| &arg.value) {
                 Some(Expr::Integer(i, _)) => Some(format!("[[{i}]]")),
                 Some(Expr::Double(f, _)) => Some(format!("[[{}]]", *f as i64)),

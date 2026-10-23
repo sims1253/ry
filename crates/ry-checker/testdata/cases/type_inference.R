@@ -1376,6 +1376,15 @@ f <- function() {
   x[[1]] + 1
 }
 
+## case: a local [[<- keeps its own positional replacement
+# no-diag
+f <- function() {
+  `[[<-` <- function(x, i, value) x
+  x <- list(1)
+  x[[1]] <- "a"
+  x[[1]] + 1
+}
+
 ## case: dollar on a recorded double element still reports RY061
 # expect: RY061
 f <- function() {

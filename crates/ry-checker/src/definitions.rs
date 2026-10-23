@@ -85,6 +85,9 @@ pub(crate) struct Definitions {
     unstable: FxSet<String>,
     /// Names more than one literal binds.
     redefined: FxSet<String>,
+    /// Every raw spelling's prefixes that end before a `.` (`print` for
+    /// `print.foo`), so an S3 method lookup does not scan `live` (#697).
+    method_prefixes: FxSet<String>,
     /// S4 generic and method registrations; methods name their literals
     /// by raw binding spelling in `live`.
     s4: S4Inventory,
@@ -100,6 +103,17 @@ impl Definitions {
         self.live
             .get(member)
             .or_else(|| {
+                // Only a quoted spelling can still match. Probe those
+                // directly; scanning `live` made every unresolved call
+                // proportional to the number of definitions (#697). When
+                // several match, keep the scan's choice.
+                let mut quoted = ['`', '\'', '"']
+                    .into_iter()
+                    .filter_map(|quote| self.live.get(&format!("{quote}{member}{quote}")));
+                let first = quoted.next()?;
+                if quoted.next().is_none() {
+                    return Some(first);
+                }
                 self.live
                     .iter()
                     .find(|(name, _)| semantic_argument_name(name) == member)
@@ -117,6 +131,11 @@ impl Definitions {
     /// spelling. A quoted binding does not satisfy its bare spelling.
     pub(crate) fn binds(&self, raw: &str) -> bool {
         self.live.contains_key(raw)
+    }
+
+    /// Whether some raw spelling starts with `generic` followed by `.`.
+    pub(crate) fn has_method_prefix(&self, generic: &str) -> bool {
+        self.method_prefixes.contains(generic)
     }
 
     /// Any recorded direct literal, live or replaced, by source identity.
@@ -204,6 +223,9 @@ impl Definitions {
         }
         if !others.is_empty() {
             self.redefined.insert(semantic);
+        }
+        for (dot, _) in raw.match_indices('.') {
+            self.method_prefixes.insert(raw[..dot].to_string());
         }
         let previous = self.live.insert(raw.clone(), function)?;
         let previous_id = previous.id();

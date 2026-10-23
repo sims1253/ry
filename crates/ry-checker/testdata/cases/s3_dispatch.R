@@ -1,0 +1,144 @@
+# S3 dispatcher bindings (#348): which function literals R runs as S3
+# methods, so their frame binds .Generic, .Class, .Method, and .Group.
+
+## case: a helper registered at load time sees the S3 dispatcher bindings
+# no-diag
+# #348, lubridate R/ops-compare.r: the name is not method-shaped, but the
+# unconditional load-time registration of the one global binding proves R
+# runs this literal as a `<` method, which binds `.Generic`. A `do.call()`
+# elsewhere, as in lubridate's `c.POSIXlt`, does not withdraw the proof.
+c.POSIXlt <- function(..., recursive = FALSE) {
+  as.POSIXlt(do.call("c.POSIXct", lapply(list(...), as.POSIXct)))
+}
+comp_posix_date <- function(e1, e2) {
+  if (nargs() == 1) {
+    stop(gettextf("unary '%s' not defined for \"%s\" objects", .Generic, class(e1)))
+  }
+  NextMethod(.Generic)
+}
+evalqOnLoad({
+  for (op in c("<", ">", "==", ">=", "<=", "!=")) {
+    registerS3method(op, "Date", comp_posix_date)
+    registerS3method(op, "POSIXt", comp_posix_date)
+  }
+})
+
+## case: an evalqOnLoad .S3method registration binds all four dispatcher variables
+# no-diag
+format_widget <- function(x, ...) c(.Generic, .Class, .Method, .Group)
+evalqOnLoad(.S3method("format", "widget", format_widget))
+
+## case: S3 method names bind all four dispatcher variables
+# no-diag
+# R binds `.Group` (possibly "") in every S3 method frame, including Logic
+# and matrixOps operators, subset methods, and UseMethod methods.
+`!.widget` <- function(x) .Group
+`&.widget` <- function(e1, e2) .Group
+`|.widget` <- function(e1, e2) .Group
+`%*%.widget` <- function(x, y) .Group
+`[.widget` <- function(x, i) .Group
+`+.widget` <- function(e1, e2) c(.Generic, .Method)
+print.widget <- function(x, ...) c(.Generic, .Class, .Method, .Group)
+
+## case: an unregistered helper still reports dispatcher variables as unbound
+# expect: RY010
+helper <- function(e1, e2) .Generic
+
+## case: a registration does not reach a local namesake
+# expect: RY010
+# #348 review finding 1: the registration names the global `helper`, not
+# the local function `setup` defines.
+helper <- function(x) x
+evalqOnLoad(registerS3method("print", "foo", helper))
+setup <- function() {
+  helper <- function(x) .Generic
+  helper(1)
+}
+
+## case: a registration after a non-literal rebinding proves nothing
+# expect: RY010
+# #348 review finding 2: `helper` names `identity` when R registers it.
+helper <- function(x) .Generic
+saved <- helper
+helper <- identity
+evalqOnLoad(registerS3method("print", "foo", helper))
+
+## case: a plain top-level registration may run before the definition
+# expect: RY010
+# R registers base `toupper` here, never the later literal.
+registerS3method("format", "zz", toupper)
+toupper <- function(x) .Generic
+
+## case: a rebinding inside the evalqOnLoad block proves nothing
+# expect: RY010
+helper <- function(x) .Generic
+evalqOnLoad({
+  helper <- identity
+  registerS3method("print", "foo", helper)
+})
+
+## case: a second literal inside the evalqOnLoad block proves nothing
+# expect: RY010
+# R registers the block's literal, not the top-level one.
+helper <- function(x) .Generic
+evalqOnLoad({
+  helper <- function(x) x
+  registerS3method("print", "foo", helper)
+})
+
+## case: an escaped identifier may rebind the registered name
+# expect: RY010
+# R decodes `hel\x70er` to `helper`, so it registers the second literal.
+helper <- function(x) .Generic
+`hel\x70er` <- function(x) x
+evalqOnLoad(registerS3method("print", "foo", helper))
+
+## case: a registration inside local() proves nothing
+# expect: RY010
+# #348 review finding 3: inside `local()`, `helper` names the local binding.
+helper <- function(x) .Generic
+evalqOnLoad(local({
+  helper <- identity
+  registerS3method("print", "foo", helper)
+}))
+
+## case: unevaluated registrations prove nothing
+# expect: RY010, RY010, RY010
+# #348 review finding 4: R never runs these registrations.
+helper <- function(x) .Generic
+evalqOnLoad(if (FALSE) registerS3method("print", "foo", helper))
+evalqOnLoad(quote(registerS3method("print", "foo", helper)))
+other <- function(x) .Class
+evalqOnLoad({
+  for (op in character()) registerS3method(op, "foo", other)
+})
+third <- function(x) .Method
+evalqOnLoad({
+  for (op in "print") {
+    break
+    registerS3method(op, "foo", third)
+  }
+})
+
+## case: an evalqOnLoad block evaluated elsewhere proves nothing
+# expect: RY010
+# `where` makes `helper` name another environment's binding.
+helper <- function(x) .Generic
+evalqOnLoad(registerS3method("print", "foo", helper), asNamespace("otherpkg"))
+
+## case: a registration inside a function body proves nothing
+# expect: RY010
+helper <- function(x) .Generic
+.onLoad <- function(libname, pkgname) registerS3method("print", "foo", helper)
+
+## case: a redefined registerS3method proves nothing
+# expect: RY010
+registerS3method <- function(...) NULL
+helper <- function(x) .Generic
+evalqOnLoad(registerS3method("print", "foo", helper))
+
+## case: a registered name with two definitions proves nothing
+# expect: RY010
+helper <- function(x) .Generic
+helper <- function(x) x
+evalqOnLoad(registerS3method("print", "foo", helper))

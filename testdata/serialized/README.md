@@ -18,3 +18,17 @@ valid workspace containing no bindings.
 `empty-ascii.rda` is also a valid empty workspace. Its ASCII envelope is
 unsupported by the XDR-only static reader and must be reported as unsupported,
 not malformed.
+
+`extptr.rda` binds `a_first`, an external pointer `ptr_value`, and `z_last`
+(#714). It was created with Rscript 4.5.0 using:
+
+```r
+a_first <- 1
+ptr_value <- methods::new("externalptr")
+z_last <- 2
+save(a_first, ptr_value, z_last, file = "extptr.rda", version = 2, compress = TRUE)
+```
+
+The external pointer's payload (its protected value and tag) follows its type
+word. rds2rust 0.3 does not read that payload and ends the workspace after
+`ptr_value`, so the inventory must be reported as partial.

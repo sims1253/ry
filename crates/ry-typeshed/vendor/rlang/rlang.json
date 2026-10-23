@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "rlang",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "datasets": {
     "na_chr": {
       "mode": "character",
@@ -700,6 +700,9 @@
           "required": true
         }
       ],
+      "eval": {
+        "arg": "captures_promise"
+      },
       "return": {
         "mode": "opaque",
         "length": "unknown",

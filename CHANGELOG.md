@@ -159,6 +159,9 @@ All notable changes to ry are documented in this file.
 - Stop typing a callee's formal as the caller's forwarded default when a
   condition in the caller tests that argument before the call, as in
   `if (!is.null(save_period)) cb_save(save_period)` (#719).
+- Read a literal `x[[N]]` on a partly named list by position: `list()`
+  numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
+  no longer reads the unnamed list and now reports RY061 on `$b` (#758).
 
 ## [0.11.0] - 2026-09-22
 

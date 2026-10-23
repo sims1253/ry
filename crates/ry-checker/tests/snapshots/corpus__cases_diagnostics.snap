@@ -320,3 +320,47 @@ expression: rows
       line: 284
       message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
       severity: error
+- case: "environment replacement hides the defining frame's NULL placeholder"
+  diagnostics: []
+- case: environment replacement reaches literals picked by an if value
+  diagnostics: []
+- case: without environment replacement the NULL placeholder is what R calls
+  diagnostics:
+    - code: RY070
+      line: 317
+      message: "could not find function `mkTheta` (bound here as `NULL`)"
+      severity: error
+- case: environment replacement reaches literals bound in if and else branches
+  diagnostics: []
+- case: environment replacement after a rebind leaves the earlier closure checked
+  diagnostics:
+    - code: RY070
+      line: 335
+      message: "could not find function `mkTheta` (bound here as `NULL`)"
+      severity: error
+- case: an assignment in a subscript of an opaque receiver binds in the frame
+  diagnostics: []
+- case: an assignment in a two-subscript index binds in the frame
+  diagnostics: []
+- case: an assignment in a matrix subscript binds at top level
+  diagnostics: []
+- case: a proven data.table keeps a subscript assignment in its own frame
+  diagnostics:
+    - code: RY010
+      line: 367
+      message: "variable `k` is not bound in this scope"
+      severity: warning
+- case: a closure inside a subscript does not bind its locals in the frame
+  diagnostics:
+    - code: RY010
+      line: 373
+      message: "variable `hidden` is not bound in this scope"
+      severity: warning
+- case: a superassignment in a subscript leaves the local binding alone
+  diagnostics:
+    - code: RY040
+      line: 382
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+- case: an assignment inside an if body of a subscript block binds in the frame
+  diagnostics: []

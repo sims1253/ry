@@ -99,6 +99,9 @@ All notable changes to ry are documented in this file.
 - Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 - Bind the target of a base `delayedAssign()` without evaluating its promise,
   removing false RY010 reports for lazily bound values (#349).
+- Apply the `data()` and `load()` loaders only when no local, parameter, or
+  project binding of that name may be the callee, removing false RY061
+  reports on Shiny's `data <- reactive(...)`; `data()$x` (#717).
 - Accept a logical `NA` callback result in purrr's typed maps, which widen it
   to the target's `NA` (#352).
 - End quietly instead of panicking when stdout closes early, as in
@@ -109,10 +112,19 @@ All notable changes to ry are documented in this file.
   scripts (#568).
 - Stop RY070 from reporting a call guarded by `is.function(x)` when ry
   inferred no function type for `x` (#741).
+- Stop mode guards such as `is.list(x)` and `is.numeric(x)` from keeping a
+  stale type for `x` when ry inferred none of the tested mode; the guarded
+  arm now sees an unknown value (#752).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
+- Report a serialized workspace the parser stops reading early, such as an
+  `R/sysdata.rda` that holds an external pointer, as a degraded scope instead
+  of a complete inventory (#714).
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
+- Stop checking a closure's free variables against its defining frame once
+  `environment(f) <- rho` re-homes it, removing false RY070 reports on
+  lme4's `mkTheta <- NULL` R CMD check placeholders (#716).
 - Check files with long flat `else if` chains instead of skipping them at
   the 128-level syntax nesting limit. Up to 1024 `else if` arms may nest,
   counting chains inside chains; lavaan's `lav_object_inspect.R` is now
@@ -135,9 +147,19 @@ All notable changes to ry are documented in this file.
   positives in ade4 (#715).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Check files with thousands of top-level functions in linear time. torch's
+  generated `RcppExports.R` took 22 s alone and now takes under 2 s (#697).
+- Bind `.Generic`, `.Class`, `.Method`, and `.Group` in S3 methods named for
+  a known or NAMESPACE-registered generic, and in a helper that
+  `registerS3method()` or `.S3method()` registers in a top-level
+  `evalqOnLoad()` block, removing RY010 false positives such as lubridate's
+  `comp_posix_date` (#348).
 - Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
   as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
   S3 generic, so ry dispatches to `cut.dendrogram` (#711).
+- Keep a name assigned inside a `[` subscript bound when the receiver is
+  opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
+  reports in lme4 and DescTools (#713).
 
 ## [0.11.0] - 2026-09-22
 

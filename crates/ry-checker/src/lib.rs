@@ -303,13 +303,39 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
     }
 }
 
+/// The enclosing frame as it stood when a child frame was entered. The
+/// persistent maps make this snapshot O(1), so a file with N top-level
+/// functions does not rebuild an N-entry table for each body (issue #697).
 #[derive(Debug)]
 struct FunctionLookupFrame {
-    possible_functions: FxSet<String>,
+    bindings: Bindings,
+    parameters: FxSet<String>,
     /// Exact literal bindings in this frame. A possible callable without an
     /// exact identity blocks searching more distant frames for a contract.
-    definitions: FxMap<String, Span>,
+    definitions: PersistentMap<String, Span>,
     parent: Option<Arc<FunctionLookupFrame>>,
+}
+
+impl FunctionLookupFrame {
+    /// Whether a binding whose semantic name is `name` may hold a function.
+    fn possible_function(&self, name: &str) -> bool {
+        let possible = |raw: &str| {
+            self.bindings
+                .get(raw)
+                .is_some_and(|ty| self.parameters.contains(raw) || ty.mode.may_be_function())
+        };
+        if infer::semantic_argument_name(name) == name && possible(name) {
+            return true;
+        }
+        let mut quoted = String::with_capacity(name.len() + 2);
+        ['`', '"', '\''].into_iter().any(|quote| {
+            quoted.clear();
+            quoted.push(quote);
+            quoted.push_str(name);
+            quoted.push(quote);
+            possible(&quoted)
+        })
+    }
 }
 
 /// Inference context for one `[` subscript argument: the receiver's
@@ -377,7 +403,7 @@ pub(crate) struct DataMaskFrame {
     pub(crate) columns: FxSet<String>,
     /// The lexical bindings when the mask was entered. `.env$x` and
     /// `{{ x }}` bypass column shadowing and resolve here.
-    pub(crate) env: FxMap<String, RType>,
+    pub(crate) env: Bindings,
     /// An unknown effect inside the mask may have rebound the enclosing
     /// environment, so `env` keeps its names but not their types.
     pub(crate) env_unknown: bool,
@@ -452,7 +478,7 @@ pub struct Scope {
     pub(crate) known_strings: FxMap<String, Arc<str>>,
     pub(crate) literal_functions: FxMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
-    pub bindings: FxMap<String, RType>,
+    pub bindings: Bindings,
     /// Names whose current binding was installed by flow narrowing rather
     /// than by an R assignment. `insert` clears this marker, so branch merging
     /// can distinguish a temporary refinement from a rebinding.
@@ -487,7 +513,7 @@ pub struct Scope {
     pub(crate) lexical_functions: FxSet<String>,
     /// Exact source identity for a directly bound nested function. A name
     /// alone cannot select among same-spelled functions in different frames.
-    pub(crate) lexical_definitions: FxMap<String, Span>,
+    pub(crate) lexical_definitions: PersistentMap<String, Span>,
     /// Names a block whose evaluating verb is unproven (`local()`,
     /// `test_that()`) may have written into this frame. Such a binding is
     /// only possible, so a call head of that name keeps its stub (#722).
@@ -531,21 +557,10 @@ impl Scope {
     /// Enter a fresh execution frame while retaining outward call-head evidence.
     pub(crate) fn function_execution_scope(&self) -> Self {
         let mut scope = self.independent_execution_scope();
-        let possible_functions: FxSet<String> = self
-            .bindings
-            .iter()
-            .filter(|(name, ty)| self.is_parameter(name) || ty.mode.may_be_function())
-            .map(|(name, _)| infer::semantic_argument_name(name).to_string())
-            .collect();
-        let definitions = self
-            .lexical_definitions
-            .iter()
-            .filter(|(name, _)| possible_functions.contains(*name))
-            .map(|(name, span)| (name.clone(), *span))
-            .collect();
         scope.outward_functions = Some(Arc::new(FunctionLookupFrame {
-            possible_functions,
-            definitions,
+            bindings: self.bindings.clone(),
+            parameters: self.parameter_bindings.clone(),
+            definitions: self.lexical_definitions.clone(),
             parent: self.outward_functions.clone(),
         }));
         scope
@@ -565,7 +580,7 @@ impl Scope {
         let name = infer::semantic_argument_name(name);
         let mut frame = self.outward_functions.as_deref();
         while let Some(current) = frame {
-            if current.possible_functions.contains(name) {
+            if current.possible_function(name) {
                 return true;
             }
             frame = current.parent.as_deref();
@@ -581,7 +596,7 @@ impl Scope {
         let name = infer::semantic_argument_name(name);
         let mut frame = self.outward_functions.as_deref();
         while let Some(current) = frame {
-            if current.possible_functions.contains(name) {
+            if current.possible_function(name) {
                 return Some(current.definitions.get(name).copied());
             }
             frame = current.parent.as_deref();
@@ -614,7 +629,7 @@ impl Scope {
             }
         }
         self.clear_reference_bindings();
-        for ty in self.bindings.values_mut() {
+        for (_, ty) in self.bindings.iter_mut() {
             *ty = RType::unknown();
         }
         self.narrowed_bindings.clear();
@@ -941,6 +956,22 @@ impl Scope {
         self.lexical_functions.contains(name)
     }
 
+    /// Whether this frame's binding of the bare call head `name` may be the
+    /// function R calls, hiding a same-named stub: R's call lookup stops at a
+    /// function or opaque value, or a union with a closure member (#700),
+    /// and skips any other value. A write that may have escaped an unproven
+    /// `local()`/`test_that()` block is only a possible binding (#722).
+    pub(crate) fn binding_may_be_callee(&self, name: &str) -> bool {
+        !self.possible_block_writes.contains(name)
+            && self.get(name).is_some_and(|binding| {
+                binding.mode == Mode::Function
+                    || binding.mode.is_unknown()
+                    || binding.members.as_ref().is_some_and(|members| {
+                        members.iter().any(|member| member.mode == Mode::Function)
+                    })
+            })
+    }
+
     pub(crate) fn lexical_definition(&self, name: &str) -> Option<Span> {
         self.lexical_definitions.get(name).copied()
     }
@@ -1167,6 +1198,13 @@ pub(crate) struct FnTable {
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
     pub(crate) s3_methods: FxMap<(String, String), usize>,
+    // Names an unconditional top-level `registerS3method()`/`.S3method()`
+    // registers as S3 methods, whatever their spelling (#348).
+    pub(crate) registered_s3_methods: FxSet<String>,
+    // Names a global-frame literal binds where the definition collector
+    // does not record it (braces, `local()`, expression position), so
+    // `capture_literal_bindings` misses that definition.
+    pub(crate) unrecorded_global_literals: FxSet<String>,
     // Names of all top-level variable assignments across all files in
     // the project. Used to suppress RY010 for cross-file references:
     // when an identifier is not in the current scope but IS in this
@@ -1284,6 +1322,10 @@ impl FnTable {
                 .iter()
                 .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
         );
+        self.registered_s3_methods
+            .extend(collected.registered_s3_methods.iter().cloned());
+        self.unrecorded_global_literals
+            .extend(collected.unrecorded_global_literals.iter().cloned());
         self.known_vars.extend(collected.known_vars.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());
@@ -1371,6 +1413,8 @@ pub struct Checker {
     pub(crate) source: String,
     escaped_operator_bindings: bool,
     escaped_slot_bindings: bool,
+    /// Some external or imported name keeps an escaped (`\`) spelling.
+    escaped_external_bindings: bool,
     // When true, `emit` is a no-op. Set during pass-2 (fixpoint) return-
     // type refinement and closure-signature building so the single
     // inference engine can be used for both the pure and the diagnostic
@@ -1514,7 +1558,9 @@ pub struct Checker {
     // Indexed once per pass-3 run by `emit_diagnostics`;
     // `enter_function_body` drops the placeholder-invalidated rules
     // (RY010; RY080 only under body<-) from such a literal's internals.
-    dynamic_closure_literals: FxMap<Span, infer::dynamic_closure::PlaceholderKind>,
+    // Literals whose closure later receives `environment(x) <-` (issue
+    // #716) are walked without the defining frame's bindings.
+    dynamic_closure_literals: infer::dynamic_closure::DynamicClosures,
 }
 
 impl Checker {
@@ -1645,6 +1691,7 @@ impl Checker {
             source: String::new(),
             escaped_operator_bindings: false,
             escaped_slot_bindings: false,
+            escaped_external_bindings: false,
             discarding: false,
             in_dead_arm: false,
             fn_table,
@@ -1686,7 +1733,7 @@ impl Checker {
             stmt_continuations: HashMap::new(),
             formal_shadows: Vec::new(),
             formal_reads: FxMap::default(),
-            dynamic_closure_literals: FxMap::default(),
+            dynamic_closure_literals: Default::default(),
         }
     }
 
@@ -1834,7 +1881,7 @@ impl Checker {
         );
         infer::index_formal_reads(&file.stmts, &mut self.formal_reads);
         self.index_vacuous_helpers(&file.stmts);
-        self.dynamic_closure_literals.clear();
+        self.dynamic_closure_literals = Default::default();
         infer::dynamic_closure::index_dynamic_closure_literals(
             &file.stmts,
             &mut self.dynamic_closure_literals,
@@ -2090,25 +2137,30 @@ impl Checker {
     pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
         self.external_bindings = bindings;
         self.method_screens = std::sync::OnceLock::new();
-        self.refresh_escaped_slot_bindings();
+        self.refresh_escaped_bindings();
     }
 
     pub fn set_package_facts(&mut self, facts: ry_workspace::PackageFacts) {
         self.package_facts = facts;
     }
 
-    fn refresh_escaped_slot_bindings(&mut self) {
+    fn refresh_escaped_bindings(&mut self) {
         self.escaped_slot_bindings = self
             .external_bindings
             .iter()
             .chain(self.imported_from.keys())
             .any(|name| infer::custom_operator::escaped_name_may_mask_slot(name));
+        self.escaped_external_bindings = self
+            .external_bindings
+            .iter()
+            .chain(self.imported_from.keys())
+            .any(|name| name.contains('\\'));
     }
 
     pub fn set_imported_from(&mut self, imports: HashMap<String, String>) {
         self.imported_from = imports;
         self.method_screens = std::sync::OnceLock::new();
-        self.refresh_escaped_slot_bindings();
+        self.refresh_escaped_bindings();
     }
 
     pub fn set_external_s3_methods(&mut self, methods: HashSet<(String, String)>) {
@@ -2219,6 +2271,95 @@ impl std::hash::Hasher for FxHasher {
 /// why the checker uses them for identifier-keyed collections.
 pub type FxMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<FxHasher>>;
 pub type FxSet<K> = HashSet<K, std::hash::BuildHasherDefault<FxHasher>>;
+/// A persistent [`FxMap`]: `clone` is O(1) and shares structure, so entering
+/// a child frame does not copy every enclosing binding (issue #697).
+pub type PersistentMap<K, V> = imbl::GenericHashMap<
+    K,
+    V,
+    std::hash::BuildHasherDefault<FxHasher>,
+    imbl::shared_ptr::DefaultSharedPtr,
+>;
+
+/// A scope's bindings. The map is persistent, and the number of escaped
+/// (`\`) names is kept up to date, so the escaped-spelling guards need not
+/// scan every name on each assignment (issue #697).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Bindings {
+    map: PersistentMap<String, RType>,
+    escaped_names: usize,
+}
+
+impl std::ops::Deref for Bindings {
+    type Target = PersistentMap<String, RType>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
+}
+
+impl Bindings {
+    pub fn insert(&mut self, name: String, ty: RType) -> Option<RType> {
+        let escaped = name.contains('\\');
+        let previous = self.map.insert(name, ty);
+        if escaped && previous.is_none() {
+            self.escaped_names += 1;
+        }
+        previous
+    }
+
+    pub fn remove(&mut self, name: &str) -> Option<RType> {
+        let previous = self.map.remove(name);
+        if previous.is_some() && name.contains('\\') {
+            self.escaped_names -= 1;
+        }
+        previous
+    }
+
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.escaped_names = 0;
+    }
+
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut RType> {
+        self.map.get_mut(name)
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut RType)> {
+        self.map.iter_mut()
+    }
+
+    pub(crate) fn has_escaped_names(&self) -> bool {
+        self.escaped_names > 0
+    }
+}
+
+impl FromIterator<(String, RType)> for Bindings {
+    fn from_iter<I: IntoIterator<Item = (String, RType)>>(iter: I) -> Self {
+        let mut bindings = Self::default();
+        for (name, ty) in iter {
+            bindings.insert(name, ty);
+        }
+        bindings
+    }
+}
+
+impl IntoIterator for Bindings {
+    type Item = (String, RType);
+    type IntoIter = <PersistentMap<String, RType> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.map.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Bindings {
+    type Item = (&'a String, &'a RType);
+    type IntoIter = imbl::hashmap::Iter<'a, String, RType, imbl::shared_ptr::DefaultSharedPtr>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.map.iter()
+    }
+}
 
 #[cfg(test)]
 mod tests;

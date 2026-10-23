@@ -452,6 +452,46 @@ fn scaling_call_depth() {
     assert_subquadratic_scaling("call_depth", &sizes, &times);
 }
 
+/// `n` top-level wrappers in the shape of a generated `RcppExports.R` or
+/// torch's `gen-namespace.R`: each body branches and calls functions that
+/// are not defined anywhere.
+fn gen_top_level_definitions(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                "f{i} <- function(x, y) {{\n  if (!is_scalar(y)) {{\n    \
+                 .Call(`_pkg_f{i}_vector`, x, y)\n  }} else {{\n    \
+                 cpp_f{i}_scalar(x, y)\n  }}\n}}\n"
+            )
+        })
+        .collect()
+}
+
+/// **Top-level definitions (issue #697).** Each function body once cloned
+/// every enclosing binding, rebuilt the outward-callable table, and
+/// scanned every binding, lexical definition, and function name for each
+/// assignment, `if`, and unresolved call. torch's 4,286-wrapper
+/// `RcppExports.R` took 27 s.
+#[test]
+#[ignore]
+fn scaling_top_level_definitions() {
+    let sizes = [500usize, 1_000, 2_000, 4_000];
+    let mut parser = RParser::new().expect("parser init");
+    let times: Vec<Duration> = sizes
+        .iter()
+        .map(|&n| {
+            let src = gen_top_level_definitions(n);
+            let file = parser.parse("defs.R", &src).expect("parse");
+            timed_median(|| {
+                let mut c = Checker::new("defs.R");
+                c.check(&file);
+                let _ = c.take_diagnostics();
+            })
+        })
+        .collect();
+    assert_subquadratic_scaling("top_level_definitions", &sizes, &times);
+}
+
 /// A dense Latin-1 file -- every line carries a non-ASCII byte -- is the
 /// worst case of the #376 decode path: each high byte is its own invalid
 /// UTF-8 sequence, so the file yields thousands of spans that all need

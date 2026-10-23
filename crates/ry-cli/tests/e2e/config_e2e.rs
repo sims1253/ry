@@ -1182,7 +1182,7 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
         Option<(&'a str, &'a str)>,
         &'a [&'a str],
     );
-    let cases: [Case; 6] = [
+    let cases: [Case; 7] = [
         (
             CAP,
             &[USE, ("R/sysdata.rda", b"over-cap-bytes")],
@@ -1236,6 +1236,20 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
                 (
                     "R/sysdata.rda",
                     include_bytes!("../../../../testdata/serialized/empty-ascii.rda"),
+                ),
+            ],
+            Some(("sysdata.rda", "unsupported serialized input")),
+            &["sysdata", "genuinely_missing"],
+        ),
+        // A workspace the parser stops reading early (an external pointer,
+        // #714) is partial, never silently complete.
+        (
+            "",
+            &[
+                USE,
+                (
+                    "R/sysdata.rda",
+                    include_bytes!("../../../../testdata/serialized/extptr.rda"),
                 ),
             ],
             Some(("sysdata.rda", "unsupported serialized input")),

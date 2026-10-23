@@ -1025,9 +1025,26 @@ fn subset_methods_receive_s3_dispatch_context() {
 }
 
 #[test]
-fn subset_context_does_not_define_group_or_ordinary_variables() {
+fn namespace_registered_methods_receive_s3_dispatch_context() {
+    let source = "format.widget <- function(x, ...) .Generic\n";
+    let registered = check_with(source, |checker| {
+        checker.set_external_s3_methods(HashSet::from([("format".into(), "widget".into())]));
+    });
+    assert!(
+        registered.iter().all(|d| d.code != "RY010"),
+        "{registered:?}"
+    );
+    // `format` is no generic ry knows without the NAMESPACE entry.
+    let unregistered = check(source);
+    assert!(
+        unregistered.iter().any(|d| d.code == "RY010"),
+        "{unregistered:?}"
+    );
+}
+
+#[test]
+fn subset_context_does_not_define_ordinary_variables() {
     for source in [
-        "`[<-.widget` <- function(x, ...) .Group",
         "helper.widget <- function(x) .Generic",
         "`[<-` <- function(x) .Generic",
         "`[<-.` <- function(x) .Generic",

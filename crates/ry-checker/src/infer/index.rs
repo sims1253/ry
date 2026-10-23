@@ -369,11 +369,17 @@ impl Checker {
         // row count.
         if bt.class.contains("data.frame") && args.len() >= 2 {
             let column_arg = &args[1];
-            // A tibble's `[` drops only on an explicit `drop = TRUE`.
-            let drop = args.iter().find(|arg| arg.name.as_deref() == Some("drop"));
+            // A plain tibble's `[` keeps its class and drops only on an
+            // explicit `drop = TRUE`. Other subclasses are not modelled.
+            let tibble = bt.class == ClassVector::from_slice(&["tbl_df", "tbl", "data.frame"]);
+            // `drop` by name, else positionally as the third unnamed argument.
+            let drop = args
+                .iter()
+                .find(|arg| arg.name.as_deref() == Some("drop"))
+                .or_else(|| args.iter().filter(|arg| arg.name.is_none()).nth(2));
             let drop_false = match drop {
                 Some(arg) => matches!(arg.value, Expr::Logical(false, _)),
-                None => bt.class.contains("tbl_df"),
+                None => tibble,
             };
             let column = match &column_arg.value {
                 Expr::String(name, _) => bt
@@ -399,10 +405,15 @@ impl Checker {
                 if !drop_false {
                     return column;
                 }
-                // The subset keeps the receiver's class (a tibble stays a
-                // tibble, so its `$` still never partial-matches).
+                // A tibble stays a tibble, so its `$` still never
+                // partial-matches.
+                let class = if tibble {
+                    bt.class.clone()
+                } else {
+                    ClassVector::single("data.frame")
+                };
                 return RType::new(Mode::List, Length::One)
-                    .with_class(bt.class.clone())
+                    .with_class(class)
                     .with_columns(Arc::new(ColumnSchema {
                         columns: vec![(name, column)],
                         complete: true,

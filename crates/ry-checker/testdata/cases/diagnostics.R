@@ -399,9 +399,11 @@ tb[, "nvalid", drop = FALSE]$nv
 tb[, "nvalid"]$nv
 
 ## case: `$` on a tibble column subset with drop = TRUE is on a vector
-# expect: RY061
+# expect: RY061, RY061
+# The third positional argument of `[` is `drop` too.
 tb <- dplyr::group_by(data.frame(nvalid = 1:3, k = 1:3))
 tb[, "nvalid", drop = TRUE]$nv
+tb[, "nvalid", TRUE]$nv
 
 ## case: `$` prefix on a base data frame column subset partially matches
 # no-diag

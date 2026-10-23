@@ -377,7 +377,11 @@ expression: rows
 - case: "`$` on a tibble column subset with drop = TRUE is on a vector"
   diagnostics:
     - code: RY061
-      line: 404
+      line: 405
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error
+    - code: RY061
+      line: 406
       message: "$ operator is invalid for atomic vectors of mode `integer`"
       severity: error
 - case: "`$` prefix on a base data frame column subset partially matches"

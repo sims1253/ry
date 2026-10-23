@@ -2480,7 +2480,8 @@ impl Checker {
             let source = argument.1.as_deref()?;
             let caller_fn = self.fn_table.functions.live_named(&call.caller);
             if let Some(caller_fn) = caller_fn
-                && may_rebind_source_before(&caller_fn.body, source, call.call_start)
+                && (may_rebind_source_before(&caller_fn.body, source, call.call_start)
+                    || may_guard_source_before(&caller_fn.body, source, call.call_start))
             {
                 return None;
             }
@@ -2992,11 +2993,43 @@ impl Checker {
             scope.insert(base_name.clone(), updated);
             return true;
         }
+        if matches!(kind, IndexKind::Double)
+            && matches!(base_t.mode, Mode::List)
+            && base_t.class.is_classless()
+            && self.resolves_to_base("[[<-", scope)
+            && !ops_chooser::operator_rebound(self, "[[<-", scope)
+        {
+            // On a class-less list base `x[[N]] <- v` replaces a recorded
+            // `[[N]]` element like `$<-` does. `list()` numbers only unnamed
+            // elements, so the key is the position only when no element is
+            // named. A value that may be NULL could drop the element and
+            // shift the rest. Both take the computed-index path below.
+            let key = args
+                .first()
+                .and_then(|arg| extract_literal_int(&arg.value))
+                .map(|index| format!("[[{index}]]"));
+            if let Some(key) = key.filter(|key| {
+                !vt.mode.is_unknown()
+                    && !matches!(vt.mode, Mode::Null | Mode::Union)
+                    && base_t.columns.as_ref().is_some_and(|schema| {
+                        schema.get(key).is_some()
+                            && schema.names().iter().all(|name| name.starts_with("[["))
+                    })
+            }) {
+                scope.insert(
+                    base_name.clone(),
+                    type_with_assigned_column(base_t, &key, vt),
+                );
+                return true;
+            }
+        }
         let Some(col) = assigned_column_name(kind, args) else {
             // A dynamic `$`/`[[` write proves that the record may contain
             // additional fields. Preserve known fields but mark the schema
             // incomplete so a later unknown-field read degrades to opaque
-            // instead of emitting RY060.
+            // instead of emitting RY060. A positional `[[` or `[` write on a
+            // class-less list may replace or drop any element, so it forgets
+            // the element types. A classed list may have its own method.
             if matches!(
                 kind,
                 IndexKind::Dollar | IndexKind::Double | IndexKind::Single
@@ -3007,6 +3040,11 @@ impl Checker {
                     .as_ref()
                     .map(|schema| (**schema).clone())
                     .unwrap_or_default();
+                if matches!(kind, IndexKind::Double | IndexKind::Single)
+                    && base_t.class.is_classless()
+                {
+                    schema.columns.clear();
+                }
                 schema.complete = false;
                 scope.insert(base_name.clone(), base_t.with_columns(Arc::new(schema)));
                 return true;

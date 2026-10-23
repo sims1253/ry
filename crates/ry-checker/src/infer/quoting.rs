@@ -93,6 +93,59 @@ pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_start: 
     })
 }
 
+/// A condition that reads `source` before the call, as in an enclosing
+/// `if (!is.null(source))`, an early `if (is.null(source)) return()`, or
+/// `!is.null(source) && callee(source)`, may exclude the default from the
+/// call. Only evaluated reads that start before the call count, so neither
+/// the call's own argument (`if (!callee(source))`), an assignment target
+/// (`if ((source <<- 1L) > 0)`), nor a field name (`opts$source`) is a
+/// guard. Source order does not prove the guard dominates the call.
+pub(crate) fn may_guard_source_before(body: &[Stmt], source: &str, call_start: usize) -> bool {
+    const READS: Walk = Walk {
+        assign_targets: false,
+        assign_operands: false,
+        dollar_args: false,
+        fn_bodies: false,
+        ..Walk::ALL
+    };
+    let source = semantic_argument_name(source);
+    let reads_source = |condition: &Expr| {
+        walk_expr(condition, READS, |node, _| match node {
+            AstNode::Expr(Expr::Ident { name, span })
+                if span.start < call_start && semantic_argument_name(name) == source =>
+            {
+                ControlFlow::Break(())
+            }
+            _ => ControlFlow::Continue(Descend::Into),
+        })
+        .is_break()
+    };
+    let walk = Walk {
+        fn_bodies: false,
+        ..Walk::ALL
+    };
+    body.iter().any(|statement| {
+        walk_stmt(statement, walk, |node, _| {
+            let condition = match node {
+                AstNode::Stmt(Stmt::If { cond, .. } | Stmt::While { cond, .. }) => cond,
+                AstNode::Expr(Expr::If { cond, .. }) => cond.as_ref(),
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::AndAnd | BinOpKind::OrOr,
+                    lhs,
+                    ..
+                }) => lhs.as_ref(),
+                _ => return ControlFlow::Continue(Descend::Into),
+            };
+            if reads_source(condition) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(Descend::Into)
+            }
+        })
+        .is_break()
+    })
+}
+
 impl Checker {
     /// Diagnose the narrow, provable lazy-default ordering bug where a
     /// parameter is used by an earlier top-level statement than the direct

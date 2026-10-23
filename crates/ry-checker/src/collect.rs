@@ -2355,6 +2355,23 @@ mod collect_walker_tests {
         );
     }
 
+    #[test]
+    fn first_parameter_use_skips_missing_probes() {
+        assert_eq!(first_use("missing(p)", "p"), None);
+        assert_eq!(
+            first_use("if (missing(p)) stop(); substitute(p)", "p"),
+            Some(FirstParameterUse::Defused)
+        );
+        assert_eq!(
+            first_use("if (missing(p)) stop(); print(p)", "p"),
+            Some(FirstParameterUse::Normal)
+        );
+        assert_eq!(
+            first_use("missing(p + 1)", "p"),
+            Some(FirstParameterUse::Normal)
+        );
+    }
+
     /// `$` field subscripts and control-flow tests stay in the walk: the
     /// field is a synthesized identifier node in the visited tree, and
     /// an `if`/`while` condition reads the promise like any other

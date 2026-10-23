@@ -90,3 +90,56 @@ f <- function(x = NULL, verbose = FALSE) {
   }
 }
 f()
+
+## case: a boolean alias of a not-null test narrows the NULL default
+# no-diag
+g_alias <- function(size = NULL, label = NULL) {
+  has_size <- !is.null(size)
+  if (has_size) {
+    if (!size %in% c("a", "b")) stop("unknown column")
+  }
+  no_label <- is.null(label)
+  if (!no_label) {
+    if (label %in% c("a", "b")) "known"
+  }
+}
+g_alias()
+
+## case: a boolean alias stops narrowing once either name is rebound
+# expect: RY001, RY001
+f <- function(x = NULL, y = NULL) {
+  has_x <- !is.null(x)
+  x <- NULL
+  if (has_x) {
+    if (x > 0) 1
+  }
+  has_y <- !is.null(y)
+  has_y <- TRUE
+  if (has_y) {
+    if (y > 0) 1
+  }
+}
+f()
+
+## case: a boolean alias stops narrowing after any write it may depend on
+# expect: RY001, RY001, RY001
+# `ok` also tests `y`; `cb` may run `assign("has_x", TRUE, envir =
+# parent.frame())`; a backticked target writes the same `x`.
+f <- function(x = NULL, y = NULL, cb = function() NULL) {
+  ok <- !is.null(x) && is.numeric(y)
+  y <- NULL
+  if (ok) {
+    if (y > 0) 1
+  }
+  has_x <- !is.null(x)
+  cb()
+  if (has_x) {
+    if (x > 0) 1
+  }
+  has_x <- !is.null(x)
+  `x` <- NULL
+  if (`has_x`) {
+    if (x > 0) 1
+  }
+}
+f()

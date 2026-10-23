@@ -712,6 +712,11 @@ impl Checker {
                     .filter(|_| !scope.uncertainty.literal_values && !scope.uncertainty.effects)
                     .filter(|_| ops_chooser::base_assignment(self, target, value, scope))
                     .map(Arc::<str>::from);
+                // `has_x <- !is.null(x)` lets `if (has_x)` narrow like the
+                // predicate until either name is written.
+                let condition_alias = matches!(target, Expr::Ident { .. })
+                    && !matches!(extract_builtin_type_narrowing(value), Narrowing::None)
+                    && ops_chooser::base_assignment(self, target, value, scope);
                 let function_alias = self.function_alias_target(value, scope);
                 // A plain identifier assignment copies the current value,
                 // including a proven vector alternative retained after a
@@ -761,6 +766,9 @@ impl Checker {
                     };
                     if let Some(value) = known_string {
                         scope.set_known_string(name, value);
+                    }
+                    if condition_alias {
+                        scope.set_condition_alias(name, value);
                     }
                     if self.capture_references {
                         self.install_reference_definition(
@@ -1872,6 +1880,7 @@ impl Checker {
         };
         scope.clear_ops_facts();
         scope.clear_known_strings();
+        scope.clear_condition_aliases();
         scope.uncertainty |= then_delta.uncertainty.continuing(then_diverges)
             | else_delta.uncertainty.continuing(else_diverges);
         // Compute definite assignments only when both arms change a type,

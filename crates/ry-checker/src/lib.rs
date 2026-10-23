@@ -477,6 +477,9 @@ pub struct Scope {
     /// Closed class-only vector construction, lost on writes and control-flow merges.
     pub(crate) plain_ops_vectors: FxSet<String>,
     pub(crate) known_strings: FxMap<String, Arc<str>>,
+    /// Locals bound to a guard predicate (`has_x <- !is.null(x)`), keyed by
+    /// the local. See `Scope::set_condition_alias`.
+    pub(crate) condition_aliases: FxMap<String, Arc<literal_values::ConditionAlias>>,
     pub(crate) literal_functions: FxMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: Bindings,
@@ -545,6 +548,7 @@ impl Scope {
         scope.scalar_asserted_bindings.clear();
         scope.loop_vector_bindings.clear();
         scope.known_strings.clear();
+        scope.condition_aliases.clear();
         scope.unreachable = false;
         // The new frame's code is never the syntactic operand of the
         // caller's in-flight `[` argument, so data.table select forms
@@ -609,6 +613,7 @@ impl Scope {
     /// but make value uncertainty persist across writes.
     pub(crate) fn invalidate_unknown_effects(&mut self) {
         self.clear_known_strings();
+        self.clear_condition_aliases();
         if self.journal.depth > 0 {
             let names: HashSet<_> = self
                 .bindings
@@ -723,6 +728,8 @@ impl Scope {
 
     fn insert_value(&mut self, name: String, t: RType) {
         self.clear_known_string(&name);
+        let written = semantic_argument_name(&name);
+        self.retain_condition_aliases(|read| read != written);
         if !self.uncertainty.escaped_slot_names {
             self.uncertainty.escaped_slot_names =
                 infer::custom_operator::escaped_name_may_mask_slot(&name);

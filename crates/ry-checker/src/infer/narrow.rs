@@ -1013,6 +1013,27 @@ impl Checker {
     /// fails, so the arm it selects sees what a supplied argument would
     /// (#710).
     pub(crate) fn extract_branch_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
+        // `if (has_x)` / `if (!has_x)` test the predicate `has_x` holds.
+        let negated;
+        let cond = match cond {
+            Expr::Ident { name, .. } => scope.condition_alias(name).unwrap_or(cond),
+            Expr::UnaryOp {
+                op: UnaryOpKind::Not,
+                expr,
+                span,
+            } => match ident_name(expr).and_then(|name| scope.condition_alias(name)) {
+                Some(alias) => {
+                    negated = Expr::UnaryOp {
+                        op: UnaryOpKind::Not,
+                        expr: Box::new(alias.clone()),
+                        span: *span,
+                    };
+                    &negated
+                }
+                None => cond,
+            },
+            _ => cond,
+        };
         let narrowing = self.extract_type_narrowing(cond, scope);
         if scope.default_parameter_bindings.is_empty() {
             return narrowing;

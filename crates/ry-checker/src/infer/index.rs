@@ -283,8 +283,27 @@ impl Checker {
                 };
                 if let Some(idx) = int_idx {
                     if let Some(schema) = &bt.columns {
-                        let key = format!("[[{}]]", idx as i64);
-                        if let Some(t) = schema.get(&key) {
+                        // `list()` keys only unnamed elements as `[[N]]`, so
+                        // the key is the position only when no element is
+                        // named. A partly named local list reads position N,
+                        // unless an earlier element may be NULL: `x$a <- NULL`
+                        // drops `a` and shifts the rest.
+                        let positional = schema.names().iter().all(|n| n.starts_with("[["));
+                        let element = if positional {
+                            schema.get(&format!("[[{}]]", idx as i64))
+                        } else if schema.locally_constructed
+                            && schema.complete
+                            && idx >= 1.0
+                            && idx.fract() == 0.0
+                            && schema.columns.iter().take(idx as usize).all(|(_, t)| {
+                                !t.mode.is_unknown() && !matches!(t.mode, Mode::Null | Mode::Union)
+                            })
+                        {
+                            schema.columns.get(idx as usize - 1).map(|(_, t)| t.clone())
+                        } else {
+                            None
+                        };
+                        if let Some(t) = element {
                             return t;
                         }
                         // Index not in schema: if all elements have the

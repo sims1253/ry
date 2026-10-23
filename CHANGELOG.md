@@ -210,6 +210,10 @@ All notable changes to ry are documented in this file.
 - Vendor r-typeshed 7d874359: `rlang::caller_arg()` captures its argument, so
   a validator default such as `arg_name = rlang::caller_arg(x)` no longer
   counts as forcing `x` (#688).
+- Keep trusting a `length(x) == 1L &&` guard when the project's only
+  `length.*` methods are `function(x) length(unclass(x))`, and name the
+  method, with a note at its definition, when RY032 distrusts the guard
+  because of one (#701).
 - Apply `--typeshed` stubs' `captures_promise` arguments when deciding whether
   a project function captures its formal, so a wrapper around a stubbed
   capture no longer reports its caller's name as RY010 (#776).

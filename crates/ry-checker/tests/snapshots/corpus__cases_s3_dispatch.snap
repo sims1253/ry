@@ -128,3 +128,5 @@ expression: rows
       severity: warning
 - case: counting dots before UseMethod does not force them
   diagnostics: []
+- case: a storage-length method keeps the length(x) == 1L guard
+  diagnostics: []

@@ -13,6 +13,13 @@ probe <- function(x) length(x) == 1L && x == ""
 "#;
 
 fn check_package(namespace: &str, source: &str) -> Vec<String> {
+    check_package_diagnostics(namespace, source)
+        .into_iter()
+        .map(|diagnostic| diagnostic.code.to_string())
+        .collect()
+}
+
+fn check_package_diagnostics(namespace: &str, source: &str) -> Vec<ry_checker::Diagnostic> {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("R")).unwrap();
     std::fs::write(
@@ -43,7 +50,6 @@ fn check_package(namespace: &str, source: &str) -> Vec<String> {
         .check()
         .into_iter()
         .flat_map(|(_, diagnostics)| diagnostics)
-        .map(|diagnostic| diagnostic.code.to_string())
         .collect()
 }
 
@@ -110,4 +116,86 @@ fn reassigned_guarded_operand_still_warns_in_package_mode() {
         "probe <- function(x) length(x) == 1L && { x <- c(1, 2); x == 1L }\n",
     );
     assert!(codes.contains(&"RY032".to_string()), "{codes:?}");
+}
+
+/// Issue #701: a method that reports the storage length cannot make the
+/// guard hold for a longer object, so it leaves the guard trusted.
+#[test]
+fn storage_length_method_keeps_the_guard() {
+    for method in [
+        "length.cell <- function(x) length(unclass(x))\n",
+        "length.cell <- function(object) {\n  length(unclass(object))\n}\n",
+    ] {
+        let codes = check_package(
+            "S3method(length, cell)\n",
+            &format!("{method}{}", GUARD_SOURCE),
+        );
+        assert!(!codes.contains(&"RY032".to_string()), "{method}: {codes:?}");
+    }
+}
+
+/// Any other method, or a masked `unclass`, still distrusts the guard, and
+/// the warning names the method that did it (#701).
+#[test]
+fn distrusted_guard_names_the_length_method() {
+    let source = "length.cell <- function(x) length(unclass(x))\n\
+                  length.doc <- function(x) {\n  length(x$body)\n}\n\
+                  probe <- function(x) length(x) == 1L && x == \"\"\n";
+    let diagnostics =
+        check_package_diagnostics("S3method(length, cell)\nS3method(length, doc)\n", source);
+    let [warning] = &diagnostics[..] else {
+        panic!("{diagnostics:?}");
+    };
+    assert_eq!(warning.code, "RY032");
+    assert!(
+        warning.message.contains(
+            "the `length(x) == 1` guard is not trusted because `length.doc` may report 1 for a longer object"
+        ),
+        "{}",
+        warning.message
+    );
+    let [related] = &warning.related[..] else {
+        panic!("{:?}", warning.related);
+    };
+    assert!(related.path.ends_with("code.R"), "{}", related.path);
+    assert_eq!(related.span.start, source.find("function(x) {").unwrap());
+    assert_eq!(related.message, "`length.doc` is defined here");
+
+    // A masked `unclass`, in any spelling, can make the method lie.
+    for mask in [
+        "unclass <- function(x) x[1L]",
+        "`unclass` <- function(x) x[1L]",
+        "\"unclass\" <- function(x) x[1L]",
+    ] {
+        let masked = check_package_diagnostics(
+            "S3method(length, cell)\n",
+            &format!(
+                "{mask}\nlength.cell <- function(x) length(unclass(x))\nprobe <- function(x) length(x) == 1L && x == \"\"\n"
+            ),
+        );
+        assert!(
+            masked
+                .iter()
+                .any(|d| d.code == "RY032" && d.message.contains("`length.cell` may report 1")),
+            "{mask}: {masked:?}"
+        );
+    }
+    // A registration with no project definition names the method without
+    // a location.
+    // So does an imported method, whose body ry cannot read either.
+    for namespace in [
+        "S3method(length, remote)\n",
+        "importFrom(otherpkg, length.remote)\n",
+    ] {
+        let unseen = check_package_diagnostics(namespace, GUARD_SOURCE);
+        let [warning] = &unseen[..] else {
+            panic!("{namespace}: {unseen:?}");
+        };
+        assert!(
+            warning.code == "RY032" && warning.message.contains("`length.remote` may report 1"),
+            "{namespace}: {}",
+            warning.message
+        );
+        assert!(warning.related.is_empty(), "{:?}", warning.related);
+    }
 }

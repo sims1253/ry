@@ -704,7 +704,7 @@ impl Checker {
         args: &[Arg],
         scope: &mut Scope,
     ) -> Option<RType> {
-        if !matches!(lookup_name, "test_that" | "describe" | "it") {
+        if !crate::semantic_lists::is_testthat_block_verb(lookup_name) {
             return None;
         }
         use crate::resolve::SpecialCallProvenance;

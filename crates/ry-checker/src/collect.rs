@@ -495,6 +495,12 @@ impl Checker {
         if function_outward_writes(&[], stmts).opaque {
             Arc::make_mut(&mut self.fn_table).unproven_top_level = true;
         }
+        let superassigned = index::superassignment_writes(&[], stmts).names;
+        if !superassigned.is_empty() {
+            Arc::make_mut(&mut self.fn_table)
+                .superassigned
+                .extend(superassigned);
+        }
     }
 
     /// Inventory syntactically visible writes separately from the narrower

@@ -389,3 +389,23 @@ f <- function(x, p) {
   x[{ a <- 1; if (p) b <- 2; a }]
   b
 }
+
+## case: `$` prefix on a tibble column subset is an undefined column
+# expect: RY060, RY060
+# A tibble's `[` keeps the tibble class and drops to a vector only on
+# `drop = TRUE`, so `$` on the subset still never partial-matches (#771).
+tb <- dplyr::group_by(data.frame(nvalid = 1:3, k = 1:3))
+tb[, "nvalid", drop = FALSE]$nv
+tb[, "nvalid"]$nv
+
+## case: `$` on a tibble column subset with drop = TRUE is on a vector
+# expect: RY061
+tb <- dplyr::group_by(data.frame(nvalid = 1:3, k = 1:3))
+tb[, "nvalid", drop = TRUE]$nv
+
+## case: `$` prefix on a base data frame column subset partially matches
+# no-diag
+# A base data.frame subset stays a base data.frame, by name or position.
+df <- data.frame(nvalid = 1:3, k = 1:3)
+df[, "nvalid", drop = FALSE]$nv
+df[, 1, drop = FALSE]$nv

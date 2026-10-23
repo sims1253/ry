@@ -369,35 +369,40 @@ impl Checker {
         // row count.
         if bt.class.contains("data.frame") && args.len() >= 2 {
             let column_arg = &args[1];
-            let drop_false = args.iter().any(|arg| {
-                arg.name.as_deref() == Some("drop") && matches!(arg.value, Expr::Logical(false, _))
-            });
+            // A tibble's `[` drops only on an explicit `drop = TRUE`.
+            let drop = args.iter().find(|arg| arg.name.as_deref() == Some("drop"));
+            let drop_false = match drop {
+                Some(arg) => matches!(arg.value, Expr::Logical(false, _)),
+                None => bt.class.contains("tbl_df"),
+            };
             let column = match &column_arg.value {
-                Expr::String(name, _) => bt.columns.as_ref().and_then(|schema| schema.get(name)),
+                Expr::String(name, _) => bt
+                    .columns
+                    .as_ref()
+                    .and_then(|schema| schema.get(name))
+                    .map(|ty| (name.clone(), ty)),
                 Expr::Integer(index, _) if *index >= 1 => bt
                     .columns
                     .as_ref()
                     .and_then(|schema| schema.columns.get(*index as usize - 1))
-                    .map(|(_, ty)| ty.clone()),
+                    .cloned(),
                 Expr::Double(index, _) if *index >= 1.0 && index.fract() == 0.0 => bt
                     .columns
                     .as_ref()
                     .and_then(|schema| schema.columns.get(*index as usize - 1))
-                    .map(|(_, ty)| ty.clone()),
+                    .cloned(),
                 _ => None,
             };
             let _ = self.infer_table_index_args(args, &bt, index_scope);
-            let column = column.map(subset);
-            if let Some(column) = column {
+            if let Some((name, column)) = column {
+                let column = subset(column);
                 if !drop_false {
                     return column;
                 }
-                let name = match &column_arg.value {
-                    Expr::String(name, _) => name.clone(),
-                    _ => "[[1]]".to_string(),
-                };
+                // The subset keeps the receiver's class (a tibble stays a
+                // tibble, so its `$` still never partial-matches).
                 return RType::new(Mode::List, Length::One)
-                    .with_class(ClassVector::single("data.frame"))
+                    .with_class(bt.class.clone())
                     .with_columns(Arc::new(ColumnSchema {
                         columns: vec![(name, column)],
                         complete: true,

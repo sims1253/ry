@@ -1,6 +1,7 @@
 //! Enumerate serialized R bindings without evaluating R code.
 
 use super::file_stem_binding;
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
@@ -24,7 +25,8 @@ pub enum InventoryFailure {
     DecodedByteLimit,
     ParserResourceLimit,
     /// A valid serialization this reader does not handle (ASCII or native
-    /// binary encodings, or a non-pairlist object).
+    /// binary encodings, a non-pairlist object, or a stream the parser
+    /// stops reading before its end).
     Unsupported,
     Unreadable,
 }
@@ -61,8 +63,9 @@ impl InventoryFailure {
 ///
 /// Resource limits use a single file-stem fallback ([`file_stem_binding`])
 /// so unbound-variable analysis (RY010) stays live. Other failures keep the
-/// empty-binding fallback but are reported as unavailable rather than known
-/// empty. `None` means the path does not exist.
+/// empty-binding fallback (or, for a stream read only partly, the names read
+/// so far) but are reported as unavailable rather than known complete.
+/// `None` means the path does not exist.
 pub(super) fn serialized_inventory(path: &Path, cap: u64) -> Option<SerializedInventory> {
     let file = match File::open(path) {
         Ok(file) => file,
@@ -162,7 +165,11 @@ fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
     {
         return unavailable(InventoryFailure::Unsupported);
     }
-    let parsed = match rds2rust::read_rds_lazy(payload) {
+    let input = TrackedInput {
+        bytes: payload,
+        read_end: Cell::new(0),
+    };
+    let parsed = match rds2rust::read_rds_lazy_with_input(&input) {
         Ok(parsed) => parsed,
         Err(error) if is_resource_limit(&error) => {
             return unavailable(InventoryFailure::ParserResourceLimit);
@@ -177,9 +184,40 @@ fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
         rds2rust::RObject::Null => HashSet::new(),
         _ => return unavailable(InventoryFailure::Unsupported),
     };
+    // A workspace ends with its pairlist terminator. rds2rust 0.3 leaves an
+    // external pointer's payload unread and stops at a premature terminator,
+    // so a stream it did not read to the end is only a partial inventory.
+    let complete = input.read_end.get() == payload.len();
     SerializedInventory {
         bindings,
-        failure: None,
+        failure: (!complete).then_some(InventoryFailure::Unsupported),
+    }
+}
+
+/// Parser input over the decoded stream that records how far it was read.
+struct TrackedInput<'a> {
+    bytes: &'a [u8],
+    read_end: Cell<usize>,
+}
+
+impl rds2rust::RdsInput for TrackedInput<'_> {
+    fn read_at(&self, offset: u64, len: usize) -> rds2rust::Result<Vec<u8>> {
+        let start = usize::try_from(offset).unwrap_or(usize::MAX);
+        let end = start.saturating_add(len);
+        let chunk = self
+            .bytes
+            .get(start..end)
+            .ok_or(rds2rust::Error::UnexpectedEofDetail {
+                position: start,
+                needed: len,
+                available: self.bytes.len().saturating_sub(start),
+            })?;
+        self.read_end.set(self.read_end.get().max(end));
+        Ok(chunk.to_vec())
+    }
+
+    fn len(&self) -> Option<u64> {
+        Some(self.bytes.len() as u64)
     }
 }
 
@@ -494,6 +532,20 @@ mod tests {
         let repaired = serialized_inventory(&path, cap).unwrap();
         assert_eq!(repaired.failure, None);
         assert!(repaired.bindings.is_empty());
+    }
+
+    #[test]
+    fn stream_the_parser_stops_short_of_is_a_partial_inventory() {
+        // rds2rust 0.3 leaves an external pointer's payload unread and then
+        // ends the workspace early (#714). The names read so far are real,
+        // but the inventory must not pass for complete.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sysdata.rda");
+        let extptr = include_bytes!("../../../testdata/serialized/extptr.rda");
+        std::fs::write(&path, extptr).unwrap();
+        let inventory = serialized_inventory(&path, 4096).unwrap();
+        assert!(inventory.bindings.contains("a_first"));
+        assert_eq!(inventory.failure, Some(InventoryFailure::Unsupported));
     }
 
     #[test]

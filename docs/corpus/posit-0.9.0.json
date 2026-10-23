@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "5765afb32a7d56e645cfd3599c4fa5971ec1a5bde8861e6cee3b52d4127b3f7c",
-  "ry_commit": "a33877383c710c4c90f31af0c475c10080e514e1",
+  "source_sha256": "43b503fc762ce1b9d9e85ac0640880ed4bed445932ba905fdfdbe2ba2d0907d5",
+  "ry_commit": "6dd0b48adf87ec26b9355a96a769d9a3225f542a",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -152,7 +152,7 @@
       "repo": "tidyverse/lubridate",
       "stars": 801,
       "commit": "8e9f2b289ee8384d9499e2527fb1e449c97e5370",
-      "diagnostics": 5
+      "diagnostics": 3
     },
     {
       "name": "infer",
@@ -1900,24 +1900,6 @@
       "column": 64,
       "label": "true_positive",
       "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/ops-compare.r",
-      "line": 20,
-      "column": 64,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/ops-compare.r",
-      "line": 55,
-      "column": 14,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
     },
     {
       "package": "lubridate",
@@ -3775,13 +3757,13 @@
     }
   ],
   "classification": {
-    "false_positive": 283,
+    "false_positive": 281,
     "true_positive": 87
   },
   "audit_group_counts": {
     "reassign-scope": 2,
     "type-narrowing": 25,
-    "manual-audit": 138,
+    "manual-audit": 136,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 1,
     "test-fixture": 80,
@@ -3838,6 +3820,7 @@
     "Block-frame closures shadow base stubs (#718): a `name <- function(...)` bound inside an R6Class() member list, a local() block or a testthat block is now a lexical callable, as in a plain function body. Three reviewed false positives disappear, all dplyr function-shadowing (the #350 sites): R/data-mask.R:112:7, R/data-mask.R:117:7 and R/data-mask.R:131:7, RY091 `eval()` missing `expr` where the R6 method calls its own local `eval` closure. No identity is added and every true positive remains; the tidyverse ledger drops the same three identities (P4a).",
     "If-arm bindings merge wherever the if sits (#694): an `if` used as a value and an `if` ending a `{}` block or braced call argument now merge their arm bindings into the enclosing frame like a statement `if`, so later reads no longer report RY010. Four reviewed false positives disappear: blogdown R/serve.R:164:22 (reassign-scope) and R/serve.R:166:38 (type-narrowing), `proc` bound in the processx arm of `pid = if (is_psx <- ...) {...}` and read only under `if (is_psx && ...)`; dplyr R/summarise.R:342:34 (reassign-scope, the #350 site), `group_sizes` bound in both arms of the `if` ending withCallingHandlers({...}); and tinytex R/install.R:335:31 (type-narrowing), `tmp` bound in the `add` arm of `cmd = if (add) {...}` and read only under `if (add && ret == 0)`. No identity is added and every true positive remains; the tidyverse ledger drops the same dplyr identity.",
     "An opaque call head is not the same-named stub (#722): a parameter or unknown call result bound to a call head's name may be a function, and R's call lookup stops at it, so ry no longer applies the base/stats signature or return type there. Two reviewed false positives disappear: torch tests/testthat/test-save.R:415:30 and :416:30 (type-narrowing), `d$x` and `d$y` on `d <- dt()` where `dt <- dataset(...)` was typed as `stats::dt`. One reviewed true positive is dropped: pkgdown R/topics.R:271:16 RY091 (upstream-package), which read the default `error_call = error_call()` as rlang's error_call() missing `call`. R never reaches rlang::error_call there: the call head resolves to the formal itself, and forcing it errors with 'promise already under evaluation'. The real bug stays reported by RY109 at the same location, which this ledger keeps as a true positive. No identity is added; the tidyverse ledger is unchanged.",
+    "S3 dispatcher bindings (#348): a helper registered with registerS3method()/.S3method() inside a top-level evalqOnLoad() block, when it is the name's only global literal, now binds .Generic, .Class, .Method, and .Group like any S3 method. Two reviewed false positives disappear (manual-audit): lubridate R/ops-compare.r:20:64 and :55:14, RY010 on `.Generic` in comp_posix_date, which evalqOnLoad registers as the Date/POSIXt comparison method. No identity is added and every true positive remains.",
     "A `$`/`[[` miss on a partly known list is unknown (#689): a `$` name missing from a list whose names ry only partly knows (`list(...)`, an `lapply()` result, fields written to an opaque value or environment) is no longer NULL, and a `[[` miss on such a schema no longer takes the recorded fields' common type. Seven reviewed false positives disappear, all type-narrowing: httr R/callback.R:100:5 (RY070, `callback_env[[name]]` typed as the seeded `callback_env$request <- NULL`), testthat R/parallel-taskq.R:205:13 (RY001, `private$tasks$idle[i]` after `$<-` writes to other fields of the opaque `private$tasks`), and torch tests/testthat/test-ignite.R:196:16, :248:16, :251:16, :265:16 and :266:16 (RY061, `o$param_groups[[1]]$...` where `$<-` writes had recorded one field of the opaque optimizer). One reviewed true positive is dropped: sparklyr R/config.R:375:9 (RY001, upstream-package), `additional_configs$method %in% ...` with `additional_configs <- list(...)`. ry claimed `$method` is NULL only because it treated the fields of `list(...)` as known; the package's own caller (R/connection.R:264) always passes `method = method`, and only a direct call to the exported spark_config_packages() with rapids and no `method` reaches the empty condition. No identity is added; the tidyverse ledger is unchanged."
   ]
 }

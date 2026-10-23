@@ -117,8 +117,14 @@ All notable changes to ry are documented in this file.
   arm now sees an unknown value (#752).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
+- Report a serialized workspace the parser stops reading early, such as an
+  `R/sysdata.rda` that holds an external pointer, as a degraded scope instead
+  of a complete inventory (#714).
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
+- Stop checking a closure's free variables against its defining frame once
+  `environment(f) <- rho` re-homes it, removing false RY070 reports on
+  lme4's `mkTheta <- NULL` R CMD check placeholders (#716).
 - Check files with long flat `else if` chains instead of skipping them at
   the 128-level syntax nesting limit. Up to 1024 `else if` arms may nest,
   counting chains inside chains; lavaan's `lav_object_inspect.R` is now
@@ -137,6 +143,13 @@ All notable changes to ry are documented in this file.
   double matrix from `gc` (#709).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Check files with thousands of top-level functions in linear time. torch's
+  generated `RcppExports.R` took 22 s alone and now takes under 2 s (#697).
+- Bind `.Generic`, `.Class`, `.Method`, and `.Group` in S3 methods named for
+  a known or NAMESPACE-registered generic, and in a helper that
+  `registerS3method()` or `.S3method()` registers in a top-level
+  `evalqOnLoad()` block, removing RY010 false positives such as lubridate's
+  `comp_posix_date` (#348).
 - Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
   as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
   S3 generic, so ry dispatches to `cut.dendrogram` (#711).

@@ -284,6 +284,61 @@ g <- function(x) {
   res$total / res$nv
 }
 
+## case: environment replacement hides the defining frame's NULL placeholder
+# no-diag
+# lme4's modular.R shape. After `environment<-`, `mkTheta` resolves in
+# `rho`, not in the frame that binds it to NULL.
+make_devfun <- function(rho) {
+  mkTheta <- NULL
+  devfun <- function(par) mkTheta(par)
+  environment(devfun) <- rho
+  devfun
+}
+
+## case: environment replacement reaches literals picked by an if value
+# no-diag
+# lme4's mkdevfun shape: the closure comes from an if/else value.
+make_branch <- function(rho, linear) {
+  mkTheta <- NULL
+  ff <- if (linear) {
+    function(par) mkTheta(par)
+  } else {
+    function(pars) mkTheta(pars[1])
+  }
+  environment(ff) <- rho
+  ff
+}
+
+## case: without environment replacement the NULL placeholder is what R calls
+# expect: RY070
+# R errors: could not find function "mkTheta".
+make_plain <- function() {
+  mkTheta <- NULL
+  devfun <- function(par) mkTheta(par)
+  devfun(3)
+}
+
+## case: environment replacement reaches literals bound in if and else branches
+# no-diag
+make_branch_assign <- function(rho, linear) {
+  mkTheta <- NULL
+  if (linear) ff <- function(par) mkTheta(par) else ff <- function(pars) mkTheta(pars[1])
+  environment(ff) <- rho
+  ff
+}
+
+## case: environment replacement after a rebind leaves the earlier closure checked
+# expect: RY070
+# Only the second literal is re-homed; the first runs in the NULL frame.
+make_rebind <- function(rho) {
+  mkTheta <- NULL
+  ff <- function(par) mkTheta(par)
+  ff(1)
+  ff <- function(par) par
+  environment(ff) <- rho
+  ff
+}
+
 ## case: an assignment in a subscript of an opaque receiver binds in the frame
 # no-diag
 # lme4's mlist2vec: base `[` evaluates its subscripts in the calling frame.

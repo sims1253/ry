@@ -1575,24 +1575,6 @@
       "severity": "warning",
       "message": "`if` condition is `union[logical<len=1>, logical<len=?>, logical<len=0>]`, expected length-1 logical (or a value R coerces to logical)"
     },
-    "lubridate::RY010::R/ops-compare.r:20:64": {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/ops-compare.r",
-      "line": 20,
-      "column": 64,
-      "severity": "warning",
-      "message": "variable `.Generic` is not bound in this scope"
-    },
-    "lubridate::RY010::R/ops-compare.r:55:14": {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/ops-compare.r",
-      "line": 55,
-      "column": 14,
-      "severity": "warning",
-      "message": "variable `.Generic` is not bound in this scope"
-    },
     "lubridate::RY109::R/guess.r:265:64": {
       "package": "lubridate",
       "code": "RY109",

@@ -2365,7 +2365,7 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
 fn user_stub_captures_reach_collected_wrappers() {
     // A `--typeshed` stub's `captures_promise` formal must reach collection
     // (#776): a wrapper forwarding its formal there quotes it, so the
-    // caller's name is no read. A stub that drops an embedded capture makes
+    // caller's name is not read. A stub that drops an embedded capture makes
     // the wrapper force its formal again. Swapping the stubs re-collects.
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

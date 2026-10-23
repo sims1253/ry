@@ -1439,6 +1439,16 @@ pub(crate) fn captured_arguments(
                 .and_then(|db| db.functions.get(name))
                 .filter(captures),
         );
+    } else if stubs.is_empty() {
+        // Without user stubs, the index is the answer; skip the merge buffer.
+        let Some(entries) = promise_capture_index().get(name) else {
+            return Vec::new();
+        };
+        let mut captured = vec![false; args.len()];
+        for (_, signature) in entries {
+            capture_signature_arguments(signature, args, &mut captured);
+        }
+        return captured;
     } else {
         let embedded = promise_capture_index().get(name).into_iter().flatten();
         signatures.extend(

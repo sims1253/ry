@@ -78,3 +78,15 @@ f <- function(x = NULL) {
 }
 f()
 f(NULL)
+
+## case: a length guard in a disjunction does not narrow the NULL default
+# expect: RY001, RY001
+f <- function(x = NULL, verbose = FALSE) {
+  if (length(x) > 0 || verbose) {
+    if (x) 1
+  }
+  if (length(x) == 1 || is.na(x)) {
+    if (x) 1
+  }
+}
+f()

@@ -339,6 +339,8 @@ fn non_empty_length_guard_var(expr: &Expr) -> Option<String> {
 
 /// The argument of a `missing(x)` call, bare or with any `pkg::` prefix
 /// (`bare_name`), as the supply analysis's `is_missing_head` reads it.
+/// A qualified head is still an `Expr::Ident`, so `missing(x)` and
+/// `!missing(x)` accept the same forms.
 fn missing_test_var(expr: &Expr) -> Option<String> {
     let Expr::Call { func, args, .. } = expr else {
         return None;

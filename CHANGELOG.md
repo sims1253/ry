@@ -144,6 +144,10 @@ All notable changes to ry are documented in this file.
   (r-typeshed affe513f) now return a data frame from `read.table` and its
   `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
   double matrix from `gc` (#709).
+- Let a literal positional `x[[1]] <- value` replace the element type a
+  list recorded, and make a computed `x[[i]] <- value` or a positional
+  `x[i] <- value` forget the recorded element types, removing RY061 false
+  positives in ade4 (#715).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
 - Check files with thousands of top-level functions in linear time. torch's
@@ -165,6 +169,9 @@ All notable changes to ry are documented in this file.
 - Read a literal `x[[N]]` on a partly named list by position: `list()`
   numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
   no longer reads the unnamed list and now reports RY061 on `$b` (#758).
+- Let an S3 generic inherit `{{ x }}` defusing from its project methods, as it
+  already inherits `enquo()` quoting, so `generic(df, col = mpg)` no longer
+  reports `mpg` as RY010 when the method forwards `{{ col }}` (#687).
 - Stop RY010 from reporting a closure's free name that a braced call
   argument binds later, as in `suppressWarnings({ ... })`, a `switch()` arm,
   or `local({ ... })` when `local` may be masked (#690).

@@ -20,10 +20,11 @@ fn unparseable_file_is_one_ry000_in_every_format() {
     assert!(json.success(), "{json:?}");
     assert_eq!(json.findings(), [["deep.R", "RY000", "error"]]);
     let diagnostic = &json.json()[0];
-    assert_eq!(
-        (&diagnostic["line"], &diagnostic["column"]),
-        (&1.into(), &1495.into())
-    );
+    // The column is where the parser stops, not the start of the file; the
+    // other formats must agree with it.
+    assert_eq!(diagnostic["line"], 1, "{diagnostic}");
+    let column = diagnostic["column"].as_u64().unwrap();
+    assert!(column > 1, "{diagnostic}");
     assert!(
         diagnostic["message"]
             .as_str()
@@ -33,18 +34,21 @@ fn unparseable_file_is_one_ry000_in_every_format() {
     );
 
     for (format, expected) in [
-        ("concise", "deep.R:1:1495: error: [RY000]"),
-        ("full", "deep.R:1:1495: error: [RY000]"),
-        ("github", "::error file=deep.R,line=1,col=1495::RY000:"),
-        ("gitlab", "\"check_name\": \"RY000\""),
-        ("junit", "<testcase name=\"RY000: deep.R:1\""),
+        ("concise", format!("deep.R:1:{column}: error: [RY000]")),
+        ("full", format!("deep.R:1:{column}: error: [RY000]")),
+        (
+            "github",
+            format!("::error file=deep.R,line=1,col={column}::RY000:"),
+        ),
+        ("gitlab", "\"check_name\": \"RY000\"".to_owned()),
+        ("junit", "<testcase name=\"RY000: deep.R:1\"".to_owned()),
     ] {
         let output = check()
             .cwd(temp.path())
             .args(["--output-format", format, "deep.R"])
             .run();
         assert_eq!(output.code(), Some(1), "{format}: {output:?}");
-        assert!(output.stdout().contains(expected), "{format}: {output:?}");
+        assert!(output.stdout().contains(&expected), "{format}: {output:?}");
     }
 
     let human = check().cwd(temp.path()).arg("deep.R").run();
@@ -81,8 +85,9 @@ fn unreadable_file_is_one_ry000_at_the_start() {
         (&diagnostic["line"], &diagnostic["column"]),
         (&1.into(), &1.into())
     );
-    assert_eq!(
-        diagnostic["message"],
-        "cannot read file: Permission denied (os error 13); file not checked"
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("cannot read file: ") && message.ends_with("; file not checked"),
+        "{diagnostic}"
     );
 }

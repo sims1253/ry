@@ -989,8 +989,9 @@ impl Checker {
         }
     }
 
-    /// The narrowing for a condition that selects code: an `if` test or the
-    /// left of `&&`/`||`. A defaulted parameter's type describes only the
+    /// The narrowing for a condition that selects code: an `if` test, the
+    /// left of `&&`/`||`, or an assertion (`stopifnot()`) whose passing path
+    /// is the continuation. A defaulted parameter's type describes only the
     /// omitted-argument call shape
     /// (`diagnostic_parameter_type`). A passing test that reads it but
     /// proves nothing about it (`is_tensor(dims)`, `"pt" %in%
@@ -1024,9 +1025,10 @@ impl Checker {
     }
 
     /// The names a passing test must have read for `cond` to evaluate to
-    /// `truth`. A logical operator needs one from either operand on its
-    /// short-circuit path (`&&` true, `||` false) and from both otherwise;
-    /// `!` flips the path.
+    /// `truth`. A logical operator needs one from either operand on the path
+    /// that evaluates both (`&&` true, `||` false) and from both on the
+    /// short-circuit path, where either operand may have decided it; `!`
+    /// flips the path.
     fn tested_names(&self, cond: &Expr, truth: bool) -> BTreeSet<String> {
         match cond {
             Expr::BinOp {

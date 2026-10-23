@@ -423,29 +423,31 @@ expression: rows
   diagnostics: []
 - case: a negated user predicate stop guard leaves the continuation unknown
   diagnostics: []
+- case: a user predicate assertion leaves the continuation unknown
+  diagnostics: []
 - case: the arm a failing user predicate selects keeps the specialised default
   diagnostics:
     - code: RY061
-      line: 1012
+      line: 1021
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
 - case: a quoted name in a guard is not a test of the specialised default
   diagnostics:
     - code: RY061
-      line: 1019
+      line: 1028
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
     - code: RY061
-      line: 1020
+      line: 1029
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
     - code: RY061
-      line: 1021
+      line: 1030
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
 - case: a guard that does not read the specialised default keeps its type
   diagnostics:
     - code: RY061
-      line: 1028
+      line: 1037
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error

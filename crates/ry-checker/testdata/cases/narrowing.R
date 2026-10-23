@@ -1005,6 +1005,15 @@ numel_checked <- function(dims = 2) {
 }
 numel_checked()
 
+## case: a user predicate assertion leaves the continuation unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel_asserted <- function(dims = 2) {
+  stopifnot(is_tensor(dims))
+  dims$numel()
+}
+numel_asserted()
+
 ## case: the arm a failing user predicate selects keeps the specialised default
 # expect: RY061
 is_tensor <- function(x) inherits(x, "tensor")

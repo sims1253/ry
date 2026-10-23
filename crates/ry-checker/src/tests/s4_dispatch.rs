@@ -208,6 +208,38 @@ fn a_masked_registration_helper_leaves_every_generic_unknown() {
 }
 
 #[test]
+fn only_a_helper_binding_a_registration_can_see_masks_it() {
+    // Each of these reaches a registration's lookup of the helper.
+    for masking in [
+        "f <- function() signature <<- function(...) NULL\n",
+        "f <- function(x) assign(\"c\", function(...) NULL)\n",
+        "register <- function(signature) setMethod(\"g\", signature(\"A\", \"logical\"), function(x, y) NULL)\n",
+        "register <- function() {\n  c <- function(...) \"A\"\n  setMethod(\"g\", c(\"A\", \"logical\"), function(x, y) NULL)\n}\n",
+    ] {
+        let methods = format!("{masking}{CHR_NUM}");
+        assert_eq!(
+            selected(&methods, "g(new(\"A\"), 2)").1,
+            Mode::Opaque,
+            "{masking}"
+        );
+    }
+    // A formal or local of a function that registers nothing lives in a
+    // frame no registration reads (#780).
+    for unrelated in [
+        "f <- function(c) c\n",
+        "f <- function(x) tryCatch(x, error = function(c) FALSE)\n",
+        "f <- function(x) {\n  c <- 1\n  for (signature in x) NULL\n  x\n}\n",
+    ] {
+        let methods = format!("{unrelated}{CHR_NUM}");
+        assert_eq!(
+            selected(&methods, "g(new(\"A\"), 2)").1,
+            Mode::Integer,
+            "{unrelated}"
+        );
+    }
+}
+
+#[test]
 fn a_masked_helper_leaves_a_registered_generic_unknown_for_any_class() {
     // The masked `signature("Q")` registers `length` for `A` in R.
     let source = "setClass(\"A\", representation(v = \"numeric\"))\n\

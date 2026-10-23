@@ -686,6 +686,12 @@ impl Checker {
     // subscript arguments, nested function bodies — so the policy is
     // `Walk::ALL` with no skip rules at all.
     fn collect_declared_globals_stmt(&mut self, s: &Stmt) {
+        if masks_s4_registration(s) {
+            Arc::make_mut(&mut self.fn_table)
+                .functions
+                .s4_mut()
+                .mark_all_incomplete();
+        }
         let _ = walk_stmt(
             s,
             Walk::ALL,
@@ -710,12 +716,6 @@ impl Checker {
                 };
                 if installer && !self.fn_table.may_install_bindings {
                     Arc::make_mut(&mut self.fn_table).may_install_bindings = true;
-                }
-                if masks_s4_registration(node) {
-                    Arc::make_mut(&mut self.fn_table)
-                        .functions
-                        .s4_mut()
-                        .mark_all_incomplete();
                 }
                 if let AstNode::Expr(Expr::Call { func, args, .. }) = node
                     && let Expr::Ident { name, .. } = func.as_ref()
@@ -1843,10 +1843,52 @@ fn nonempty_strings(expr: &Expr) -> bool {
     }
 }
 
-/// Whether `node` binds a name S4 registration collection reads by
-/// spelling (`signature <- function(...) ...`), so a registering call may
-/// not reach the methods function it is read as.
-fn masks_s4_registration(node: AstNode<'_>) -> bool {
+/// Whether `s` binds a name S4 registration collection reads by spelling
+/// (`signature <- function(...) ...`), so a registering call may not reach
+/// the methods function it is read as. A formal or a plain local of a
+/// function lives in that function's frame, so it masks only registrations
+/// the function itself makes (#780); `<<-` and `assign()` may reach any
+/// frame.
+fn masks_s4_registration(s: &Stmt) -> bool {
+    walk_stmt(s, Walk::ALL, |node, _| match node {
+        AstNode::Expr(function @ Expr::Function { .. }) if !registers_s4(function) => {
+            let escapes = walk_expr(function, Walk::ALL, |inner, _| {
+                if binds_s4_helper(inner, false) {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(Descend::Into)
+                }
+            })
+            .is_break();
+            if escapes {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(Descend::Skip)
+            }
+        }
+        node if binds_s4_helper(node, true) => ControlFlow::Break(()),
+        _ => ControlFlow::Continue(Descend::Into),
+    })
+    .is_break()
+}
+
+/// Whether `function` makes an S4 registration call anywhere inside it.
+fn registers_s4(function: &Expr) -> bool {
+    walk_expr(function, Walk::ALL, |node, _| match node {
+        AstNode::Expr(Expr::Call { func, .. })
+            if matches!(func.as_ref(), Expr::Ident { name, .. }
+                if matches!(bare_name(name), "setMethod" | "setGeneric")) =>
+        {
+            ControlFlow::Break(())
+        }
+        _ => ControlFlow::Continue(Descend::Into),
+    })
+    .is_break()
+}
+
+/// Whether `node` binds a name S4 registration reads by spelling. With
+/// `frame_local` false, only writes that may leave the current frame count.
+fn binds_s4_helper(node: AstNode<'_>, frame_local: bool) -> bool {
     let masks = |name: &str| {
         matches!(
             semantic_argument_name(name),
@@ -1860,16 +1902,11 @@ fn masks_s4_registration(node: AstNode<'_>) -> bool {
         }
     }
     match node {
-        AstNode::Stmt(Stmt::Assign { target, .. }) => root(target).is_some_and(masks),
-        AstNode::Stmt(Stmt::For { name, .. }) => masks(name),
         AstNode::Expr(Expr::BinOp {
-            op: BinOpKind::Assign | BinOpKind::SuperAssign,
+            op: BinOpKind::SuperAssign,
             lhs,
             ..
         }) => root(lhs).is_some_and(masks),
-        AstNode::Expr(Expr::Function { params, .. }) => {
-            params.iter().any(|param| masks(&param.name))
-        }
         AstNode::Expr(Expr::Call { func, args, .. }) => {
             matches!(func.as_ref(), Expr::Ident { name, .. }
                 if matches!(bare_name(name), "assign" | "delayedAssign" | "makeActiveBinding"))
@@ -1877,6 +1914,17 @@ fn masks_s4_registration(node: AstNode<'_>) -> bool {
                     .first()
                     .and_then(|argument| string_literal(&argument.value))
                     .is_some_and(masks)
+        }
+        _ if !frame_local => false,
+        AstNode::Stmt(Stmt::Assign { target, .. }) => root(target).is_some_and(masks),
+        AstNode::Stmt(Stmt::For { name, .. }) => masks(name),
+        AstNode::Expr(Expr::BinOp {
+            op: BinOpKind::Assign,
+            lhs,
+            ..
+        }) => root(lhs).is_some_and(masks),
+        AstNode::Expr(Expr::Function { params, .. }) => {
+            params.iter().any(|param| masks(&param.name))
         }
         _ => false,
     }

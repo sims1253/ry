@@ -142,3 +142,83 @@ evalqOnLoad(registerS3method("print", "foo", helper))
 helper <- function(x) .Generic
 helper <- function(x) x
 evalqOnLoad(registerS3method("print", "foo", helper))
+
+# A generic may run statements before `UseMethod()` (#774). R hands its
+# methods the original argument promises, so a method's `{{ x }}` still
+# reaches the generic's callers unless the preamble forces that argument.
+
+## case: a validation preamble before UseMethod keeps the method's embrace
+# no-diag
+# #774, cards R/ard_summary.R: `check_not_missing(data)` runs before
+# dispatch, as `stopifnot()` does here.
+summ_checked <- function(data, ...) {
+  stopifnot(is.data.frame(data))
+  UseMethod("summ_checked")
+}
+summ_checked.data.frame <- function(data, variables, ...) {
+  dplyr::select(data, {{ variables }})
+}
+summ_plain <- function(data, ...) UseMethod("summ_plain")
+summ_plain.data.frame <- function(data, variables, ...) {
+  dplyr::select(data, {{ variables }})
+}
+summ_checked(mtcars, variables = mpg)
+summ_plain(mtcars, variables = cyl)
+
+## case: a method that evaluates the argument still reports it after a preamble
+# expect: RY010
+summ_printed <- function(data, ...) {
+  stopifnot(is.data.frame(data))
+  UseMethod("summ_printed")
+}
+summ_printed.data.frame <- function(data, variables, ...) print(variables)
+summ_printed(mtcars, variables = unbound_column)
+
+## case: a preamble that forces the embraced argument still reports it
+# expect: RY010, RY010
+# R evaluates `col` and `...` before dispatch, so `mpg` and `hp` error
+# before the method's embrace can defuse them.
+summ_forced <- function(data, col, ...) {
+  force(col)
+  UseMethod("summ_forced")
+}
+summ_forced.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_dots <- function(data, ...) {
+  stopifnot(length(list(...)) > 0)
+  UseMethod("summ_dots")
+}
+summ_dots.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_forced(mtcars, col = mpg)
+summ_dots(mtcars, col = hp)
+
+## case: a preamble that forces through a default or a dots element still reports it
+# expect: RY010, RY010, RY010
+# Forcing `other` evaluates its default `col`; `..1` and `...elt(1)` force
+# the first dots argument. R errors on `mpg`, `hp`, and `wt` before dispatch.
+summ_default <- function(data, col, other = col) {
+  force(other)
+  UseMethod("summ_default")
+}
+summ_default.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_dot1 <- function(data, ...) {
+  force(..1)
+  UseMethod("summ_dot1")
+}
+summ_dot1.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_elt <- function(data, ...) {
+  force(...elt(1))
+  UseMethod("summ_elt")
+}
+summ_elt.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_default(mtcars, col = mpg)
+summ_dot1(mtcars, col = hp)
+summ_elt(mtcars, col = wt)
+
+## case: counting dots before UseMethod does not force them
+# no-diag
+summ_counted <- function(data, ...) {
+  stopifnot(...length() > 0)
+  UseMethod("summ_counted")
+}
+summ_counted.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_counted(mtcars, col = mpg)

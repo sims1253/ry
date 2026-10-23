@@ -142,6 +142,9 @@ All notable changes to ry are documented in this file.
 - Follow the same partial matching for `$` on a base data frame, so
   `df$nv` reads a unique `nvalid` column instead of reporting RY060.
   Tibbles keep RY060, since their `$` never partial-matches (#753).
+- Keep a tibble's class on a column subset such as `tb[, "a"]`, which a
+  tibble never drops to a vector without `drop = TRUE`. A prefix `$` on it
+  now reports RY060 instead of nothing or a false RY061 (#771).
 - Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
   results such as `merge(a, b)[, 1] - 1`. The vendored base stubs
   (r-typeshed affe513f) now return a data frame from `read.table` and its

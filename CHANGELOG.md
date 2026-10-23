@@ -178,6 +178,9 @@ All notable changes to ry are documented in this file.
 - Stop RY010 from reporting a closure's free name that a braced call
   argument binds later, as in `suppressWarnings({ ... })`, a `switch()` arm,
   or `local({ ... })` when `local` may be masked (#690).
+- Skip a `missing(col)` check when deciding whether a function defuses `col`,
+  so `if (missing(col)) stop(); dplyr::select(data, {{ col }})` no longer
+  makes callers' bare column names RY010 (#688).
 
 ## [0.11.0] - 2026-09-22
 

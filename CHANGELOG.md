@@ -136,6 +136,9 @@ All notable changes to ry are documented in this file.
 - Follow R's partial matching for `$` on a plain list: a unique prefix such
   as `res$nv` reads the `nvalid` field instead of NULL, removing a false
   RY040 (#721).
+- Follow the same partial matching for `$` on a base data frame, so
+  `df$nv` reads a unique `nvalid` column instead of reporting RY060.
+  Tibbles keep RY060, since their `$` never partial-matches (#753).
 - Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
   results such as `merge(a, b)[, 1] - 1`. The vendored base stubs
   (r-typeshed affe513f) now return a data frame from `read.table` and its
@@ -156,6 +159,9 @@ All notable changes to ry are documented in this file.
 - Keep a name assigned inside a `[` subscript bound when the receiver is
   opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
   reports in lme4 and DescTools (#713).
+- Read a literal `x[[N]]` on a partly named list by position: `list()`
+  numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
+  no longer reads the unnamed list and now reports RY061 on `$b` (#758).
 - Stop RY010 from reporting a closure's free name that a braced call
   argument binds later, as in `suppressWarnings({ ... })`, a `switch()` arm,
   or `local({ ... })` when `local` may be masked (#690).

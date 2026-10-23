@@ -336,3 +336,21 @@ expression: rows
       line: 754
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
+- case: "`$` on a base data frame partially matches a unique prefix"
+  diagnostics: []
+- case: "`$` on a base data frame with an ambiguous prefix is an undefined column"
+  diagnostics:
+    - code: RY060
+      line: 736
+      message: "column `nv` not found in data frame schema; available columns: nvalid, nvx"
+      severity: error
+- case: "`$` prefix on a tibble is an undefined column"
+  diagnostics:
+    - code: RY060
+      line: 743
+      message: "column `nv` not found in data frame schema; available columns: nvalid, k"
+      severity: error
+    - code: RY060
+      line: 744
+      message: "column `nv` not found in data frame schema; available columns: nvalid, k, z"
+      severity: error

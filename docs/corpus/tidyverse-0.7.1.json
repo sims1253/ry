@@ -921,6 +921,6 @@
     "S3 dispatcher bindings (#348): a helper registered with registerS3method()/.S3method() inside a top-level evalqOnLoad() block, when it is the name's only global literal, now binds .Generic, .Class, .Method, and .Group like any S3 method. Two unowned identities disappear (plan-32-33): lubridate R/ops-compare.r:20:64 and :55:14, RY010 on `.Generic` in comp_posix_date, which evalqOnLoad registers as the Date/POSIXt comparison method (getS3method(\"<\", \"Date\") resolves to it). No identity is added and every true positive remains.",
     "Top-level on_load() blocks bind package names (#691): plain assignments in a top-level rlang-style on_load({...}) block are now package bindings. No ledger identity changes; the ungated rlang reports lose five RY010 false positives, R/cnd-abort.R:855:10, R/env-special.R:220:16, and R/trace.R:1082:8, :1094:16 and :1096:16 (has_cli_format, base_pkg_env, has_cli_start_app, which rlang binds in on_load() blocks). The Posit ledger drops 46 reviewed false positives (namespace-on-load)."
   ],
-  "ry_commit": "35f6d1b00ad5bdb036c7b8aa757949162f86009c",
+  "ry_commit": "9b4d54e33ca52678fde1c64dd40bd7c8b9e27f5c",
   "source_sha256": "29106469fc14185e58eba1d055d91ec3fa2862b4bea628ed6285ffce5629ef8a"
 }

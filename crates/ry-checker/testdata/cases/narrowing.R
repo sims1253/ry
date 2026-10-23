@@ -973,7 +973,7 @@ numel <- function(dims = 2) {
 }
 numel()
 
-## case: a compound inherits guard on a specialised default leaves its arm unknown
+## case: a compound inherits guard narrows a specialised default
 # no-diag
 lambda_of <- function(model = "ZZZ", lambda = NULL) {
   if (inherits(model, "ets") && is.null(lambda)) model$lambda
@@ -1030,6 +1030,18 @@ quoted_guard <- function(x = 2) {
   if (length(~ x) == 2) x$field
 }
 quoted_guard()
+
+## case: a missing() or is.null() operand that may pass keeps the specialised default
+# expect: RY061, RY061
+is_tensor <- function(x) inherits(x, "tensor")
+bar_missing <- function(x = 2) {
+  if (missing(x) || is_tensor(x)) x$bar
+}
+bar_null <- function(x = 2) {
+  if (is.null(x) || is_tensor(x)) x$bar
+}
+bar_missing()
+bar_null()
 
 ## case: a guard that does not read the specialised default keeps its type
 # expect: RY061

@@ -415,7 +415,7 @@ expression: rows
       severity: warning
 - case: a user predicate on a specialised default leaves its arm unknown
   diagnostics: []
-- case: a compound inherits guard on a specialised default leaves its arm unknown
+- case: a compound inherits guard narrows a specialised default
   diagnostics: []
 - case: a names membership guard on a specialised default leaves its arm unknown
   diagnostics: []
@@ -445,9 +445,19 @@ expression: rows
       line: 1030
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
+- case: a missing() or is.null() operand that may pass keeps the specialised default
+  diagnostics:
+    - code: RY061
+      line: 1038
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+    - code: RY061
+      line: 1041
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
 - case: a guard that does not read the specialised default keeps its type
   diagnostics:
     - code: RY061
-      line: 1037
+      line: 1049
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error

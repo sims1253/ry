@@ -287,9 +287,13 @@ impl Checker {
     /// Resolve a function signature by name through [`Self::stub_ladder`].
     /// Returns `None` when no stub knows the name.
     pub(crate) fn resolve_typeshed_sig(&self, name: &str) -> Option<FunctionSig> {
+        self.resolve_typeshed_sig_ref(name).cloned()
+    }
+
+    /// [`Self::resolve_typeshed_sig`] without the clone, for read-only use.
+    pub(crate) fn resolve_typeshed_sig_ref<'a>(&'a self, name: &'a str) -> Option<&'a FunctionSig> {
         self.stub_ladder(name, StubLookup::Ordinary)
             .find_map(|(typeshed, member, _)| typeshed.functions.get(member))
-            .cloned()
     }
 
     /// Inherit declarative NSE metadata when a source package defines an S3

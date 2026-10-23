@@ -56,20 +56,26 @@ pub(crate) enum Narrowing {
 impl Narrowing {
     /// Whether any fact in this narrowing is about one of `names`.
     pub(crate) fn mentions_any(&self, names: &HashSet<String>) -> bool {
-        if names.is_empty() {
-            return false;
-        }
+        !names.is_empty() && self.mentions_where(&|var| names.contains(var))
+    }
+
+    /// Whether any fact in this narrowing is about `name`.
+    pub(crate) fn mentions(&self, name: &str) -> bool {
+        self.mentions_where(&|var| var == name)
+    }
+
+    fn mentions_where(&self, about: &dyn Fn(&str) -> bool) -> bool {
         match self {
             Narrowing::Compound {
                 base,
                 on_true,
                 on_false,
             } => {
-                base.mentions_any(names)
+                base.mentions_where(about)
                     || on_true
                         .iter()
                         .chain(on_false)
-                        .any(|narrowing| narrowing.mentions_any(names))
+                        .any(|narrowing| narrowing.mentions_where(about))
             }
             Narrowing::None => false,
             Narrowing::Positive { var, .. }
@@ -78,7 +84,7 @@ impl Narrowing {
             | Narrowing::NonNullElse { var }
             | Narrowing::ScalarElse { var, .. }
             | Narrowing::ScalarThen { var }
-            | Narrowing::Supplied { var } => names.contains(var),
+            | Narrowing::Supplied { var } => about(var),
         }
     }
 }
@@ -785,6 +791,16 @@ fn apply_single_narrowing_branch<'a>(
     None
 }
 
+/// The target of a predicate a compound guard accepts: a one-argument
+/// type predicate, or `inherits(x, "cls")` with a literal class.
+fn compound_predicate_target(name: &str, args: &[Arg]) -> Option<RType> {
+    match crate::semantic_lists::bare_name(name) {
+        "inherits" if args.len() == 2 => predicate_call_target("inherits", args),
+        name if args.len() == 1 => predicate_target(name),
+        _ => None,
+    }
+}
+
 /// Whether `target` tests only a mode (`is.list`, `is.numeric`, ...).
 /// `Mode::Opaque` targets are class predicates (`inherits`, `is.<class>`),
 /// and a concrete mode can still carry a class claim (`is.data.frame` is
@@ -860,11 +876,10 @@ impl Checker {
                 let Some(name) = ident_name(func) else {
                     return false;
                 };
-                predicate_target(crate::semantic_lists::bare_name(name)).is_some()
+                compound_predicate_target(name, args).is_some()
                     && self.resolves_to_base(name, scope)
                     && !scope.data_mask_unknown
                     && !scope.uncertainty.effects
-                    && args.len() == 1
                     && matches!(args[0].value, Expr::Ident { .. })
             }
             _ => false,
@@ -886,8 +901,8 @@ impl Checker {
                 ..
             } => Self::compound_guard_facts(expr, !truth),
             Expr::Call { func, args, .. } => {
-                let Some(target) = ident_name(func)
-                    .and_then(|name| predicate_target(crate::semantic_lists::bare_name(name)))
+                let Some(target) =
+                    ident_name(func).and_then(|name| compound_predicate_target(name, args))
                 else {
                     return Vec::new();
                 };
@@ -1003,12 +1018,12 @@ impl Checker {
             return narrowing;
         }
         let undecided = |truth: bool| -> Vec<Narrowing> {
-            self.tested_names(cond, truth)
+            self.tested_names(cond, truth, scope)
                 .into_iter()
                 .filter(|name| {
                     scope.is_default_parameter(name)
                         && scope.get(name).is_some_and(|t| !t.mode.is_unknown())
-                        && !narrowing.mentions_any(&HashSet::from([name.clone()]))
+                        && !narrowing.mentions(name)
                 })
                 .map(|var| Narrowing::Supplied { var })
                 .collect()
@@ -1024,12 +1039,14 @@ impl Checker {
         }
     }
 
-    /// The names a passing test must have read for `cond` to evaluate to
-    /// `truth`. A logical operator needs one from either operand on the path
-    /// that evaluates both (`&&` true, `||` false) and from both on the
-    /// short-circuit path, where either operand may have decided it; `!`
-    /// flips the path.
-    fn tested_names(&self, cond: &Expr, truth: bool) -> BTreeSet<String> {
+    /// The names that some passing (TRUE) test ry cannot decide read, on
+    /// every way `cond` can evaluate to `truth`. A failing test proves
+    /// nothing, and neither does a test ry narrows itself (`missing(x)`,
+    /// `is.null(x)`). `a && b` is TRUE one way (both TRUE) and FALSE two
+    /// ways (`a` FALSE, or `a` TRUE then `b` FALSE), so the names of a
+    /// two-way path are those both ways share; `||` is the mirror image and
+    /// `!` flips the path.
+    fn tested_names(&self, cond: &Expr, truth: bool, scope: &Scope) -> BTreeSet<String> {
         match cond {
             Expr::BinOp {
                 op: op @ (BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr),
@@ -1037,22 +1054,26 @@ impl Checker {
                 rhs,
                 ..
             } => {
-                let lhs = self.tested_names(lhs, truth);
-                let rhs = self.tested_names(rhs, truth);
+                let both = self.tested_names(rhs, truth, scope);
+                let lhs_decides = self.tested_names(lhs, truth, scope);
                 if matches!(op, BinOpKind::And | BinOpKind::AndAnd) == truth {
-                    lhs.union(&rhs).cloned().collect()
+                    lhs_decides.union(&both).cloned().collect()
                 } else {
-                    lhs.intersection(&rhs).cloned().collect()
+                    let mut rhs_decides = self.tested_names(lhs, !truth, scope);
+                    rhs_decides.extend(both);
+                    lhs_decides.intersection(&rhs_decides).cloned().collect()
                 }
             }
             Expr::UnaryOp {
                 op: UnaryOpKind::Not,
                 expr,
                 ..
-            } => self.tested_names(expr, !truth),
+            } => self.tested_names(expr, !truth, scope),
             _ if truth => {
                 let mut names = BTreeSet::new();
                 self.evaluated_names(cond, &mut names);
+                let decided = self.extract_type_narrowing(cond, scope);
+                names.retain(|name| !decided.mentions(name));
                 names
             }
             _ => BTreeSet::new(),
@@ -1083,13 +1104,13 @@ impl Checker {
                     if crate::semantic_lists::is_quoting_form(callee) {
                         return ControlFlow::Continue(Descend::Skip);
                     }
-                    let Some(signature) = self.resolve_typeshed_sig(callee) else {
+                    let Some(signature) = self.resolve_typeshed_sig_ref(callee) else {
                         return ControlFlow::Continue(Descend::Into);
                     };
                     let bindings = match_params(&signature.params, args);
                     for (index, argument) in args.iter().enumerate() {
                         if !matches!(
-                            eval_mode_for_arg(&signature, &bindings, index),
+                            eval_mode_for_arg(signature, &bindings, index),
                             Some(
                                 EvalMode::QuotedSymbol
                                     | EvalMode::QuotedExpression

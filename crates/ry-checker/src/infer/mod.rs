@@ -3003,11 +3003,10 @@ impl Checker {
             // elements, so the key is the position only when no element is
             // named. A value that may be NULL could drop the element and
             // shift the rest. Both take the computed-index path below.
-            let key = match args.first().map(|arg| &arg.value) {
-                Some(Expr::Integer(i, _)) => Some(format!("[[{i}]]")),
-                Some(Expr::Double(f, _)) => Some(format!("[[{}]]", *f as i64)),
-                _ => None,
-            };
+            let key = args
+                .first()
+                .and_then(|arg| extract_literal_int(&arg.value))
+                .map(|index| format!("[[{index}]]"));
             if let Some(key) = key.filter(|key| {
                 !vt.mode.is_unknown()
                     && !matches!(vt.mode, Mode::Null | Mode::Union)

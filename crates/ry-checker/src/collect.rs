@@ -1456,6 +1456,12 @@ fn is_parameter(expression: &Expr, parameter: &str) -> bool {
     matches!(expression, Expr::Ident { name, .. } if name == parameter)
 }
 
+/// Whether `func` is `missing`, which inspects whether a promise was
+/// supplied without forcing it: its direct symbol argument is no use.
+fn probes_promise(func: &Expr) -> bool {
+    matches!(ident_name(func).map(bare_name), Some("missing"))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FirstParameterUse {
     Defused,
@@ -1532,7 +1538,7 @@ fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut 
                 }
                 AstNode::Expr(Expr::Call { func, args, .. }) => {
                     let bare = ident_name(func).map(bare_name);
-                    let probes_promise = matches!(bare, Some("missing"));
+                    let probes_promise = probes_promise(func);
                     let captured = captured_arguments(func, args);
                     for (index, argument) in args.iter().enumerate() {
                         let defused = captured.get(index).copied().unwrap_or(false)
@@ -1636,7 +1642,9 @@ fn first_parameter_use_in_expr_inner(
                 // Actual order is not promise force order. A normal use in
                 // another actual must dominate a captured occurrence.
                 conservative_branch_use(args.iter().enumerate().map(|(index, argument)| {
-                    if is_parameter(&argument.value, parameter)
+                    if is_parameter(&argument.value, parameter) && probes_promise(func) {
+                        None
+                    } else if is_parameter(&argument.value, parameter)
                         && (captured.get(index).copied().unwrap_or(false)
                             || matches!(
                                 ident_name(func).map(bare_name),
@@ -2411,6 +2419,23 @@ mod collect_walker_tests {
                 defused: false,
                 normal: true
             }
+        );
+    }
+
+    #[test]
+    fn first_parameter_use_skips_missing_probes() {
+        assert_eq!(first_use("missing(p)", "p"), None);
+        assert_eq!(
+            first_use("if (missing(p)) stop(); substitute(p)", "p"),
+            Some(FirstParameterUse::Defused)
+        );
+        assert_eq!(
+            first_use("if (missing(p)) stop(); print(p)", "p"),
+            Some(FirstParameterUse::Normal)
+        );
+        assert_eq!(
+            first_use("missing(p + 1)", "p"),
+            Some(FirstParameterUse::Normal)
         );
     }
 

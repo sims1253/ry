@@ -172,11 +172,11 @@ impl Checker {
     ///
     /// R masks by search-path position. The fixed order approximates it,
     /// since most names are disjoint across the shipped packages.
-    fn stub_ladder<'a>(
-        &'a self,
-        name: &'a str,
+    fn stub_ladder<'s, 'n>(
+        &'s self,
+        name: &'n str,
         lookup: StubLookup,
-    ) -> impl Iterator<Item = (&'a Typeshed, &'a str, SchemaProvider)> + 'a {
+    ) -> impl Iterator<Item = (&'s Typeshed, &'n str, SchemaProvider)> {
         let package = |package: &str| {
             self.package_typeshed(package)
                 .map(|typeshed| (typeshed, SchemaProvider::Package))
@@ -291,7 +291,7 @@ impl Checker {
     }
 
     /// [`Self::resolve_typeshed_sig`] without the clone, for read-only use.
-    pub(crate) fn resolve_typeshed_sig_ref<'a>(&'a self, name: &'a str) -> Option<&'a FunctionSig> {
+    pub(crate) fn resolve_typeshed_sig_ref<'s>(&'s self, name: &str) -> Option<&'s FunctionSig> {
         self.stub_ladder(name, StubLookup::Ordinary)
             .find_map(|(typeshed, member, _)| typeshed.functions.get(member))
     }

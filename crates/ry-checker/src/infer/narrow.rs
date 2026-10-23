@@ -880,7 +880,7 @@ impl Checker {
                     && self.resolves_to_base(name, scope)
                     && !scope.data_mask_unknown
                     && !scope.uncertainty.effects
-                    && matches!(args[0].value, Expr::Ident { .. })
+                    && matches!(args.first().map(|arg| &arg.value), Some(Expr::Ident { .. }))
             }
             _ => false,
         }

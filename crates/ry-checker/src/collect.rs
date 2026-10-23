@@ -1920,12 +1920,13 @@ fn masks_s4_registration(s: &Stmt) -> bool {
     .is_break()
 }
 
-/// Whether `function` makes an S4 registration call anywhere inside it.
+/// Whether `function` makes an S4 registration call anywhere inside it, or
+/// is a generic body whose `standardGeneric()` call a formal may mask.
 fn registers_s4(function: &Expr) -> bool {
     walk_expr(function, Walk::ALL, |node, _| match node {
         AstNode::Expr(Expr::Call { func, .. })
             if matches!(func.as_ref(), Expr::Ident { name, .. }
-                if matches!(bare_name(name), "setMethod" | "setGeneric")) =>
+                if matches!(bare_name(name), "setMethod" | "setGeneric" | "standardGeneric")) =>
         {
             ControlFlow::Break(())
         }

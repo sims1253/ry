@@ -240,6 +240,17 @@ fn only_a_helper_binding_a_registration_can_see_masks_it() {
 }
 
 #[test]
+fn a_generic_formal_masking_standard_generic_leaves_its_calls_unknown() {
+    // The generic calls its own `standardGeneric` default and returns text.
+    let source = "setClass(\"A\", representation(v = \"numeric\"))\n\
+        setGeneric(\"g\", function(x, standardGeneric = function(...) \"text\") standardGeneric(\"g\"), signature = \"x\")\n\
+        setMethod(\"g\", \"A\", function(x, standardGeneric) 1L)\n\
+        r <- g(new(\"A\"))\n";
+    let (_, scope) = check_with_scope(source);
+    assert_eq!(scope.get("r").unwrap().mode, Mode::Opaque);
+}
+
+#[test]
 fn a_masked_helper_leaves_a_registered_generic_unknown_for_any_class() {
     // The masked `signature("Q")` registers `length` for `A` in R.
     let source = "setClass(\"A\", representation(v = \"numeric\"))\n\

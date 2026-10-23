@@ -237,10 +237,11 @@ fn split_s3_method_name(name: &str, globals: &Globals) -> Option<(String, String
     best
 }
 
-/// Return the dispatch name for the deliberately small S3-generic shape we
-/// can reason about without executing arbitrary setup code.
+/// Return the dispatch name of a generic whose last statement is
+/// `UseMethod("<generic>")`. Statements before it, such as argument
+/// validation, leave the method the caller's argument promises (#774).
 fn usemethod_generic_name(body: &[Stmt]) -> Option<String> {
-    let [Stmt::Expr(Expr::Call { func, args, .. })] = body else {
+    let Some(Stmt::Expr(Expr::Call { func, args, .. })) = body.last() else {
         return None;
     };
     let Expr::Ident { name, .. } = func.as_ref() else {

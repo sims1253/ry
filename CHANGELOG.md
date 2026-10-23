@@ -182,6 +182,9 @@ All notable changes to ry are documented in this file.
 - Let an S3 generic inherit `{{ x }}` defusing from its project methods, as it
   already inherits `enquo()` quoting, so `generic(df, col = mpg)` no longer
   reports `mpg` as RY010 when the method forwards `{{ col }}` (#687).
+- Recognise an S3 generic that runs statements before its final
+  `UseMethod()`, such as `check_not_missing(data)`, so it inherits its
+  methods' `{{ x }}` defusing unless that preamble reads the argument (#774).
 - Stop RY010 from reporting a closure's free name that a braced call
   argument binds later, as in `suppressWarnings({ ... })`, a `switch()` arm,
   or `local({ ... })` when `local` may be masked (#690).

@@ -94,3 +94,37 @@ expression: rows
       line: 142
       message: "variable `.Generic` is not bound in this scope"
       severity: warning
+- case: "a validation preamble before UseMethod keeps the method's embrace"
+  diagnostics: []
+- case: a method that evaluates the argument still reports it after a preamble
+  diagnostics:
+    - code: RY010
+      line: 175
+      message: "variable `unbound_column` is not bound in this scope"
+      severity: warning
+- case: a preamble that forces the embraced argument still reports it
+  diagnostics:
+    - code: RY010
+      line: 191
+      message: "variable `mpg` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 192
+      message: "variable `hp` is not bound in this scope"
+      severity: warning
+- case: a preamble that forces through a default or a dots element still reports it
+  diagnostics:
+    - code: RY010
+      line: 213
+      message: "variable `mpg` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 214
+      message: "variable `hp` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 215
+      message: "variable `wt` is not bound in this scope"
+      severity: warning
+- case: counting dots before UseMethod does not force them
+  diagnostics: []

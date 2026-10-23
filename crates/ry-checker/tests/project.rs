@@ -2315,6 +2315,8 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
         "loadModule(\"spat\", TRUE, env = topenv(parent.frame()))\n",
         "loadModule(\"spat\", TRUE, env = environment())\n",
         "f <- function() loadModule(\"spat\", TRUE, env = topenv())\n",
+        ".onLoad <- function(libname, pkgname) {\n  loadModule(\"spat\", TRUE, env = asNamespace(pkgname))\n}\n",
+        "loadModule(\"spat\", TRUE, env = base::getNamespace(\"rcpppkg\"))\n",
         "loadModule(\"spat\", TRUE, env = base::topenv(base::parent.frame()))\n",
     ] {
         assert_eq!(unbound_beside_module(module, reads), Vec::<String>::new());

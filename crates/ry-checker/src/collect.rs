@@ -244,7 +244,8 @@ fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
 /// entry where one is given. `None` when ry cannot list them: `what = TRUE`
 /// binds every object the C++ module declares, and a computed `what` may
 /// name any of them. An `env` other than the default
-/// `topenv(parent.frame())` or `topenv()` binds nothing in the namespace;
+/// `topenv(parent.frame())`, `topenv()` or `asNamespace(pkg)` binds nothing
+/// in the namespace;
 /// so does `environment()` inside a function, where it is the call's frame.
 fn rcpp_module_bindings(args: &[Arg], top_level: bool) -> Option<Vec<String>> {
     // A bare or `base::` call head named one of `names`.
@@ -264,6 +265,9 @@ fn rcpp_module_bindings(args: &[Arg], top_level: bool) -> Option<Vec<String>> {
                 if base_head(func, &["topenv"])
                     && matches!(args.as_slice(), [frame] if frame.name.is_none()
                         && no_arg_call(&frame.value, &["parent.frame", "environment"])))
+            // `.onLoad(libname, pkgname)` spells it `asNamespace(pkgname)`.
+            || matches!(env, Expr::Call { func, args, .. }
+                if base_head(func, &["asNamespace", "getNamespace"]) && args.len() == 1)
     });
     let Some(what) = matched
         .arg_for_param(1)

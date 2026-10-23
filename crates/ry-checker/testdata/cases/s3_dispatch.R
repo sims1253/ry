@@ -142,3 +142,51 @@ evalqOnLoad(registerS3method("print", "foo", helper))
 helper <- function(x) .Generic
 helper <- function(x) x
 evalqOnLoad(registerS3method("print", "foo", helper))
+
+# A generic may run statements before `UseMethod()` (#774). R hands its
+# methods the original argument promises, so a method's `{{ x }}` still
+# reaches the generic's callers unless the preamble forces that argument.
+
+## case: a validation preamble before UseMethod keeps the method's embrace
+# no-diag
+# #774, cards R/ard_summary.R: `check_not_missing(data)` runs before
+# dispatch, as `stopifnot()` does here.
+summ_checked <- function(data, ...) {
+  stopifnot(is.data.frame(data))
+  UseMethod("summ_checked")
+}
+summ_checked.data.frame <- function(data, variables, ...) {
+  dplyr::select(data, {{ variables }})
+}
+summ_plain <- function(data, ...) UseMethod("summ_plain")
+summ_plain.data.frame <- function(data, variables, ...) {
+  dplyr::select(data, {{ variables }})
+}
+summ_checked(mtcars, variables = mpg)
+summ_plain(mtcars, variables = cyl)
+
+## case: a method that evaluates the argument still reports it after a preamble
+# expect: RY010
+summ_printed <- function(data, ...) {
+  stopifnot(is.data.frame(data))
+  UseMethod("summ_printed")
+}
+summ_printed.data.frame <- function(data, variables, ...) print(variables)
+summ_printed(mtcars, variables = unbound_column)
+
+## case: a preamble that forces the embraced argument still reports it
+# expect: RY010, RY010
+# R evaluates `col` and `...` before dispatch, so `mpg` and `hp` error
+# before the method's embrace can defuse them.
+summ_forced <- function(data, col, ...) {
+  force(col)
+  UseMethod("summ_forced")
+}
+summ_forced.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_dots <- function(data, ...) {
+  stopifnot(length(list(...)) > 0)
+  UseMethod("summ_dots")
+}
+summ_dots.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_forced(mtcars, col = mpg)
+summ_dots(mtcars, col = hp)

@@ -1100,12 +1100,18 @@ fn parameter_is_unforced(body: &[Stmt], params: &[Param], parameter: &str) -> bo
         .iter()
         .filter_map(|formal| formal.default.as_ref())
         .any(|default| expr_mentions(default, parameter))
-        && !body.iter().any(|statement| {
-            walk_stmt(statement, Walk::ALL, |node, _| {
-                mention_step(node, parameter)
-            })
-            .is_break()
+        && !stmts_mention(body, parameter)
+}
+
+/// Whether `body` may read `parameter`: by name, in a string, or through
+/// frame reflection (see [`parameter_is_unforced`]).
+pub(crate) fn stmts_mention(body: &[Stmt], parameter: &str) -> bool {
+    body.iter().any(|statement| {
+        walk_stmt(statement, Walk::ALL, |node, _| {
+            mention_step(node, parameter)
         })
+        .is_break()
+    })
 }
 
 fn expr_mentions(expression: &Expr, parameter: &str) -> bool {

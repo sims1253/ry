@@ -358,6 +358,13 @@ impl Checker {
         let mut inherited = Vec::new();
         for (name, method_names) in methods {
             let generic = &self.fn_table.functions[name];
+            // A statement before `UseMethod()` that may read a formal can
+            // force the caller's argument before a method defuses it (#774).
+            let preamble = generic
+                .body
+                .split_last()
+                .map(|(_, preamble)| preamble)
+                .unwrap_or_default();
             let dots = generic
                 .params
                 .iter()
@@ -381,7 +388,9 @@ impl Checker {
                         // `generic(x, ...)` / `generic.class(x, column, ...)`.
                         None => dots,
                     };
-                    if let Some(target) = target {
+                    if let Some(target) = target
+                        && !collect::stmts_mention(preamble, &generic.params[target].name)
+                    {
                         inherited.push((
                             name.clone(),
                             target,

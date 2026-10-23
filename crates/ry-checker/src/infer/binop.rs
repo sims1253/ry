@@ -765,6 +765,94 @@ impl Checker {
         }
     }
 
+    /// A passed `if` condition was TRUE or FALSE: R errors on any other
+    /// length and on NA. Where that pins its subject's length, the subject
+    /// is NULL or scalar on every path after the condition. This is the fact
+    /// a successful `stopifnot` records, under the same proof boundary (#702).
+    pub(crate) fn mark_condition_scalar_fact(&self, cond: &Expr, scope: &mut Scope) {
+        if scope.uncertainty.dynamic_bindings || self.project_defines_scalar_proof_method() {
+            return;
+        }
+        let Some(name) = self.condition_scalar_subject(cond, scope) else {
+            return;
+        };
+        let mut assigned = HashSet::new();
+        collect_condition_assignment_names(cond, &mut assigned);
+        if !assigned.contains(name)
+            && self.scalar_assertion_subject_stable_on_force(scope)
+            && !self.literal_bindings_may_be_shadowed(["(", "`(`"], &HashSet::new(), scope)
+        {
+            scope.mark_scalar_asserted(name);
+        }
+    }
+
+    /// The binding a TRUE or FALSE value proves scalar. For `&&`/`||` only
+    /// an evaluated tail must be TRUE or FALSE: an empty head is NA, and
+    /// `character(0) == "" && FALSE` is FALSE.
+    fn condition_scalar_subject<'a>(&self, expr: &'a Expr, scope: &Scope) -> Option<&'a str> {
+        let not_rebound = |symbol: &str| !ops_chooser::operator_rebound(self, symbol, scope);
+        match expr {
+            Expr::UnaryOp {
+                op: UnaryOpKind::Not,
+                expr,
+                ..
+            } if not_rebound("!") => self.condition_scalar_subject(expr, scope),
+            // The tail is skipped only for a NULL subject.
+            Expr::BinOp {
+                op: op @ (BinOpKind::OrOr | BinOpKind::AndAnd),
+                lhs,
+                rhs,
+                ..
+            } if not_rebound(op_symbol(*op)) => {
+                let null_test = match (op, lhs.as_ref()) {
+                    (BinOpKind::OrOr, test) => test,
+                    (
+                        BinOpKind::AndAnd,
+                        Expr::UnaryOp {
+                            op: UnaryOpKind::Not,
+                            expr,
+                            ..
+                        },
+                    ) if not_rebound("!") => expr.as_ref(),
+                    _ => return None,
+                };
+                let subject = self.condition_scalar_subject(rhs, scope)?;
+                (self.base_is_null_subject(null_test, scope) == Some(subject)).then_some(subject)
+            }
+            // A base comparison with a scalar literal has its subject's length.
+            Expr::BinOp { op, lhs, rhs, .. }
+                if is_comparison(*op) && not_rebound(op_symbol(*op)) =>
+            {
+                let name = match (lhs.as_ref(), rhs.as_ref()) {
+                    (Expr::Ident { name, .. }, literal) if is_scalar_literal(literal) => name,
+                    (literal, Expr::Ident { name, .. }) if is_scalar_literal(literal) => name,
+                    _ => return None,
+                };
+                self.scalar_assertion_class_safe(name, scope)
+                    .then_some(name.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    /// The subject of a base `is.null(x)` test.
+    fn base_is_null_subject<'a>(&self, expr: &'a Expr, scope: &Scope) -> Option<&'a str> {
+        let Expr::Call { func, args, .. } = expr else {
+            return None;
+        };
+        let name = ident_name(func)?;
+        if crate::semantic_lists::bare_name(name) != "is.null"
+            || !self.resolves_to_base_lenient(name, scope)
+            || args.len() != 1
+        {
+            return None;
+        }
+        match &args[0].value {
+            Expr::Ident { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
     pub(crate) fn scalar_assertion_subject(&self, expr: &Expr, scope: &Scope) -> Option<String> {
         // Parentheses are calls in R. A local `(` can return TRUE without
         // evaluating the enclosed guard, whether this fact is consumed by
@@ -782,21 +870,9 @@ impl Checker {
                 if ops_chooser::operator_rebound(self, "||", scope) {
                     return None;
                 }
-                let Expr::Call { func, args, .. } = lhs.as_ref() else {
-                    return None;
-                };
-                let name = ident_name(func)?;
-                if crate::semantic_lists::bare_name(name) != "is.null"
-                    || !self.resolves_to_base_lenient(name, scope)
-                    || args.len() != 1
-                {
-                    return None;
-                }
-                let Expr::Ident { name: subject, .. } = &args[0].value else {
-                    return None;
-                };
-                (self.scalar_assertion_subject(rhs, scope).as_deref() == Some(subject.as_str()))
-                    .then(|| subject.clone())
+                let subject = self.base_is_null_subject(lhs, scope)?;
+                (self.scalar_assertion_subject(rhs, scope).as_deref() == Some(subject))
+                    .then(|| subject.to_string())
             }
             Expr::BinOp {
                 op: BinOpKind::AndAnd,

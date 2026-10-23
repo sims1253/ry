@@ -101,6 +101,7 @@ impl Checker {
 
     pub(crate) fn begin_loop(&mut self, inner: &mut Scope) {
         inner.clear_known_strings();
+        inner.clear_condition_aliases();
         inner.loop_frame = Some(self.loop_frames.len());
         self.loop_frames.push(LoopExitFrame::default());
     }
@@ -133,6 +134,7 @@ impl Checker {
         entered: bool,
     ) {
         scope.clear_known_strings();
+        scope.clear_condition_aliases();
         let frame = self.loop_frames.pop().expect("active loop frame");
         let has_transfer = frame.breaks.is_some() || frame.nexts.is_some();
         let body_unreachable = inner.unreachable;

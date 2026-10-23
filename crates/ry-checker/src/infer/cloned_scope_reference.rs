@@ -179,6 +179,7 @@ impl Checker {
         // carry its identity or constant result across a branch merge.
         scope.clear_ops_facts();
         scope.clear_known_strings();
+        scope.clear_condition_aliases();
         // The caller passes on dynamic bindings only from continuing arms.
         scope.uncertainty |= Uncertainty {
             dynamic_bindings: false,

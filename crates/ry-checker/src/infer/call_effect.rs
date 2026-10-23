@@ -93,6 +93,9 @@ impl Checker {
         match effect {
             CallEffect::None => {}
             CallEffect::Writes(writes) => {
+                scope.retain_condition_aliases(|name| {
+                    !writes.names.contains(semantic_argument_name(name))
+                });
                 if writes.opaque {
                     self.invalidate_declaration_identities(scope);
                 }

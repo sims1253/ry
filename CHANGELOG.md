@@ -225,6 +225,9 @@ All notable changes to ry are documented in this file.
   test of that parameter that ry cannot decide, such as `is_tensor(dims)`,
   `inherits(model, "ets") && is.null(lambda)` or `"values" %in% names(sel)`
   (#710).
+- Narrow through a local bound to a guard predicate, so
+  `has_size <- !is.null(size); if (has_size) ...` drops the omitted `NULL`
+  default like `if (!is.null(size))` does, until either name is rebound (#692).
 
 ## [0.11.0] - 2026-09-22
 

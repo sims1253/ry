@@ -1,8 +1,61 @@
-//! Character values known within the current execution path.
+//! Values known within the current execution path: character literals and
+//! boolean guard aliases.
 use super::*;
 use crate::scope_journal::Undo;
 
 impl Scope {
+    pub(crate) fn condition_alias(&self, name: &str) -> Option<&Arc<Expr>> {
+        self.condition_aliases.get(name)
+    }
+
+    /// `name <- cond`, where `cond` is a guard predicate, so `if (name)` may
+    /// narrow like `if (cond)`. The alias lives until `name` or a name that
+    /// `cond` narrows is written (directly or by a call's known writes),
+    /// effects become unknown, branches merge, or a loop starts or ends.
+    pub(crate) fn set_condition_alias(&mut self, name: &str, cond: Arc<Expr>) {
+        let previous = self.condition_aliases.insert(name.to_string(), cond);
+        if self.journal.depth > 0 {
+            self.journal
+                .undo
+                .push(Undo::ConditionAlias(name.to_string(), previous));
+        }
+    }
+
+    /// Drop each alias whose own name, or a name its predicate narrows,
+    /// `keep` rejects.
+    pub(crate) fn retain_condition_aliases(&mut self, keep: impl Fn(&str) -> bool) {
+        if self.condition_aliases.is_empty() {
+            return;
+        }
+        let lost: Vec<String> = self
+            .condition_aliases
+            .iter()
+            .filter(|(name, cond)| {
+                !keep(name)
+                    || infer::extract_builtin_type_narrowing(cond).mentions_where(&|var| !keep(var))
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in lost {
+            let previous = self.condition_aliases.remove(&name);
+            if self.journal.depth > 0 {
+                self.journal.undo.push(Undo::ConditionAlias(name, previous));
+            }
+        }
+    }
+
+    pub(crate) fn clear_condition_aliases(&mut self) {
+        if self.journal.depth > 0 && !self.condition_aliases.is_empty() {
+            self.journal
+                .undo
+                .push(Undo::ConditionAliases(std::mem::take(
+                    &mut self.condition_aliases,
+                )));
+        } else {
+            self.condition_aliases.clear();
+        }
+    }
+
     pub(crate) fn invalidate_literal_values(&mut self) {
         self.clear_known_strings();
         self.uncertainty.literal_values = true;

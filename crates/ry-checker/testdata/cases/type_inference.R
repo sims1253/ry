@@ -1403,6 +1403,31 @@ compare <- function(x, res = FALSE) {
 }
 check_all <- function(x) compare(x)
 
+## case: a literal read in a partly named list indexes by position
+# expect: RY061
+# `list()` keys only the unnamed element as `[[1]]`, but `x[[1]]` is `a`.
+f <- function() {
+  x <- list(a = "s", list(b = 2))
+  x[[1]]$b
+}
+
+## case: a literal read past the named elements reaches the unnamed one
+# no-diag
+f <- function() {
+  x <- list(a = "s", list(b = 2))
+  y <- list(0, list(b = 1))
+  x[[2]]$b + y[[2]]$b
+}
+
+## case: a literal read after a NULL field write does not trust positions
+# no-diag
+# `x$a <- NULL` drops `a`, so `x[[2]]` is the third element `list()` built.
+f <- function() {
+  x <- list(a = 1, "s", list(b = 2))
+  x$a <- NULL
+  x[[2]]$b
+}
+
 ## case: a value formal with no function of its name is still not callable
 # expect: RY070
 compare <- function(x, widen = FALSE) widen(x)

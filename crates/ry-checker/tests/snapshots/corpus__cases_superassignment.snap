@@ -1,0 +1,22 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: "a closure reads a `<<-` target whose writer is defined after it"
+  diagnostics: []
+- case: "a later writer that cannot reach the binding keeps the closure's stale type"
+  diagnostics:
+    - code: RY001
+      line: 24
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+    - code: RY001
+      line: 28
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: an eager read before a later writer keeps the stale type
+  diagnostics:
+    - code: RY001
+      line: 36
+      message: "loop condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning

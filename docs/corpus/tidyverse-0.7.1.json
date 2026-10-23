@@ -922,6 +922,6 @@
     "Guards that exclude an omitted NULL default drop its type (#692). No ledger identity changes; three unowned RY001 report lines past `if (is.null(x)) return(...)` disappear: rlang R/trace.R:531:7 and :540:7 (also reviewed false positives in the Posit ledger) and testthat R/source.R:83:11.",
     "Top-level on_load() blocks bind package names (#691): plain assignments in a top-level rlang-style on_load({...}) block are now package bindings. No ledger identity changes; the ungated rlang reports lose five RY010 false positives, R/cnd-abort.R:855:10, R/env-special.R:220:16, and R/trace.R:1082:8, :1094:16 and :1096:16 (has_cli_format, base_pkg_env, has_cli_start_app, theme_error_highlight and theme_error_arg_highlight, which rlang binds in on_load() blocks; this manifest pins rlang 830745e8, so the trace.R lines differ from the Posit ledger's 1d0e0065 pin). The Posit ledger drops 46 reviewed false positives (namespace-on-load)."
   ],
-  "ry_commit": "e654e59916d55549a46a66da2cb7078a60f0ae7d",
+  "ry_commit": "c4f969c8d0377cd771feea1096a703e5d6a286c7",
   "source_sha256": "09fa8dfadb065c1f61df9516dba0c66f770289d964c3f46c7b79d78c30b85552"
 }

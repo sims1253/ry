@@ -1013,6 +1013,15 @@ numel_else <- function(dims = 2) {
 }
 numel_else()
 
+## case: a quoted name in a guard is not a test of the specialised default
+# expect: RY061, RY061, RY061
+quoted_guard <- function(x = 2) {
+  if (identical(quote(x), quote(x))) x$field
+  if (!is.null(substitute(x))) x$field
+  if (length(~ x) == 2) x$field
+}
+quoted_guard()
+
 ## case: a guard that does not read the specialised default keeps its type
 # expect: RY061
 numel_verbose <- function(dims = 2, verbose = TRUE) {

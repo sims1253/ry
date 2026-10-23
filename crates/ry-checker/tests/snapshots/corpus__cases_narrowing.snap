@@ -429,9 +429,23 @@ expression: rows
       line: 1012
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
-- case: a guard that does not read the specialised default keeps its type
+- case: a quoted name in a guard is not a test of the specialised default
   diagnostics:
     - code: RY061
       line: 1019
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+    - code: RY061
+      line: 1020
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+    - code: RY061
+      line: 1021
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a guard that does not read the specialised default keeps its type
+  diagnostics:
+    - code: RY061
+      line: 1028
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error

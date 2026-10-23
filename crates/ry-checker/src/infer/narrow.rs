@@ -2,6 +2,7 @@
 
 use super::*;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
+use std::collections::BTreeSet;
 use std::ops::ControlFlow;
 
 /// A type refinement extracted from an `if` condition. Represents the
@@ -1000,26 +1001,18 @@ impl Checker {
         if scope.default_parameter_bindings.is_empty() {
             return narrowing;
         }
-        let mut undecided: Vec<String> = Vec::new();
-        let _ = walk_expr(cond, READS, |node, _| {
-            if let AstNode::Expr(Expr::Ident { name, .. }) = node
-                && scope.is_default_parameter(name)
-                && scope.get(name).is_some_and(|t| !t.mode.is_unknown())
-                && !undecided.contains(name)
-                && !narrowing.mentions_any(&HashSet::from([name.clone()]))
-            {
-                undecided.push(name.clone());
-            }
-            ControlFlow::<(), _>::Continue(Descend::Into)
-        });
-        let facts = |truth: bool| -> Vec<Narrowing> {
-            undecided
-                .iter()
-                .filter(|name| passing_test_reads(cond, name, truth))
-                .map(|name| Narrowing::Supplied { var: name.clone() })
+        let undecided = |truth: bool| -> Vec<Narrowing> {
+            self.tested_names(cond, truth)
+                .into_iter()
+                .filter(|name| {
+                    scope.is_default_parameter(name)
+                        && scope.get(name).is_some_and(|t| !t.mode.is_unknown())
+                        && !narrowing.mentions_any(&HashSet::from([name.clone()]))
+                })
+                .map(|var| Narrowing::Supplied { var })
                 .collect()
         };
-        let (on_true, on_false) = (facts(true), facts(false));
+        let (on_true, on_false) = (undecided(true), undecided(false));
         if on_true.is_empty() && on_false.is_empty() {
             return narrowing;
         }
@@ -1029,52 +1022,86 @@ impl Checker {
             on_false,
         }
     }
-}
 
-/// Evaluated reads only: no assignment targets, field names, or closures.
-const READS: Walk = Walk {
-    assign_targets: false,
-    assign_operands: false,
-    dollar_args: false,
-    fn_bodies: false,
-    ..Walk::ALL
-};
-
-/// Whether `cond` evaluating to `truth` needs a passing test that reads
-/// `name`. A logical operator needs one from either operand on its
-/// short-circuit path (`&&` true, `||` false) and from both otherwise;
-/// `!` flips the path.
-fn passing_test_reads(cond: &Expr, name: &str, truth: bool) -> bool {
-    match cond {
-        Expr::BinOp {
-            op: op @ (BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr),
-            lhs,
-            rhs,
-            ..
-        } => {
-            let lhs = passing_test_reads(lhs, name, truth);
-            let rhs = passing_test_reads(rhs, name, truth);
-            if matches!(op, BinOpKind::And | BinOpKind::AndAnd) == truth {
-                lhs || rhs
-            } else {
-                lhs && rhs
+    /// The names a passing test must have read for `cond` to evaluate to
+    /// `truth`. A logical operator needs one from either operand on its
+    /// short-circuit path (`&&` true, `||` false) and from both otherwise;
+    /// `!` flips the path.
+    fn tested_names(&self, cond: &Expr, truth: bool) -> BTreeSet<String> {
+        match cond {
+            Expr::BinOp {
+                op: op @ (BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr),
+                lhs,
+                rhs,
+                ..
+            } => {
+                let lhs = self.tested_names(lhs, truth);
+                let rhs = self.tested_names(rhs, truth);
+                if matches!(op, BinOpKind::And | BinOpKind::AndAnd) == truth {
+                    lhs.union(&rhs).cloned().collect()
+                } else {
+                    lhs.intersection(&rhs).cloned().collect()
+                }
             }
+            Expr::UnaryOp {
+                op: UnaryOpKind::Not,
+                expr,
+                ..
+            } => self.tested_names(expr, !truth),
+            _ if truth => {
+                let mut names = BTreeSet::new();
+                self.evaluated_names(cond, &mut names);
+                names
+            }
+            _ => BTreeSet::new(),
         }
-        Expr::UnaryOp {
-            op: UnaryOpKind::Not,
-            expr,
-            ..
-        } => passing_test_reads(expr, name, !truth),
-        _ => {
-            truth
-                && walk_expr(cond, READS, |node, _| match node {
-                    AstNode::Expr(Expr::Ident { name: read, .. }) if read == name => {
-                        ControlFlow::Break(())
+    }
+
+    /// Names `expr` evaluates. Field names, assignment targets, closures,
+    /// formulas, and arguments a stub quotes or captures (`quote(x)`,
+    /// `substitute(x)`) are not reads.
+    fn evaluated_names(&self, expr: &Expr, names: &mut BTreeSet<String>) {
+        ry_core::stack::grow(|| {
+            let walk = Walk {
+                assign_targets: false,
+                assign_operands: false,
+                dollar_args: false,
+                fn_bodies: false,
+                ..Walk::ALL
+            };
+            let _ = walk_expr(expr, walk, |node, _| match node {
+                AstNode::Expr(Expr::Ident { name, .. }) => {
+                    names.insert(name.clone());
+                    ControlFlow::<(), _>::Continue(Descend::Into)
+                }
+                AstNode::Expr(Expr::Call { func, args, .. }) => {
+                    let Some(callee) = ident_name(func) else {
+                        return ControlFlow::Continue(Descend::Into);
+                    };
+                    if crate::semantic_lists::is_quoting_form(callee) {
+                        return ControlFlow::Continue(Descend::Skip);
                     }
-                    _ => ControlFlow::Continue(Descend::Into),
-                })
-                .is_break()
-        }
+                    let Some(signature) = self.resolve_typeshed_sig(callee) else {
+                        return ControlFlow::Continue(Descend::Into);
+                    };
+                    let bindings = match_params(&signature.params, args);
+                    for (index, argument) in args.iter().enumerate() {
+                        if !matches!(
+                            eval_mode_for_arg(&signature, &bindings, index),
+                            Some(
+                                EvalMode::QuotedSymbol
+                                    | EvalMode::QuotedExpression
+                                    | EvalMode::CapturesPromise
+                            )
+                        ) {
+                            self.evaluated_names(&argument.value, names);
+                        }
+                    }
+                    ControlFlow::Continue(Descend::Skip)
+                }
+                _ => ControlFlow::Continue(Descend::Into),
+            });
+        })
     }
 }
 

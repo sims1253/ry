@@ -517,7 +517,7 @@ impl Checker {
             },
             scope,
         );
-        if let Some(distrusting) = rhs_parameter_vector
+        if let Some(unchecked) = rhs_parameter_vector
             && !self.diagnostics[before..]
                 .iter()
                 .any(|diagnostic| diagnostic.code == "RY032")
@@ -526,7 +526,7 @@ impl Checker {
                 "`{}` operand depends on a parameter whose length is not known to be 1",
                 op_symbol(op)
             );
-            match distrusting {
+            match unchecked.distrusted_guard {
                 Some((parameter, method)) => self.emit_related(
                     Severity::Warning,
                     span,
@@ -629,16 +629,14 @@ impl Checker {
 /// These forms, however, explicitly test a possibly empty parameter and then
 /// feed the un-scalarized value into a vectorized predicate.
 impl Checker {
-    /// `Some` when the guarded operand may be a vector. The inner value
-    /// names the parameter and the project `length` method that alone kept
-    /// a `length(x) == 1` guard from proving it scalar (#701).
+    /// The guarded parameter, when the guarded operand may be a vector.
     fn short_circuit_parameter_vector(
         &self,
         op: BinOpKind,
         lhs: &Expr,
         rhs: &Expr,
         scope: &Scope,
-    ) -> Option<Option<(String, LengthMethod)>> {
+    ) -> Option<UncheckedParameter> {
         fn direct_parameter<'a>(expr: &'a Expr, scope: &Scope) -> Option<&'a str> {
             match expr {
                 Expr::Ident { name, .. } if scope.is_parameter(name) => Some(name),
@@ -758,17 +756,17 @@ impl Checker {
         let parameter = guarded
             .filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
             .filter(|parameter| !scope.is_scalar_asserted(parameter))?;
-        let distrusting = (op == BinOpKind::AndAnd)
-            .then(|| equality_guard_parameter(self, lhs, scope))
-            .flatten()
-            .filter(|guarded| *guarded == parameter)
-            .and_then(|_| {
-                self.equality_length_guard(parameter, rhs, scope)
-                    .err()
-                    .flatten()
-            })
-            .map(|method| (parameter.to_string(), method.clone()));
-        Some(distrusting)
+        let distrusted_guard = if op == BinOpKind::AndAnd
+            && equality_guard_parameter(self, lhs, scope) == Some(parameter)
+        {
+            self.equality_length_guard(parameter, rhs, scope)
+                .err()
+                .flatten()
+                .map(|method| (parameter.to_string(), method.clone()))
+        } else {
+            None
+        };
+        Some(UncheckedParameter { distrusted_guard })
     }
 
     /// A successful `stopifnot` may establish a scalar-length fact that a
@@ -1189,6 +1187,8 @@ impl Checker {
                 .is_some_and(|class| !class.is_empty())
         };
         let functions = &self.fn_table.functions;
+        // A registration may have no project definition to read; it is then
+        // untrusted and named without a location.
         let registered = self
             .fn_table
             .s3_methods
@@ -1212,7 +1212,16 @@ impl Checker {
                 name: name.clone(),
                 definition: None,
             });
-        let base = |name: &str| self.resolves_to_base_lenient(name, &Scope::default());
+        // The method body runs in its own frame under the namespace, not in
+        // any guard's scope, so only project-level bindings can mask these
+        // names. `known_vars` also holds the unquoted name of a quoted
+        // binding such as `` `unclass` <- ``, which `resolves_to_base_lenient`
+        // matches only by raw spelling.
+        let base = |name: &str| {
+            !self.fn_table.known_vars.contains(name)
+                && !self.fn_table.has_escaped_binding_names
+                && self.resolves_to_base_lenient(name, &Scope::default())
+        };
         defined
             .into_iter()
             .find_map(|name| {
@@ -1262,6 +1271,13 @@ fn body_is_storage_length(function: &UserFn) -> bool {
             .and_then(|expr| call_on(expr, "length"))
             .and_then(|expr| call_on(expr, "unclass"))
             .is_some_and(|expr| matches!(expr, Expr::Ident { name, .. } if *name == formal.name))
+}
+
+/// A guarded `&&`/`||` operand that may still be a vector.
+struct UncheckedParameter {
+    /// The parameter and the project `length` method that alone kept a
+    /// `length(x) == 1` guard from proving it scalar (#701).
+    distrusted_guard: Option<(String, LengthMethod)>,
 }
 
 /// A project or imported `length.<class>` method that may make

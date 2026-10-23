@@ -161,26 +161,41 @@ fn distrusted_guard_names_the_length_method() {
     assert_eq!(related.span.start, source.find("function(x) {").unwrap());
     assert_eq!(related.message, "`length.doc` is defined here");
 
-    let masked = check_package_diagnostics(
-        "S3method(length, cell)\n",
-        "unclass <- function(x) x\nlength.cell <- function(x) length(unclass(x))\nprobe <- function(x) length(x) == 1L && x == \"\"\n",
-    );
-    assert!(
-        masked
-            .iter()
-            .any(|d| d.message.contains("`length.cell` may report 1")),
-        "{masked:?}"
-    );
+    // A masked `unclass`, in any spelling, can make the method lie.
+    for mask in [
+        "unclass <- function(x) x[1L]",
+        "`unclass` <- function(x) x[1L]",
+        "\"unclass\" <- function(x) x[1L]",
+    ] {
+        let masked = check_package_diagnostics(
+            "S3method(length, cell)\n",
+            &format!(
+                "{mask}\nlength.cell <- function(x) length(unclass(x))\nprobe <- function(x) length(x) == 1L && x == \"\"\n"
+            ),
+        );
+        assert!(
+            masked
+                .iter()
+                .any(|d| d.code == "RY032" && d.message.contains("`length.cell` may report 1")),
+            "{mask}: {masked:?}"
+        );
+    }
     // A registration with no project definition names the method without
     // a location.
-    let unseen = check_package_diagnostics("S3method(length, remote)\n", GUARD_SOURCE);
-    let [warning] = &unseen[..] else {
-        panic!("{unseen:?}");
-    };
-    assert!(
-        warning.message.contains("`length.remote` may report 1"),
-        "{}",
-        warning.message
-    );
-    assert!(warning.related.is_empty(), "{:?}", warning.related);
+    // So does an imported method, whose body ry cannot read either.
+    for namespace in [
+        "S3method(length, remote)\n",
+        "importFrom(otherpkg, length.remote)\n",
+    ] {
+        let unseen = check_package_diagnostics(namespace, GUARD_SOURCE);
+        let [warning] = &unseen[..] else {
+            panic!("{namespace}: {unseen:?}");
+        };
+        assert!(
+            warning.code == "RY032" && warning.message.contains("`length.remote` may report 1"),
+            "{namespace}: {}",
+            warning.message
+        );
+        assert!(warning.related.is_empty(), "{:?}", warning.related);
+    }
 }

@@ -2314,10 +2314,19 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
         "f <- function(what) loadModule(\"spat\", what = what)\n",
         "loadModule(\"spat\", TRUE, env = topenv(parent.frame()))\n",
         "loadModule(\"spat\", TRUE, env = environment())\n",
+        "loadModule(\"spat\", TRUE, env = base::topenv(base::parent.frame()))\n",
     ] {
         assert_eq!(unbound_beside_module(module, reads), Vec::<String>::new());
         assert_eq!(unbound_beside_module(module, read_early), [unbound("n")]);
     }
+    // Another function's own `SpatRaster` does not hide the module's.
+    assert_eq!(
+        unbound_beside_module(
+            "loadModule(\"spat\", TRUE)\n",
+            "g <- function() {\n  SpatRaster <- 1\n}\nnew_raster <- function() SpatRaster$new()\n",
+        ),
+        Vec::<String>::new(),
+    );
     assert_eq!(
         unbound_beside_module(
             "loadModule(\"spat\", c(\"SpatRaster\", Vec = \"SpatVector\"))\n",
@@ -2329,6 +2338,7 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
     // objects instead of the namespace; without loadModule, nothing.
     for module in [
         "loadModule(\"spat\")\n",
+        "loadModule(\"spat\", what = NULL)\n",
         "Rcpp::loadModule(\"spat\", TRUE, env = new.env())\n",
         "loadModule(\"spat\", c(\"SpatRaster\"), FALSE, other_env)\n",
         "x <- 1\n",

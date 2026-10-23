@@ -247,16 +247,20 @@ fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
 /// `topenv(parent.frame())`, `topenv()` or `environment()` binds nothing in
 /// the namespace.
 fn rcpp_module_bindings(args: &[Arg]) -> Option<Vec<String>> {
+    // A bare or `base::` call head named one of `names`.
+    fn base_head(func: &Expr, names: &[&str]) -> bool {
+        matches!(func, Expr::Ident { name, .. }
+            if names.contains(&strip_package(name, "base").unwrap_or(name)))
+    }
     fn no_arg_call(expr: &Expr, names: &[&str]) -> bool {
-        matches!(expr, Expr::Call { func, args, .. }
-            if args.is_empty() && matches!(func.as_ref(), Expr::Ident { name, .. } if names.contains(&name.as_str())))
+        matches!(expr, Expr::Call { func, args, .. } if args.is_empty() && base_head(func, names))
     }
     let matched = match_arguments(&["module", "what", "loadNow", "env"], args);
     let namespace_env = matched.arg_for_param(3).is_none_or(|index| {
         let env = &args[index].value;
         no_arg_call(env, &["environment", "topenv"])
             || matches!(env, Expr::Call { func, args, .. }
-                if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "topenv")
+                if base_head(func, &["topenv"])
                     && matches!(args.as_slice(), [frame] if frame.name.is_none()
                         && no_arg_call(&frame.value, &["parent.frame", "environment"])))
     });
@@ -277,6 +281,8 @@ fn rcpp_module_bindings(args: &[Arg]) -> Option<Vec<String>> {
                 _ => None,
             })
             .collect(),
+        // Like an omitted `what`, `NULL` binds nothing.
+        Expr::Null(_) => Some(Vec::new()),
         _ => None,
     }
 }
@@ -788,9 +794,9 @@ impl Checker {
                         let table = Arc::make_mut(&mut self.fn_table);
                         match rcpp_module_bindings(args) {
                             Some(names) => {
-                                for name in names {
-                                    table.note_bound_name(&name);
-                                    table.known_vars.insert(name);
+                                for bound in names {
+                                    table.note_bound_name(&bound);
+                                    table.known_vars.insert(bound);
                                 }
                             }
                             None => {

@@ -2236,3 +2236,49 @@ fn long_else_if_chain_is_checked_on_a_small_stack() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn on_load_block_assignments_are_package_bindings() {
+    // rlang's `on_load()` and package-local copies of it evaluate their
+    // argument in the namespace when `.onLoad()` runs (#691). An installed
+    // package runs an `evalqOnLoad()` block in a child of its namespace,
+    // and an `env` argument, a loop binder (possibly never bound), a nested
+    // block, or another call proves nothing, so those reads stay unbound.
+    let mut project = Project::new();
+    project.add_file(
+        "hooks.R".to_string(),
+        parse(
+            "hooks.R",
+            "on_load({\n  IS_LOCAL_PKG <- exists(\".__DEVTOOLS__\")\n  `HOOK NAME` <- 1\n})\n\
+             rlang::on_load(HAS_CLI <- TRUE)\n\
+             on_load(expr = NAMED <- TRUE)\n\
+             evalqOnLoad({\n  LOG <- new.env()\n})\n\
+             on_load(ELSEWHERE <- 1, env = globalenv())\n\
+             on_load({\n  for (LOOPED in seq_len(0)) NULL\n})\n\
+             on_load(local({\n  NESTED <- 1\n}))\n\
+             register({\n  REGISTERED <- 1\n})\n",
+        ),
+    );
+    project.add_file(
+        "use.R".to_string(),
+        parse(
+            "use.R",
+            "is_local <- function() if (IS_LOCAL_PKG) \"local\" else \"installed\"\n\
+             has_cli <- function() list(HAS_CLI, NAMED, `HOOK NAME`)\n\
+             reads <- function() list(LOG, ELSEWHERE, LOOPED, NESTED, REGISTERED)\n",
+        ),
+    );
+    let unbound: Vec<_> = project
+        .check()
+        .into_iter()
+        .filter(|(path, _)| path == "use.R")
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .filter(|diagnostic| diagnostic.code == "RY010")
+        .map(|diagnostic| diagnostic.message)
+        .collect();
+    assert_eq!(
+        unbound,
+        ["LOG", "ELSEWHERE", "LOOPED", "NESTED", "REGISTERED"]
+            .map(|name| format!("variable `{name}` is not bound in this scope")),
+    );
+}

@@ -84,6 +84,64 @@ fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
     }
 }
 
+/// The plain assignments a top-level `on_load(expr)` makes in the package
+/// namespace (#691). rlang's `on_load()`, and the package-local copies of
+/// it, store `expr` for `.onLoad()` to evaluate there, so these bindings
+/// become package bindings. Only an assignment that is the hook expression
+/// itself or a statement of its braced block counts; `<<-`, `assign()`,
+/// loop binders (as at top level), and anything nested deeper prove
+/// nothing. `evalqOnLoad()` does not count: an installed package evaluates
+/// its block in a child of the namespace.
+fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, &Expr)> {
+    stmts
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Expr(Expr::Call { func, args, .. })
+                if matches!(
+                    func.as_ref(),
+                    Expr::Ident { name, .. } if name == "on_load" || name == "rlang::on_load"
+                ) =>
+            {
+                // An `env` argument evaluates `expr` somewhere else.
+                match args.as_slice() {
+                    [hook] if matches!(hook.name.as_deref(), None | Some("expr")) => {
+                        Some(&hook.value)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .flat_map(|hook| match hook {
+            Expr::Block { body, .. } => body
+                .iter()
+                .filter_map(|stmt| match stmt {
+                    // Statement `<<-` repeats itself as the value.
+                    Stmt::Assign {
+                        target,
+                        value,
+                        span,
+                    } if !matches!(
+                        value,
+                        Expr::BinOp { op: BinOpKind::SuperAssign, span: operation, .. }
+                            if operation == span
+                    ) =>
+                    {
+                        Some((target, value))
+                    }
+                    _ => None,
+                })
+                .collect(),
+            Expr::BinOp {
+                op: BinOpKind::Assign,
+                lhs,
+                rhs,
+                ..
+            } => vec![(lhs.as_ref(), rhs.as_ref())],
+            _ => Vec::new(),
+        })
+}
+
 /// Writes `node` can make outside the frame it runs in: a `<<-`, a
 /// recognized binding installer, or a nested function's defaults (forcing
 /// one runs it in that function's frame, where it may itself write outward).
@@ -422,6 +480,12 @@ impl Checker {
                 })
             },
         );
+        // Hooks run after every file is sourced. Their bindings register the
+        // name only: rlang's hooks run only if `.onLoad()` calls
+        // `run_on_load()`, so ry does not model their values.
+        for (target, value) in load_hook_assignments(stmts) {
+            self.register_binding(target, value);
+        }
         self.collect_capture_writes(stmts);
         let mut registered = FxSet::default();
         s3_registrations(stmts, &mut registered);
@@ -539,11 +603,9 @@ impl Checker {
         table.capture_writes.extend(outward);
     }
 
-    // Records one identifier-bound assignment from the collection
-    // traversal: the bound name in `known_vars` (and `callable_vars` for
-    // constructor calls), and, when the value is a function literal, the
-    // function itself.
-    fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
+    // Records the name an identifier-bound assignment binds: `known_vars`,
+    // and `callable_vars` for constructor calls.
+    fn register_binding(&mut self, target: &Expr, value: &Expr) {
         // Record every identifier-bound top-level assignment in
         // `known_vars`. This is independent of whether the RHS
         // is a function literal: regular variable assignments
@@ -570,6 +632,13 @@ impl Checker {
                 table.callable_vars.remove(name);
             }
         }
+    }
+
+    // Records one identifier-bound assignment from the collection
+    // traversal: its name, and, when the value is a function literal, the
+    // function itself.
+    fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
+        self.register_binding(target, value);
         if let (Some(name), Expr::Function { params, body, span }) = (binding_name(target), value) {
             // An S3 method named like `print.foo` is recorded both
             // as a regular function (so the name resolves to its

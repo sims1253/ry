@@ -104,7 +104,9 @@ fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, &Expr)>
             {
                 // An `env` argument evaluates `expr` somewhere else.
                 match args.as_slice() {
-                    [hook] if hook.name.is_none() => Some(&hook.value),
+                    [hook] if matches!(hook.name.as_deref(), None | Some("expr")) => {
+                        Some(&hook.value)
+                    }
                     _ => None,
                 }
             }

@@ -2251,6 +2251,7 @@ fn on_load_block_assignments_are_package_bindings() {
             "hooks.R",
             "on_load({\n  IS_LOCAL_PKG <- exists(\".__DEVTOOLS__\")\n  `HOOK NAME` <- 1\n})\n\
              rlang::on_load(HAS_CLI <- TRUE)\n\
+             on_load(expr = NAMED <- TRUE)\n\
              evalqOnLoad({\n  LOG <- new.env()\n})\n\
              on_load(ELSEWHERE <- 1, env = globalenv())\n\
              on_load({\n  for (LOOPED in seq_len(0)) NULL\n})\n\
@@ -2263,7 +2264,7 @@ fn on_load_block_assignments_are_package_bindings() {
         parse(
             "use.R",
             "is_local <- function() if (IS_LOCAL_PKG) \"local\" else \"installed\"\n\
-             has_cli <- function() list(HAS_CLI, `HOOK NAME`)\n\
+             has_cli <- function() list(HAS_CLI, NAMED, `HOOK NAME`)\n\
              reads <- function() list(LOG, ELSEWHERE, LOOPED, NESTED, REGISTERED)\n",
         ),
     );

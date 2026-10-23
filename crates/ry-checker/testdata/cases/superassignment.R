@@ -35,3 +35,24 @@ outer <- function(x) {
 x <- NULL
 while (x) break
 writer <- function() x <<- TRUE
+
+## case: a closure nested two deep sees a later top-level writer
+# no-diag
+# `outer` starts with `state` unknown and the closure inherits it.
+state <- NULL
+outer <- function() {
+  read <- function() if (state) 1
+  read
+}
+setup <- function() state <<- TRUE
+
+## case: a function's own `<<-` skips its local, so its closure keeps the stale type
+# expect: RY001
+# The write rebinds the file-level `x`; `read` still sees the local NULL.
+x <- FALSE
+outer <- function() {
+  x <- NULL
+  read <- function() if (x) 1
+  x <<- TRUE
+  read
+}

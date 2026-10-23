@@ -1320,6 +1320,34 @@ pub(crate) fn superassignment_writes_in_expr(expr: &Expr) -> SuperassignmentWrit
     writes
 }
 
+/// The `<<-` targets of closures nested in a function `body` that can
+/// land in the frame the body runs in, or further out (issue #706). The
+/// body's own direct writes are left out: they skip its frame, so a
+/// closure reading the body's local keeps seeing the unchanged binding.
+pub(crate) fn nested_superassignment_writes(body: &[Stmt]) -> HashSet<String> {
+    let mut writes = SuperassignmentWrites::default();
+    let mut formals = InterveningFormals::default();
+    let _ = walk_stmts(
+        body,
+        Walk::ALL,
+        |node: AstNode<'_>, depth: usize| -> ControlFlow<(), Descend> {
+            let direct_write = depth == 0
+                && matches!(
+                    node,
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::SuperAssign,
+                        ..
+                    })
+                );
+            if direct_write {
+                return ControlFlow::Continue(Descend::Into);
+            }
+            ControlFlow::Continue(formals.visit(node, depth, &mut writes))
+        },
+    );
+    writes.names
+}
+
 /// Pins the traversal shape of [`superassignment_writes`]: statement and
 /// expression positions both present the `SuperAssign` marker, nested
 /// closure bodies contribute their targets (a closure defined inside

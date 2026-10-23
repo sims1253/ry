@@ -1204,8 +1204,10 @@ impl Checker {
             }
         }
         self.deferred_captures.push(assigned);
+        // Names outside this frame were already widened at its entry, and
+        // nested closures inherit them through `fn_scope`.
         self.superassigned_captures
-            .push(index::superassignment_writes(&[], body).names);
+            .push(index::nested_superassignment_writes(body));
         self.push_enclosing_formals(params, span);
         self.check_discarded_branch_results(body);
         self.walk_block(body, &mut fn_scope, None);

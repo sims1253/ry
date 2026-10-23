@@ -20,3 +20,11 @@ expression: rows
       line: 36
       message: "loop condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
+- case: a closure nested two deep sees a later top-level writer
+  diagnostics: []
+- case: "a function's own `<<-` skips its local, so its closure keeps the stale type"
+  diagnostics:
+    - code: RY001
+      line: 55
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning

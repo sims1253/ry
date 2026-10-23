@@ -214,6 +214,9 @@ All notable changes to ry are documented in this file.
   `length.*` methods are `function(x) length(unclass(x))`, and name the
   method, with a note at its definition, when RY032 distrusts the guard
   because of one (#701).
+- Apply `--typeshed` stubs' `captures_promise` arguments when deciding whether
+  a project function captures its formal, so a wrapper around a stubbed
+  capture no longer reports its caller's name as RY010 (#776).
 
 ## [0.11.0] - 2026-09-22
 

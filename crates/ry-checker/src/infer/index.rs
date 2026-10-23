@@ -222,6 +222,15 @@ impl Checker {
                         // error); only data frames make a missing `$`
                         // name a hard error worth flagging. Mirror the `[[`-with-string guard below.
                         if bt.class.contains("data.frame") && schema.complete {
+                            // A base data.frame uses list `$`, which
+                            // partially matches a unique prefix (#753). A
+                            // tibble's `$.tbl_df` returns NULL instead, and
+                            // any other class may bring its own `$`.
+                            if bt.class == ClassVector::single("data.frame")
+                                && let Some(t) = schema.unique_prefix_match(name)
+                            {
+                                return t;
+                            }
                             self.emit_undefined_column(name, schema, span);
                             // Fall through to the conservative default so
                             // downstream code still has *a* type to work

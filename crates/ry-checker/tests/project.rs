@@ -2282,3 +2282,81 @@ fn on_load_block_assignments_are_package_bindings() {
             .map(|name| format!("variable `{name}` is not bound in this scope")),
     );
 }
+
+// RY010 messages for `use.R` after checking `module.R` beside it.
+fn unbound_beside_module(module: &str, use_src: &str) -> Vec<String> {
+    let mut project = Project::new();
+    project.add_file("module.R".to_string(), parse("module.R", module));
+    project.add_file("use.R".to_string(), parse("use.R", use_src));
+    project
+        .check()
+        .into_iter()
+        .filter(|(path, _)| path == "use.R")
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .filter(|diagnostic| diagnostic.code == "RY010")
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+#[test]
+fn rcpp_load_module_binds_its_objects_in_the_namespace() {
+    // `Rcpp::loadModule(module, what)` assigns module objects into the
+    // package namespace (#704). `what = TRUE` binds every object the C++
+    // module declares, which ry cannot list; a literal `what` binds exactly
+    // those names, under their `names()` where given.
+    let unbound = |name: &str| format!("variable `{name}` is not bound in this scope");
+    let reads = "new_raster <- function() SpatRaster$new()\n";
+    // A function's own variable read before it is bound stays unbound.
+    let read_early = "g <- function(v) {\n  head <- v[seq_len(n)]\n  n <- 2\n  head\n}\n";
+    for module in [
+        "loadModule(\"spat\", TRUE)\n",
+        "Rcpp::loadModule(\"spat\", what = TRUE)\n",
+        "f <- function(what) loadModule(\"spat\", what = what)\n",
+        "loadModule(\"spat\", TRUE, env = topenv(parent.frame()))\n",
+        "loadModule(\"spat\", TRUE, env = environment())\n",
+        "f <- function() loadModule(\"spat\", TRUE, env = topenv())\n",
+        ".onLoad <- function(libname, pkgname) {\n  loadModule(\"spat\", TRUE, env = asNamespace(pkgname))\n}\n",
+        "loadModule(\"spat\", TRUE, env = base::getNamespace(\"rcpppkg\"))\n",
+        "loadModule(\"spat\", TRUE, env = base::topenv(base::parent.frame()))\n",
+    ] {
+        assert_eq!(unbound_beside_module(module, reads), Vec::<String>::new());
+        assert_eq!(unbound_beside_module(module, read_early), [unbound("n")]);
+    }
+    // Another function's own `SpatRaster` does not hide the module's.
+    assert_eq!(
+        unbound_beside_module(
+            "loadModule(\"spat\", TRUE)\n",
+            "g <- function() {\n  SpatRaster <- 1\n}\nnew_raster <- function() SpatRaster$new()\n",
+        ),
+        Vec::<String>::new(),
+    );
+    assert_eq!(
+        unbound_beside_module(
+            "loadModule(\"spat\", c(\"SpatRaster\", Vec = \"SpatVector\"))\n",
+            "reads <- function() list(SpatRaster, Vec, SpatVector, SpatRastr)\n",
+        ),
+        ["SpatVector", "SpatRastr"].map(unbound),
+    );
+    assert_eq!(
+        unbound_beside_module(
+            "loadModule(\"spat\", \"SpatRaster\")\n",
+            "reads <- function() list(SpatRaster, SpatVector)\n",
+        ),
+        [unbound("SpatVector")],
+    );
+    // Without `what`, only the module itself loads; another `env` gets the
+    // objects instead of the namespace; without loadModule, nothing.
+    for module in [
+        "loadModule(\"spat\")\n",
+        "loadModule(\"spat\", what = NULL)\n",
+        "f <- function() loadModule(\"spat\", TRUE, env = environment())\n",
+        "Rcpp::loadModule(\"spat\", TRUE, env = new.env())\n",
+        "loadModule(\"spat\", c(\"SpatRaster\"), FALSE, other_env)\n",
+        "x <- 1\n",
+    ] {
+        assert_eq!(
+            unbound_beside_module(module, reads),
+            [unbound("SpatRaster")]
+        );
+    }
+}

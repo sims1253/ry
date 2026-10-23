@@ -120,6 +120,9 @@ All notable changes to ry are documented in this file.
 - Report a serialized workspace the parser stops reading early, such as an
   `R/sysdata.rda` that holds an external pointer, as a degraded scope instead
   of a complete inventory (#714).
+- Let function bodies see `<<-` updates from writers defined after them or
+  in another package file, such as a `NULL` placeholder filled by
+  `.onLoad`, removing false RY001 and RY070 reports (#706).
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
 - Stop checking a closure's free variables against its defining frame once
@@ -147,6 +150,10 @@ All notable changes to ry are documented in this file.
   (r-typeshed affe513f) now return a data frame from `read.table` and its
   `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
   double matrix from `gc` (#709).
+- Let a literal positional `x[[1]] <- value` replace the element type a
+  list recorded, and make a computed `x[[i]] <- value` or a positional
+  `x[i] <- value` forget the recorded element types, removing RY061 false
+  positives in ade4 (#715).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
 - Check files with thousands of top-level functions in linear time. torch's
@@ -162,9 +169,18 @@ All notable changes to ry are documented in this file.
 - Keep a name assigned inside a `[` subscript bound when the receiver is
   opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
   reports in lme4 and DescTools (#713).
+- Stop typing a callee's formal as the caller's forwarded default when a
+  condition in the caller tests that argument before the call, as in
+  `if (!is.null(save_period)) cb_save(save_period)` (#719).
 - Read a literal `x[[N]]` on a partly named list by position: `list()`
   numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
   no longer reads the unnamed list and now reports RY061 on `$b` (#758).
+- Let an S3 generic inherit `{{ x }}` defusing from its project methods, as it
+  already inherits `enquo()` quoting, so `generic(df, col = mpg)` no longer
+  reports `mpg` as RY010 when the method forwards `{{ col }}` (#687).
+- Stop RY010 from reporting a closure's free name that a braced call
+  argument binds later, as in `suppressWarnings({ ... })`, a `switch()` arm,
+  or `local({ ... })` when `local` may be masked (#690).
 
 ## [0.11.0] - 2026-09-22
 

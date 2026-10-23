@@ -1100,6 +1100,13 @@ impl Checker {
         // captured from enclosing frames keep their own origin rule.
         fn_scope.uncertainty.unseen_rebinds = false;
         self.start_reference_scope(&mut fn_scope, span);
+        // A `<<-` writer anywhere in the enclosing body may have run
+        // before this body does, whatever the definition order (#706).
+        if let Some(writes) = self.superassigned_captures.last() {
+            for name in writes {
+                fn_scope.insert(name.clone(), RType::unknown());
+            }
+        }
         if let Some(captures) = self.deferred_captures.last() {
             for capture in captures {
                 if fn_scope.get(capture).is_none() {
@@ -1197,11 +1204,16 @@ impl Checker {
             }
         }
         self.deferred_captures.push(assigned);
+        // Names outside this frame were already widened at its entry, and
+        // nested closures inherit them through `fn_scope`.
+        self.superassigned_captures
+            .push(index::nested_superassignment_writes(body));
         self.push_enclosing_formals(params, span);
         self.check_discarded_branch_results(body);
         self.walk_block(body, &mut fn_scope, None);
         self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
+        self.superassigned_captures.pop();
         self.enclosing_formals.pop();
         self.frame_writes.pop();
         self.deferred_captures.pop();
@@ -2480,7 +2492,8 @@ impl Checker {
             let source = argument.1.as_deref()?;
             let caller_fn = self.fn_table.functions.live_named(&call.caller);
             if let Some(caller_fn) = caller_fn
-                && may_rebind_source_before(&caller_fn.body, source, call.call_start)
+                && (may_rebind_source_before(&caller_fn.body, source, call.call_start)
+                    || may_guard_source_before(&caller_fn.body, source, call.call_start))
             {
                 return None;
             }
@@ -2992,11 +3005,43 @@ impl Checker {
             scope.insert(base_name.clone(), updated);
             return true;
         }
+        if matches!(kind, IndexKind::Double)
+            && matches!(base_t.mode, Mode::List)
+            && base_t.class.is_classless()
+            && self.resolves_to_base("[[<-", scope)
+            && !ops_chooser::operator_rebound(self, "[[<-", scope)
+        {
+            // On a class-less list base `x[[N]] <- v` replaces a recorded
+            // `[[N]]` element like `$<-` does. `list()` numbers only unnamed
+            // elements, so the key is the position only when no element is
+            // named. A value that may be NULL could drop the element and
+            // shift the rest. Both take the computed-index path below.
+            let key = args
+                .first()
+                .and_then(|arg| extract_literal_int(&arg.value))
+                .map(|index| format!("[[{index}]]"));
+            if let Some(key) = key.filter(|key| {
+                !vt.mode.is_unknown()
+                    && !matches!(vt.mode, Mode::Null | Mode::Union)
+                    && base_t.columns.as_ref().is_some_and(|schema| {
+                        schema.get(key).is_some()
+                            && schema.names().iter().all(|name| name.starts_with("[["))
+                    })
+            }) {
+                scope.insert(
+                    base_name.clone(),
+                    type_with_assigned_column(base_t, &key, vt),
+                );
+                return true;
+            }
+        }
         let Some(col) = assigned_column_name(kind, args) else {
             // A dynamic `$`/`[[` write proves that the record may contain
             // additional fields. Preserve known fields but mark the schema
             // incomplete so a later unknown-field read degrades to opaque
-            // instead of emitting RY060.
+            // instead of emitting RY060. A positional `[[` or `[` write on a
+            // class-less list may replace or drop any element, so it forgets
+            // the element types. A classed list may have its own method.
             if matches!(
                 kind,
                 IndexKind::Dollar | IndexKind::Double | IndexKind::Single
@@ -3007,6 +3052,11 @@ impl Checker {
                     .as_ref()
                     .map(|schema| (**schema).clone())
                     .unwrap_or_default();
+                if matches!(kind, IndexKind::Double | IndexKind::Single)
+                    && base_t.class.is_classless()
+                {
+                    schema.columns.clear();
+                }
                 schema.complete = false;
                 scope.insert(base_name.clone(), base_t.with_columns(Arc::new(schema)));
                 return true;
@@ -3054,6 +3104,19 @@ impl Checker {
     }
 
     pub(crate) fn infer_block_expr(&mut self, body: &[Stmt], scope: &mut Scope) -> RType {
+        // A block binds in whichever frame runs it, so closures it defines
+        // may read names it binds later, as in a function body (issue
+        // #690). Bare and `if` blocks are already in the body's set.
+        let enclosing = self.deferred_captures.last();
+        let assigned = assigned_names_in_body(body);
+        let extends = assigned
+            .iter()
+            .any(|name| !enclosing.is_some_and(|captures| captures.contains(name)));
+        if extends {
+            let mut captures = enclosing.cloned().unwrap_or_default();
+            captures.extend(assigned);
+            self.deferred_captures.push(captures);
+        }
         let mut value = RType::new(Mode::Null, Length::Zero);
         self.walk_block_with(body, |checker, statement, last| {
             if last {
@@ -3062,6 +3125,9 @@ impl Checker {
                 checker.walk_stmt(statement, scope, None);
             }
         });
+        if extends {
+            self.deferred_captures.pop();
+        }
         value
     }
 

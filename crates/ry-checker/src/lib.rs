@@ -1211,6 +1211,10 @@ pub(crate) struct FnTable {
     // set, we know it's defined in another file (or later in this
     // same file) and return opaque instead of flagging it as unbound.
     pub(crate) known_vars: std::collections::HashSet<String>,
+    // Names any project file's code may `<<-` into the shared top-level
+    // frame (issue #706). Function bodies run after the whole namespace
+    // has loaded, so they read these as unknown whatever the file order.
+    pub(crate) superassigned: std::collections::HashSet<String>,
     // Names bound to callable objects that are not ordinary R functions.
     // S7 class and generic objects implement `()` themselves, so call-position
     // lookup must treat them as candidates even though their inferred value is
@@ -1327,6 +1331,8 @@ impl FnTable {
         self.unrecorded_global_literals
             .extend(collected.unrecorded_global_literals.iter().cloned());
         self.known_vars.extend(collected.known_vars.iter().cloned());
+        self.superassigned
+            .extend(collected.superassigned.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());
         for (name, sites) in &collected.call_sites {
@@ -1481,6 +1487,12 @@ pub struct Checker {
     // capture without making a direct read-before-assignment valid. The
     // current body's set also models expressions deferred by `on.exit()`.
     deferred_captures: Vec<HashSet<String>>,
+    // Per enclosing body (the file, then each function body): the `<<-`
+    // targets its code may write, collected before the body is walked
+    // (issue #706). A closure body runs when called, possibly after a
+    // writer defined later in the source, so it starts with the innermost
+    // set unknown-typed.
+    superassigned_captures: Vec<HashSet<String>>,
     // Lexical function context used by call-site rules such as RY096.
     // A stack is required because nested functions replace, rather than
     // inherit, the set of formals relevant to `hasArg()`.
@@ -1712,6 +1724,7 @@ impl Checker {
             method_screens: std::sync::OnceLock::new(),
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
+            superassigned_captures: Vec::new(),
             enclosing_formals: Vec::new(),
             frame_writes: Vec::new(),
             loop_frames: Vec::new(),
@@ -1914,7 +1927,10 @@ impl Checker {
             self.reference_capture = Some(Box::new(reference_facts::ReferenceCapture::new(file)));
             self.start_reference_scope(&mut scope, whole_file_span(&file.source));
         }
+        self.superassigned_captures
+            .push(self.fn_table.superassigned.clone());
         self.walk_block(&file.stmts, &mut scope, None);
+        self.superassigned_captures.pop();
         if encoding_flagged || !file.parse_errors.is_empty() {
             self.diagnostics.truncate(semantic_start);
             // Declarations are semantic claims too. A repaired AST cannot

@@ -31,3 +31,11 @@ run_state <- function() if (state) "on"
 setup <- function() state <<- TRUE
 setup()
 stopifnot(identical(run_state(), "on"))
+
+block_writer <- function() {
+  flag <- NULL
+  read_flag <- function() if (flag) "set"
+  local({ flag <<- TRUE })
+  read_flag
+}
+stopifnot(identical(block_writer()(), "set"))

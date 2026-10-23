@@ -56,3 +56,13 @@ outer <- function() {
   x <<- TRUE
   read
 }
+
+## case: a `<<-` in a function's `local()` block reaches its earlier closure
+# no-diag
+# The block runs in a child of `f`'s frame, so the write rebinds `f`'s `x`.
+f <- function() {
+  x <- NULL
+  g <- function() if (x) 1
+  local({ x <<- TRUE })
+  g
+}

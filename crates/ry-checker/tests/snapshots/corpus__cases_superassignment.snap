@@ -28,3 +28,5 @@ expression: rows
       line: 55
       message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
+- case: "a `<<-` in a function's `local()` block reaches its earlier closure"
+  diagnostics: []

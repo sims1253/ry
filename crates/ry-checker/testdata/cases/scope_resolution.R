@@ -772,3 +772,13 @@ df$nv
 tb <- dplyr::group_by(data.frame(nvalid = 1:3, k = 1:3))
 tb$nv
 dplyr::left_join(tb, data.frame(k = 1:3, z = 4:6), by = "k")$nv
+
+## case: a closure formal named c does not void a stopifnot scalar fact
+# no-diag
+# Only a binding a registration can see masks S4 collection (#780).
+asserted <- function(kind = "warning") {
+  stopifnot(is.null(kind) || length(kind) == 1L)
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+on_error <- function(x) tryCatch(x, error = function(c) FALSE)

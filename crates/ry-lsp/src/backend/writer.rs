@@ -994,9 +994,16 @@ impl IndexWriter {
             }
         }
         if !unparsed.is_empty() {
-            let state = self.state.lock().await;
-            for (path, version, text, error) in unparsed {
-                let ctx = state.context_for_path(&path);
+            // Snapshot the contexts so post-processing runs without the lock,
+            // as it does for checked files.
+            let contexts: Vec<FolderAnalysisContext> = {
+                let state = self.state.lock().await;
+                unparsed
+                    .iter()
+                    .map(|(path, ..)| state.context_for_path(path).clone())
+                    .collect()
+            };
+            for ((path, version, text, error), ctx) in unparsed.into_iter().zip(contexts) {
                 if ctx.excludes_path(&path) {
                     continue;
                 }

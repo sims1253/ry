@@ -208,9 +208,9 @@ async fn environment_paths_are_anchored_globs_in_both_frontends() {
 /// RY000 clears once the buffer parses again (#785).
 #[tokio::test]
 async fn unparseable_open_buffer_publishes_the_cli_ry000_until_it_parses() {
-    let deep = format!("{}1{}\n", "f(".repeat(512), ")".repeat(512));
+    let nested = format!("{}1{}\n", "f(".repeat(512), ")".repeat(512));
     let fixture = FixtureProject::empty().unwrap();
-    let path = fixture.write_file("deep.R", &deep).unwrap();
+    let path = fixture.write_file("deep.R", &nested).unwrap();
     let cli = cli_diagnostics(fixture.root(), "deep.R", &[]);
     assert!(
         cli.len() == 1 && cli[0].code == "RY000" && cli[0].byte_column > 0,
@@ -224,14 +224,31 @@ async fn unparseable_open_buffer_publishes_the_cli_ry000_until_it_parses() {
     let publish = harness::open_published(&mut session, &uri, 1, unbound).await;
     assert_eq!(count_code(&publish, "RY010"), 1, "{publish}");
 
-    let publish = change_published(&mut session, &uri, 2, &deep).await;
+    let publish = change_published(&mut session, &uri, 2, &nested).await;
     assert_eq!(
         published_from_lsp(&publish, &path, fixture.root()),
         cli,
         "{publish}"
     );
+    let start = |publish: &serde_json::Value| {
+        let diagnostics = normalize_diagnostics(publish);
+        assert_eq!(diagnostics.len(), 1, "{publish}");
+        diagnostics[0]["range"]["start"].clone()
+    };
+    let plain = start(&publish);
 
-    let publish = change_published(&mut session, &uri, 3, "x <- 1\n").await;
+    // Multibyte characters before the error move it by their UTF-16 units,
+    // not their bytes.
+    let prefix = "s <- \"é😀\"; ";
+    let publish = change_published(&mut session, &uri, 3, &format!("{prefix}{nested}")).await;
+    let shifted = plain["character"].as_u64().unwrap() + prefix.encode_utf16().count() as u64;
+    assert_eq!(
+        start(&publish),
+        json!({"line": 0, "character": shifted}),
+        "{publish}"
+    );
+
+    let publish = change_published(&mut session, &uri, 4, "x <- 1\n").await;
     assert!(normalize_diagnostics(&publish).is_empty(), "{publish}");
     join_session(session, server).await;
 }

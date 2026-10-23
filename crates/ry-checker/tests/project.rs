@@ -262,6 +262,46 @@ fn incremental_edit_rechecks_cross_file_dependents() {
     );
 }
 
+/// Issue #706: a `.onLoad` in a later-collated file fills top-level
+/// `NULL` placeholders through `<<-`. Function bodies run after it, so
+/// their reads see unknown types; removing the writer re-emits the reader.
+#[test]
+fn superassignment_from_another_file_reaches_function_bodies() {
+    let api = "helper <- NULL\nstate <- NULL\nrun <- function(x) {\n  if (state) helper(x)\n}\n";
+    let mut project = Project::new();
+    project.add_file("R/api.R".to_string(), parse("R/api.R", api));
+    project.add_file(
+        "R/zzz.R".to_string(),
+        parse(
+            "R/zzz.R",
+            ".onLoad <- function(libname, pkgname) {\n  helper <<- function(x) x * 2\n  state <<- TRUE\n}\n",
+        ),
+    );
+    let api_codes = |diagnostics: Vec<(String, Vec<ry_checker::Diagnostic>)>| {
+        diagnostics
+            .into_iter()
+            .filter(|(path, _)| path == "R/api.R")
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>()
+    };
+    let before = api_codes(project.check_incremental());
+    assert!(before.is_empty(), "{before:?}");
+
+    project.update_file(
+        "R/zzz.R".to_string(),
+        Arc::new(parse(
+            "R/zzz.R",
+            ".onLoad <- function(libname, pkgname) NULL\n",
+        )),
+    );
+    let after = api_codes(project.check_incremental());
+    assert!(
+        after.contains(&"RY001") && after.contains(&"RY070"),
+        "{after:?}"
+    );
+}
+
 #[test]
 fn cross_file_s3_method_dispatches() {
     // methods.R defines print.foo; usage.R creates a "foo"-classed

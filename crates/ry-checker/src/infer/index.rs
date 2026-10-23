@@ -1320,6 +1320,51 @@ pub(crate) fn superassignment_writes_in_expr(expr: &Expr) -> SuperassignmentWrit
     writes
 }
 
+/// The `<<-` targets of closures nested in a function `body` that can
+/// land in the frame the body runs in, or further out (issue #706). The
+/// body's own direct writes are left out: they skip its frame, so a
+/// closure reading the body's local keeps seeing the unchanged binding.
+/// Code passed to `local()` or a testthat verb runs in a child of the
+/// body's frame, so its direct writes do land there and are kept. A
+/// direct complex write (`a$b <<- v`) also skips the frame: R fetches its
+/// root from the enclosing frames, not the body's own `a`.
+pub(crate) fn nested_superassignment_writes(body: &[Stmt]) -> HashSet<String> {
+    let mut writes = SuperassignmentWrites::default();
+    let mut formals = InterveningFormals::default();
+    let _ = walk_stmts(
+        body,
+        Walk::ALL,
+        |node: AstNode<'_>, depth: usize| -> ControlFlow<(), Descend> {
+            if depth == 0
+                && let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                && ident_name(func).is_some_and(|name| {
+                    let name = crate::semantic_lists::bare_name(name);
+                    name == "local" || crate::semantic_lists::is_testthat_block_verb(name)
+                })
+            {
+                for argument in args {
+                    writes
+                        .names
+                        .extend(superassignment_writes_in_expr(&argument.value).names);
+                }
+            }
+            let direct_write = depth == 0
+                && matches!(
+                    node,
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::SuperAssign,
+                        ..
+                    })
+                );
+            if direct_write {
+                return ControlFlow::Continue(Descend::Into);
+            }
+            ControlFlow::Continue(formals.visit(node, depth, &mut writes))
+        },
+    );
+    writes.names
+}
+
 /// Pins the traversal shape of [`superassignment_writes`]: statement and
 /// expression positions both present the `SuperAssign` marker, nested
 /// closure bodies contribute their targets (a closure defined inside

@@ -144,6 +144,8 @@ struct TableSnapshot {
     escaped_operator_names: bool,
     escaped_slot_names: bool,
     may_install_bindings: bool,
+    /// Another file's `<<-` widens bindings read in function bodies.
+    superassigned: HashSet<String>,
 }
 
 impl TableSnapshot {
@@ -159,6 +161,7 @@ impl TableSnapshot {
             escaped_operator_names: table.has_escaped_operator_names,
             escaped_slot_names: table.has_escaped_slot_names,
             may_install_bindings: table.may_install_bindings,
+            superassigned: table.superassigned.clone(),
         }
     }
 }

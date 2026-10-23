@@ -10,4 +10,6 @@ stopifnot(identical(df[, "nvalid", drop = FALSE]$nv, 1:3))
 stopifnot(identical(df[, 1, drop = FALSE]$nv, 1:3))
 tb <- dplyr::group_by(df)
 stopifnot(identical(class(tb[, "nvalid"]), c("tbl_df", "tbl", "data.frame")))
+# The third positional argument of `[` is `drop`.
+stopifnot(is.integer(tb[, "nvalid", TRUE]), inherits(tb[, "nvalid", FALSE], "tbl_df"))
 tb[, "nvalid"]$nv

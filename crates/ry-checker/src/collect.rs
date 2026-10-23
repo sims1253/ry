@@ -371,6 +371,26 @@ fn installs_bindings(name: &str) -> bool {
     BINDING_INSTALLERS.contains(&strip_package(name, "base").unwrap_or(name))
 }
 
+/// Whether `node` may replace a binding in any frame, including the global
+/// one call contracts rely on: a binding installer, called, passed, or named
+/// to `do.call`, or `assign`/`delayedAssign`/`makeActiveBinding`/`rm` with a
+/// computed name.
+fn node_installs_bindings(node: AstNode<'_>) -> bool {
+    match node {
+        AstNode::Expr(Expr::Ident { name, .. }) => installs_bindings(name),
+        AstNode::Expr(Expr::Call { func, args, .. }) => {
+            let mut writes = WriteSet::default();
+            collect_callable_binding_write(func, args, &mut writes);
+            writes.opaque
+                || matches!(func.as_ref(), Expr::Ident { name, .. } if bare_name(name) == "do.call")
+                    && args.first().is_some_and(|first| {
+                        matches!(&first.value, Expr::String(name, _) if installs_bindings(name))
+                    })
+        }
+        _ => false,
+    }
+}
+
 /// Whether a call to `name` may bind anything in the frame it runs in: an
 /// installer, or any frame-reflective function.
 fn reflects_frame(name: &str) -> bool {
@@ -696,25 +716,7 @@ impl Checker {
             s,
             Walk::ALL,
             |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-                // A binding installer, called, passed, or named to `do.call`,
-                // may replace a binding in any frame, including the global
-                // one call contracts rely on.
-                // So may `assign`/`delayedAssign`/`makeActiveBinding`/`rm`
-                // with a computed name.
-                let installer = match node {
-                    AstNode::Expr(Expr::Ident { name, .. }) => installs_bindings(name),
-                    AstNode::Expr(Expr::Call { func, args, .. }) => {
-                        let mut writes = WriteSet::default();
-                        collect_callable_binding_write(func, args, &mut writes);
-                        writes.opaque
-                            || matches!(func.as_ref(), Expr::Ident { name, .. } if bare_name(name) == "do.call")
-                                && args.first().is_some_and(|first| {
-                                    matches!(&first.value, Expr::String(name, _) if installs_bindings(name))
-                                })
-                    }
-                    _ => false,
-                };
-                if installer && !self.fn_table.may_install_bindings {
+                if node_installs_bindings(node) && !self.fn_table.may_install_bindings {
                     Arc::make_mut(&mut self.fn_table).may_install_bindings = true;
                 }
                 if let AstNode::Expr(Expr::Call { func, args, .. }) = node
@@ -1896,19 +1898,14 @@ fn nonempty_strings(expr: &Expr) -> bool {
 /// the methods function it is read as. A formal or a plain local of a
 /// function lives in that function's frame, so it masks only registrations
 /// the function itself makes (#780); `<<-` and `assign()` may reach any
-/// frame.
+/// frame, and so may any binding in a function that may install bindings
+/// elsewhere (`evalq(c <- f, globalenv())`).
 fn masks_s4_registration(s: &Stmt) -> bool {
     walk_stmt(s, Walk::ALL, |node, _| match node {
-        AstNode::Expr(function @ Expr::Function { .. }) if !registers_s4(function) => {
-            let escapes = walk_expr(function, Walk::ALL, |inner, _| {
-                if binds_s4_helper(inner, false) {
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(Descend::Into)
-                }
-            })
-            .is_break();
-            if escapes {
+        AstNode::Expr(function @ Expr::Function { .. })
+            if !registers_s4(function) && !contains(function, node_installs_bindings) =>
+        {
+            if contains(function, |inner| binds_s4_helper(inner, false)) {
                 ControlFlow::Break(())
             } else {
                 ControlFlow::Continue(Descend::Skip)
@@ -1922,15 +1919,23 @@ fn masks_s4_registration(s: &Stmt) -> bool {
 
 /// Whether `function` makes an S4 registration call anywhere inside it, or
 /// is a generic body whose `standardGeneric()` call a formal may mask.
+/// `bare_name` also admits a qualified `methods::setMethod(...)`.
 fn registers_s4(function: &Expr) -> bool {
-    walk_expr(function, Walk::ALL, |node, _| match node {
-        AstNode::Expr(Expr::Call { func, .. })
+    contains(function, |node| {
+        matches!(node, AstNode::Expr(Expr::Call { func, .. })
             if matches!(func.as_ref(), Expr::Ident { name, .. }
-                if matches!(bare_name(name), "setMethod" | "setGeneric" | "standardGeneric")) =>
-        {
+                if matches!(bare_name(name), "setMethod" | "setGeneric" | "standardGeneric")))
+    })
+}
+
+/// Whether any node of `expr` satisfies `found`.
+fn contains(expr: &Expr, found: impl Fn(AstNode<'_>) -> bool) -> bool {
+    walk_expr(expr, Walk::ALL, |node, _| {
+        if found(node) {
             ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(Descend::Into)
         }
-        _ => ControlFlow::Continue(Descend::Into),
     })
     .is_break()
 }

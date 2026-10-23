@@ -215,6 +215,11 @@ fn only_a_helper_binding_a_registration_can_see_masks_it() {
         "f <- function(x) assign(\"c\", function(...) NULL)\n",
         "register <- function(signature) setMethod(\"g\", signature(\"A\", \"logical\"), function(x, y) NULL)\n",
         "register <- function() {\n  c <- function(...) \"A\"\n  setMethod(\"g\", c(\"A\", \"logical\"), function(x, y) NULL)\n}\n",
+        "register <- function() {\n  c <- function(...) \"A\"\n  methods::setMethod(\"g\", c(\"A\", \"logical\"), function(x, y) NULL)\n}\n",
+        // An installer may write the binding into another frame.
+        "f <- function() evalq(signature <- function(...) NULL, globalenv())\n",
+        "f <- function() eval.parent(quote(signature <- function(...) NULL))\n",
+        "f <- function() local({ signature <- function(...) NULL }, envir = globalenv())\n",
     ] {
         let methods = format!("{masking}{CHR_NUM}");
         assert_eq!(
@@ -248,6 +253,10 @@ fn a_generic_formal_masking_standard_generic_leaves_its_calls_unknown() {
         r <- g(new(\"A\"))\n";
     let (_, scope) = check_with_scope(source);
     assert_eq!(scope.get("r").unwrap().mode, Mode::Opaque);
+    // Control: without the masking formal the same shape selects the method.
+    let unmasked = source.replace(", standardGeneric = function(...) \"text\"", "");
+    let (_, scope) = check_with_scope(&unmasked);
+    assert_eq!(scope.get("r").unwrap().mode, Mode::Integer);
 }
 
 #[test]

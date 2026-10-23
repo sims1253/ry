@@ -243,10 +243,28 @@ fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
 /// namespace (#704): each module object `what` names, under its `names()`
 /// entry where one is given. `None` when ry cannot list them: `what = TRUE`
 /// binds every object the C++ module declares, and a computed `what` may
-/// name any of them.
+/// name any of them. An `env` other than the default
+/// `topenv(parent.frame())`, `topenv()` or `environment()` binds nothing in
+/// the namespace.
 fn rcpp_module_bindings(args: &[Arg]) -> Option<Vec<String>> {
+    fn no_arg_call(expr: &Expr, names: &[&str]) -> bool {
+        matches!(expr, Expr::Call { func, args, .. }
+            if args.is_empty() && matches!(func.as_ref(), Expr::Ident { name, .. } if names.contains(&name.as_str())))
+    }
     let matched = match_arguments(&["module", "what", "loadNow", "env"], args);
-    let Some(what) = matched.arg_for_param(1).map(|index| &args[index]) else {
+    let namespace_env = matched.arg_for_param(3).is_none_or(|index| {
+        let env = &args[index].value;
+        no_arg_call(env, &["environment", "topenv"])
+            || matches!(env, Expr::Call { func, args, .. }
+                if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "topenv")
+                    && matches!(args.as_slice(), [frame] if frame.name.is_none()
+                        && no_arg_call(&frame.value, &["parent.frame", "environment"])))
+    });
+    let Some(what) = matched
+        .arg_for_param(1)
+        .filter(|_| namespace_env)
+        .map(|index| &args[index])
+    else {
         return Some(Vec::new());
     };
     match &what.value {

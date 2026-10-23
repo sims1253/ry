@@ -2312,6 +2312,8 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
         "loadModule(\"spat\", TRUE)\n",
         "Rcpp::loadModule(\"spat\", what = TRUE)\n",
         "f <- function(what) loadModule(\"spat\", what = what)\n",
+        "loadModule(\"spat\", TRUE, env = topenv(parent.frame()))\n",
+        "loadModule(\"spat\", TRUE, env = environment())\n",
     ] {
         assert_eq!(unbound_beside_module(module, reads), Vec::<String>::new());
         assert_eq!(unbound_beside_module(module, read_early), [unbound("n")]);
@@ -2323,9 +2325,14 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
         ),
         ["SpatVector", "SpatRastr"].map(unbound),
     );
-    // Without `what`, only the module itself loads; without loadModule,
-    // nothing.
-    for module in ["loadModule(\"spat\")\n", "x <- 1\n"] {
+    // Without `what`, only the module itself loads; another `env` gets the
+    // objects instead of the namespace; without loadModule, nothing.
+    for module in [
+        "loadModule(\"spat\")\n",
+        "Rcpp::loadModule(\"spat\", TRUE, env = new.env())\n",
+        "loadModule(\"spat\", c(\"SpatRaster\"), FALSE, other_env)\n",
+        "x <- 1\n",
+    ] {
         assert_eq!(
             unbound_beside_module(module, reads),
             [unbound("SpatRaster")]

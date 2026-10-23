@@ -40,3 +40,9 @@ fit <- function() train()
 cb_save <- function(save_period = 0) if (save_period < 0) stop("negative")
 train <- function(save_period = NULL) cb_save(save_period)
 fit <- function() train()
+
+## case: the forwarded argument inside its own condition is not a guard
+# expect: RY001
+cb_save <- function(x = 0) if (x < 0) FALSE else TRUE
+train <- function(x = NULL) if (!cb_save(x)) NULL
+train()

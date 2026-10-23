@@ -222,7 +222,11 @@ impl Checker {
                         // error); only data frames make a missing `$`
                         // name a hard error worth flagging. Mirror the `[[`-with-string guard below.
                         if bt.class.contains("data.frame") && schema.complete {
-                            if frame_dollar_partially_matches(&bt.class)
+                            // A base data.frame uses list `$`, which
+                            // partially matches a unique prefix (#753). A
+                            // tibble's `$.tbl_df` returns NULL instead, and
+                            // any other class may bring its own `$`.
+                            if bt.class == ClassVector::single("data.frame")
                                 && let Some(t) = schema.unique_prefix_match(name)
                             {
                                 return t;
@@ -603,15 +607,6 @@ pub(crate) fn select_subscript_form(
         (UnaryOpKind::Not, SelectSlotRole::Sdcols) => operand == Mode::Character,
         _ => false,
     }
-}
-
-/// Whether `$` on a frame of this class is list `$`, which partially
-/// matches a unique column prefix (#753): a base data.frame or a
-/// data.table. A tibble's `$.tbl_df` warns and returns NULL instead, and
-/// any other class may bring its own `$` method.
-fn frame_dollar_partially_matches(class: &ClassVector) -> bool {
-    *class == ClassVector::single("data.frame")
-        || *class == ClassVector::from_slice(&["data.table", "data.frame"])
 }
 
 /// Whether `receiver` is provably an object whose `[` follows base R

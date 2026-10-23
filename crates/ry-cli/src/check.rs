@@ -807,7 +807,7 @@ fn report_check_parse_failure(
 ) -> ry_checker::Diagnostic {
     match error {
         pipeline::ParseError::Read(error) => eprintln!("ry: {}: {}", path.display(), error),
-        pipeline::ParseError::Parse(error) => {
+        pipeline::ParseError::Parse { error, .. } => {
             eprintln!("ry: {}: parse error: {}", path.display(), error)
         }
     }
@@ -835,15 +835,26 @@ fn run_check_once(
     let failures = std::sync::Mutex::new(Vec::new());
     let all_parsed = pipeline::parse_files(paths, overlay, |path, error| {
         let diagnostic = report_check_parse_failure(path, error);
-        failures
-            .lock()
-            .expect("parse-failure list lock")
-            .push((path.to_path_buf(), diagnostic));
+        // The rejected text renders the RY000's column like any finding's.
+        let text = match error {
+            pipeline::ParseError::Parse { text, .. } => Some(text.clone()),
+            pipeline::ParseError::Read(_) => None,
+        };
+        failures.lock().expect("parse-failure list lock").push((
+            path.to_path_buf(),
+            diagnostic,
+            text,
+        ));
         pipeline::FailureAction::Skip
     })
     .expect("check's parse-failure policy never aborts");
     parse_errors += paths.len() - all_parsed.len();
-    synthetic_diagnostics.extend(failures.into_inner().expect("parse-failure list lock"));
+    for (path, diagnostic, text) in failures.into_inner().expect("parse-failure list lock") {
+        if let Some(text) = text {
+            srcs.insert(diagnostic.path.clone(), text);
+        }
+        synthetic_diagnostics.push((path, diagnostic));
+    }
     let mut parsed = Vec::with_capacity(all_parsed.len());
     for parsed_file in all_parsed {
         file_count += 1;

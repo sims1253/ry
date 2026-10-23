@@ -58,6 +58,34 @@ fn unparseable_file_is_one_ry000_in_every_format() {
     );
 }
 
+/// The RY000's column counts characters, like every other finding's, so
+/// multibyte characters before the parser's position move it by their
+/// character count, not their byte length.
+#[test]
+fn unparseable_file_ry000_column_counts_characters() {
+    let temp = tempfile::tempdir().unwrap();
+    let prefix = "s <- \"é😀\"; ";
+    let mut prefixed = prefix.as_bytes().to_vec();
+    prefixed.extend(too_deep());
+    write(
+        temp.path(),
+        &[("deep.R", &too_deep()), ("wide.R", &prefixed)],
+    );
+
+    let column = |file: &str| {
+        let json = check()
+            .cwd(temp.path())
+            .args(["--output-format", "json", "--exit-zero", file])
+            .run();
+        assert_eq!(json.findings(), [[file, "RY000", "error"]], "{json:?}");
+        let diagnostic = &json.json()[0];
+        assert_eq!(diagnostic["line"], 1, "{diagnostic}");
+        diagnostic["column"].as_u64().unwrap()
+    };
+    let shift = column("wide.R") - column("deep.R");
+    assert_eq!(shift, prefix.chars().count() as u64);
+}
+
 /// Invalid UTF-8 decodes lossily, so an unreadable file needs a permission
 /// error. Root reads it anyway, so the test skips itself there.
 #[cfg(unix)]

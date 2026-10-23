@@ -228,21 +228,11 @@ impl FolderAnalysisContext {
         error: ry_core::ParseError,
         origin: Option<serde_json::Value>,
     ) -> Vec<LspDiagnostic> {
-        let mut diagnostic =
-            ry_checker::frontend::parse_failure(path, &ry_workspace::SourceError::Parse(error));
-        // The parser gives a line and byte column; positions convert from
-        // byte offsets, kept on a character boundary.
-        let line_start: usize = text
-            .split_inclusive('\n')
-            .take(diagnostic.span.line)
-            .map(str::len)
-            .sum();
-        let mut start = (line_start + diagnostic.span.col).min(text.len());
-        while !text.is_char_boundary(start) {
-            start -= 1;
-        }
-        diagnostic.span.start = start;
-        diagnostic.span.end = start;
+        let error = ry_workspace::SourceError::Parse {
+            error,
+            text: text.to_owned(),
+        };
+        let diagnostic = ry_checker::frontend::parse_failure(path, &error);
         let diagnostics = self.post_process(vec![diagnostic], path, Some(Path::new(path)), None);
         to_lsp(&diagnostics, text, None, origin)
     }

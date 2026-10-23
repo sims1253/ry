@@ -238,13 +238,21 @@ async fn unparseable_open_buffer_publishes_the_cli_ry000_until_it_parses() {
     let plain = start(&publish);
 
     // Multibyte characters before the error move it by their UTF-16 units,
-    // not their bytes.
+    // not their bytes, and the CLI still names the same character.
     let prefix = "s <- \"é😀\"; ";
-    let publish = change_published(&mut session, &uri, 3, &format!("{prefix}{nested}")).await;
+    let wide = format!("{prefix}{nested}");
+    std::fs::write(&path, &wide).unwrap();
+    let cli = cli_diagnostics(fixture.root(), "deep.R", &[]);
+    let publish = change_published(&mut session, &uri, 3, &wide).await;
     let shifted = plain["character"].as_u64().unwrap() + prefix.encode_utf16().count() as u64;
     assert_eq!(
         start(&publish),
         json!({"line": 0, "character": shifted}),
+        "{publish}"
+    );
+    assert_eq!(
+        published_from_lsp(&publish, &path, fixture.root()),
+        cli,
         "{publish}"
     );
 

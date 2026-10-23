@@ -92,6 +92,8 @@ All notable changes to ry are documented in this file.
 - The language server publishes the same RY000 for an open buffer it cannot
   parse, instead of keeping the findings from its last parse, and clears it
   once the buffer parses again (#785).
+- The RY000 for a file ry cannot parse gives a character column, like every
+  other finding, instead of a byte column after multibyte characters (#784).
 - Stop selections from claiming their input's length. `return: "arg0"`
   combined with a `return_length` rule now keeps the first argument's mode
   and class but re-counts its elements, dropping whole-value facts; a data

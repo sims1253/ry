@@ -1010,10 +1010,10 @@ impl Checker {
                     type_: t,
                     required,
                     defaulted: p.default.is_some(),
-                    defused: parameter_is_defused(&body, &p.name, &[]),
-                    quoting: parameter_is_quoted(&body, params, &p.name),
+                    defused: parameter_is_defused(&body, &p.name, &[], &self.user_stubs),
+                    quoting: parameter_is_quoted(&body, params, &p.name, &self.user_stubs),
                     unforced: parameter_is_unforced(&body, params, &p.name),
-                    missing_only: parameter_only_probed(&body, params, &p.name),
+                    missing_only: parameter_only_probed(&body, params, &p.name, &self.user_stubs),
                     injection: None,
                 }
             })
@@ -1140,10 +1140,18 @@ fn is_callable_object_constructor(expression: &Expr) -> bool {
     )
 }
 
-fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool {
-    let quotes = |statement: &Stmt| stmt_any(statement, &|e| quotes_parameter(e, parameter));
-    let captures_promise =
-        |statement: &Stmt| stmt_any(statement, &|e| captures_promise_parameter(e, parameter));
+fn parameter_is_quoted(
+    body: &[Stmt],
+    params: &[Param],
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
+    let quotes = |statement: &Stmt| stmt_any(statement, &|e| quotes_parameter(e, parameter, stubs));
+    let captures_promise = |statement: &Stmt| {
+        stmt_any(statement, &|e| {
+            captures_promise_parameter(e, parameter, stubs)
+        })
+    };
     body.iter()
         .any(|statement| stmt_any(statement, &captures_all_arguments))
         || (params.iter().any(|formal| formal.name == parameter)
@@ -1154,7 +1162,7 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
             // this function.  This preserves eager diagnostics for mixed
             // bodies such as a capture followed by `print(x)`.
             && !(body.iter().any(captures_promise)
-                && parameter_has_normal_use(body, parameter)))
+                && parameter_has_normal_use(body, parameter, stubs)))
 }
 
 /// Whether the body and defaults use `parameter` only through `missing()`
@@ -1162,7 +1170,12 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
 /// Unlike `parameter_is_unforced`, frame reflection and string mentions do
 /// not count: a validator's `envir = rlang::current_env()` stays quiet.
 /// A formal the function never mentions qualifies too.
-fn parameter_only_probed(body: &[Stmt], params: &[Param], parameter: &str) -> bool {
+fn parameter_only_probed(
+    body: &[Stmt],
+    params: &[Param],
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
     // Alternate spellings (backticks, escapes) are not compared reliably.
     // `UseMethod()` and `standardGeneric()` force the dispatch argument.
     if parameter == "..."
@@ -1179,7 +1192,7 @@ fn parameter_only_probed(body: &[Stmt], params: &[Param], parameter: &str) -> bo
         .collect();
     let mut uses = ParameterUses::default();
     for statement in body.iter().chain(&defaults) {
-        collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+        collect_parameter_uses_in_stmt(statement, parameter, stubs, &mut uses);
     }
     !uses.normal
 }
@@ -1345,11 +1358,15 @@ fn captures_all_arguments(expression: &Expr) -> bool {
 /// Leaf predicate for `stmt_any`: the call quotes `parameter` directly
 /// (`substitute(x)`, a promise-capture helper) or unquotes it inside a
 /// `bquote(...)` template.
-fn quotes_parameter(expression: &Expr, parameter: &str) -> bool {
+fn quotes_parameter(
+    expression: &Expr,
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
     let Expr::Call { func, args, .. } = expression else {
         return false;
     };
-    captured_arguments(func, args)
+    captured_arguments(func, args, stubs)
         .iter()
         .zip(args)
         .any(|(capture, arg)| *capture && is_parameter(&arg.value, parameter))
@@ -1361,11 +1378,15 @@ fn quotes_parameter(expression: &Expr, parameter: &str) -> bool {
 
 /// Leaf predicate for `stmt_any`: the call captures `parameter`'s promise
 /// without evaluating it.
-fn captures_promise_parameter(expression: &Expr, parameter: &str) -> bool {
+fn captures_promise_parameter(
+    expression: &Expr,
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
     let Expr::Call { func, args, .. } = expression else {
         return false;
     };
-    captured_arguments(func, args)
+    captured_arguments(func, args, stubs)
         .iter()
         .zip(args)
         .any(|(capture, arg)| *capture && is_parameter(&arg.value, parameter))
@@ -1373,46 +1394,83 @@ fn captures_promise_parameter(expression: &Expr, parameter: &str) -> bool {
 
 /// Whether any use of `parameter` in `body` reads it as an ordinary value,
 /// as opposed to a quoted, defused, or promise-captured use.
-fn parameter_has_normal_use(body: &[Stmt], parameter: &str) -> bool {
+fn parameter_has_normal_use(
+    body: &[Stmt],
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
     let mut uses = ParameterUses::default();
     for statement in body {
-        collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+        collect_parameter_uses_in_stmt(statement, parameter, stubs, &mut uses);
     }
     uses.normal
 }
 
-/// Classify actuals using only the capturing formals of embedded signatures.
-/// Bare names retain the existing inventory union, without lexical resolution.
-/// Neither this index nor qualified lookup reads per-checker user stubs.
-pub(crate) fn captured_arguments(function: &Expr, args: &[Arg]) -> Vec<bool> {
+/// Classify actuals using only the capturing formals of stub signatures.
+/// `stubs` are the checker's user stubs, which replace same-named embedded
+/// packages wholesale as in call checking. Bare names retain the existing
+/// inventory union, without lexical resolution.
+pub(crate) fn captured_arguments(
+    function: &Expr,
+    args: &[Arg],
+    stubs: &BTreeMap<String, Typeshed>,
+) -> Vec<bool> {
     let Some(name) = ident_name(function) else {
         return Vec::new();
     };
+    let captures = |signature: &&FunctionSig| {
+        signature
+            .eval
+            .values()
+            .any(|mode| *mode == EvalMode::CapturesPromise)
+    };
+    let mut signatures = Vec::new();
     if let Some((package, name)) = name.rsplit_once("::") {
         let package = package.trim_end_matches(':');
         let typeshed = if package == "base" {
-            ry_typeshed::load_base_cached().ok()
+            stubs
+                .get("base")
+                .or_else(|| ry_typeshed::load_base_cached().ok())
         } else {
-            ry_typeshed::load_package(package)
+            ry_typeshed::package_stub(stubs, package)
         };
-        if let Some(signature) = typeshed.and_then(|db| db.functions.get(name))
-            && signature
-                .eval
-                .values()
-                .any(|mode| *mode == EvalMode::CapturesPromise)
-        {
-            let mut captured = vec![false; args.len()];
-            capture_signature_arguments(signature, args, &mut captured);
-            return captured;
-        }
-    } else if let Some(signatures) = promise_capture_index().get(name) {
+        signatures.extend(
+            typeshed
+                .and_then(|db| db.functions.get(name))
+                .filter(captures),
+        );
+    } else if stubs.is_empty() {
+        // Without user stubs, the index is the answer; skip the merge buffer.
+        let Some(entries) = promise_capture_index().get(name) else {
+            return Vec::new();
+        };
         let mut captured = vec![false; args.len()];
-        for signature in signatures {
+        for (_, signature) in entries {
             capture_signature_arguments(signature, args, &mut captured);
         }
         return captured;
+    } else {
+        let embedded = promise_capture_index().get(name).into_iter().flatten();
+        signatures.extend(
+            embedded
+                .filter(|(package, _)| !stubs.contains_key(*package))
+                .map(|(_, signature)| *signature),
+        );
+        signatures.extend(
+            stubs
+                .values()
+                .filter_map(|db| db.functions.get(name))
+                .filter(captures),
+        );
     }
-    Vec::new()
+    if signatures.is_empty() {
+        return Vec::new();
+    }
+    let mut captured = vec![false; args.len()];
+    for signature in signatures {
+        capture_signature_arguments(signature, args, &mut captured);
+    }
+    captured
 }
 
 fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: &mut [bool]) {
@@ -1533,28 +1591,28 @@ fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: 
 }
 
 /// Sparse one-time inventory: only signatures with capture metadata allocate
-/// an entry. Multiple packages with the same bare name retain their union.
-fn promise_capture_index() -> &'static std::collections::HashMap<String, Vec<&'static FunctionSig>>
-{
-    static INDEX: std::sync::OnceLock<
-        std::collections::HashMap<String, Vec<&'static FunctionSig>>,
-    > = std::sync::OnceLock::new();
+/// an entry. Multiple packages with the same bare name retain their union;
+/// each signature keeps its package so a user stub can replace it.
+fn promise_capture_index() -> &'static CaptureIndex {
+    static INDEX: std::sync::OnceLock<CaptureIndex> = std::sync::OnceLock::new();
     INDEX.get_or_init(|| {
-        let mut index: std::collections::HashMap<String, Vec<&'static FunctionSig>> =
-            std::collections::HashMap::new();
-        let mut add = |typeshed: &'static ry_typeshed::Typeshed| {
+        let mut index = CaptureIndex::new();
+        let mut add = |package: &'static str, typeshed: &'static ry_typeshed::Typeshed| {
             for (name, signature) in &typeshed.functions {
                 if signature
                     .eval
                     .values()
                     .any(|mode| *mode == EvalMode::CapturesPromise)
                 {
-                    index.entry(name.clone()).or_default().push(signature);
+                    index
+                        .entry(name.clone())
+                        .or_default()
+                        .push((package, signature));
                 }
             }
         };
         if let Ok(base) = ry_typeshed::load_base_cached() {
-            add(base);
+            add("base", base);
         }
         for package in ry_typeshed::known_packages() {
             // Skip stubs that cannot contribute: the prefilter keeps
@@ -1564,12 +1622,14 @@ fn promise_capture_index() -> &'static std::collections::HashMap<String, Vec<&'s
                 continue;
             }
             if let Some(typeshed) = ry_typeshed::load_package(package) {
-                add(typeshed);
+                add(package, typeshed);
             }
         }
         index
     })
 }
+
+type CaptureIndex = std::collections::HashMap<String, Vec<(&'static str, &'static FunctionSig)>>;
 
 /// Whether a `.(parameter)` unquote anywhere inside the expression —
 /// including inside braced statement blocks — references `parameter`.
@@ -1609,16 +1669,21 @@ enum FirstParameterUse {
 /// Whether `parameter`'s first use is defused. `skipped` holds the start
 /// offsets of calls that only probe it like `missing()` does, so its direct
 /// symbol argument there is no use.
-pub(crate) fn parameter_is_defused(body: &[Stmt], parameter: &str, skipped: &[usize]) -> bool {
+pub(crate) fn parameter_is_defused(
+    body: &[Stmt],
+    parameter: &str,
+    skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
     if parameter == "..." {
         let mut uses = ParameterUses::default();
         for statement in body {
-            collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+            collect_parameter_uses_in_stmt(statement, parameter, stubs, &mut uses);
         }
         return uses.defused && !uses.normal;
     }
     body.iter()
-        .find_map(|statement| first_parameter_use_in_stmt(statement, parameter, skipped))
+        .find_map(|statement| first_parameter_use_in_stmt(statement, parameter, skipped, stubs))
         == Some(FirstParameterUse::Defused)
 }
 
@@ -1643,7 +1708,12 @@ struct ParameterUses {
 ///   promise-capture helpers, `match.call`) records a defused use;
 /// - `missing(p)` inspects whether a promise was supplied without
 ///   forcing it, so it records neither kind.
-fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut ParameterUses) {
+fn collect_parameter_uses_in_stmt(
+    statement: &Stmt,
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+    uses: &mut ParameterUses,
+) {
     // Leaf identifier nodes their enclosing construct already classified.
     // Each AST node is visited at most once per walk and the entries are
     // node identities, so an entry can never suppress a different node.
@@ -1680,7 +1750,7 @@ fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut 
                 AstNode::Expr(Expr::Call { func, args, .. }) => {
                     let bare = ident_name(func).map(bare_name);
                     let probes_promise = probes_promise(func);
-                    let captured = captured_arguments(func, args);
+                    let captured = captured_arguments(func, args, stubs);
                     for (index, argument) in args.iter().enumerate() {
                         let defused = captured.get(index).copied().unwrap_or(false)
                             || matches!(bare, Some("match.call"));
@@ -1720,58 +1790,63 @@ fn first_parameter_use_in_stmt(
     statement: &Stmt,
     parameter: &str,
     skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
-    ry_core::stack::grow(|| first_parameter_use_in_stmt_inner(statement, parameter, skipped))
+    ry_core::stack::grow(|| first_parameter_use_in_stmt_inner(statement, parameter, skipped, stubs))
 }
 
 fn first_parameter_use_in_stmt_inner(
     statement: &Stmt,
     parameter: &str,
     skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
     match statement {
         Stmt::Assign { target, value, .. } => {
-            first_parameter_use_in_expr(value, parameter, skipped).or_else(|| match target {
+            first_parameter_use_in_expr(value, parameter, skipped, stubs).or_else(|| match target {
                 Expr::Ident { .. } => None,
-                target => first_parameter_use_in_expr(target, parameter, skipped),
+                target => first_parameter_use_in_expr(target, parameter, skipped, stubs),
             })
         }
-        Stmt::Expr(expression) => first_parameter_use_in_expr(expression, parameter, skipped),
+        Stmt::Expr(expression) => {
+            first_parameter_use_in_expr(expression, parameter, skipped, stubs)
+        }
         Stmt::If {
             cond, then, else_, ..
-        } => first_parameter_use_in_expr(cond, parameter, skipped).or_else(|| {
+        } => first_parameter_use_in_expr(cond, parameter, skipped, stubs).or_else(|| {
             conservative_branch_use([
                 then.iter().find_map(|statement| {
-                    first_parameter_use_in_stmt(statement, parameter, skipped)
+                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
                 }),
                 else_.as_ref().and_then(|statements| {
                     statements.iter().find_map(|statement| {
-                        first_parameter_use_in_stmt(statement, parameter, skipped)
+                        first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
                     })
                 }),
             ])
         }),
         Stmt::For {
             name, iter, body, ..
-        } => first_parameter_use_in_expr(iter, parameter, skipped).or_else(|| {
+        } => first_parameter_use_in_expr(iter, parameter, skipped, stubs).or_else(|| {
             if name == parameter {
                 Some(FirstParameterUse::Normal)
             } else {
                 body.iter().find_map(|statement| {
-                    first_parameter_use_in_stmt(statement, parameter, skipped)
+                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
                 })
             }
         }),
-        Stmt::While { cond, body, .. } => first_parameter_use_in_expr(cond, parameter, skipped)
-            .or_else(|| {
+        Stmt::While { cond, body, .. } => {
+            first_parameter_use_in_expr(cond, parameter, skipped, stubs).or_else(|| {
                 body.iter().find_map(|statement| {
-                    first_parameter_use_in_stmt(statement, parameter, skipped)
+                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
                 })
-            }),
+            })
+        }
         Stmt::FunctionDef { .. } => None,
-        Stmt::Return { value, .. } => value
-            .as_ref()
-            .and_then(|expression| first_parameter_use_in_expr(expression, parameter, skipped)),
+        Stmt::Return { value, .. } => value.as_ref().and_then(|expression| {
+            first_parameter_use_in_expr(expression, parameter, skipped, stubs)
+        }),
     }
 }
 
@@ -1779,23 +1854,27 @@ fn first_parameter_use_in_expr(
     expression: &Expr,
     parameter: &str,
     skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
-    ry_core::stack::grow(|| first_parameter_use_in_expr_inner(expression, parameter, skipped))
+    ry_core::stack::grow(|| {
+        first_parameter_use_in_expr_inner(expression, parameter, skipped, stubs)
+    })
 }
 
 fn first_parameter_use_in_expr_inner(
     expression: &Expr,
     parameter: &str,
     skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
     match expression {
         Expr::Ident { name, .. } => (name == parameter).then_some(FirstParameterUse::Normal),
         Expr::Call { func, args, span } => {
-            let captured = captured_arguments(func, args);
+            let captured = captured_arguments(func, args, stubs);
             // `check(col)(col)` shares its start with the inner call.
             let probes = probes_promise(func)
                 || (matches!(func.as_ref(), Expr::Ident { .. }) && skipped.contains(&span.start));
-            first_parameter_use_in_expr(func, parameter, skipped).or_else(|| {
+            first_parameter_use_in_expr(func, parameter, skipped, stubs).or_else(|| {
                 // Actual order is not promise force order. A normal use in
                 // another actual must dominate a captured occurrence.
                 conservative_branch_use(args.iter().enumerate().map(|(index, argument)| {
@@ -1810,37 +1889,38 @@ fn first_parameter_use_in_expr_inner(
                     {
                         Some(FirstParameterUse::Defused)
                     } else {
-                        first_parameter_use_in_expr(&argument.value, parameter, skipped)
+                        first_parameter_use_in_expr(&argument.value, parameter, skipped, stubs)
                     }
                 }))
             })
         }
-        Expr::BinOp { lhs, rhs, .. } => first_parameter_use_in_expr(lhs, parameter, skipped)
-            .or_else(|| first_parameter_use_in_expr(rhs, parameter, skipped)),
-        Expr::UnaryOp { expr, .. } => first_parameter_use_in_expr(expr, parameter, skipped),
-        Expr::Index { base, args, .. } => first_parameter_use_in_expr(base, parameter, skipped)
-            .or_else(|| {
+        Expr::BinOp { lhs, rhs, .. } => first_parameter_use_in_expr(lhs, parameter, skipped, stubs)
+            .or_else(|| first_parameter_use_in_expr(rhs, parameter, skipped, stubs)),
+        Expr::UnaryOp { expr, .. } => first_parameter_use_in_expr(expr, parameter, skipped, stubs),
+        Expr::Index { base, args, .. } => {
+            first_parameter_use_in_expr(base, parameter, skipped, stubs).or_else(|| {
                 args.iter().find_map(|argument| {
-                    first_parameter_use_in_expr(&argument.value, parameter, skipped)
+                    first_parameter_use_in_expr(&argument.value, parameter, skipped, stubs)
                 })
-            }),
+            })
+        }
         Expr::Function { .. } => None,
         Expr::Block { body, .. } => {
             if embraced_symbol(body).is_some_and(|(name, _)| name == parameter) {
                 Some(FirstParameterUse::Defused)
             } else {
                 body.iter().find_map(|statement| {
-                    first_parameter_use_in_stmt(statement, parameter, skipped)
+                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
                 })
             }
         }
         Expr::If {
             cond, then, else_, ..
-        } => first_parameter_use_in_expr(cond, parameter, skipped).or_else(|| {
+        } => first_parameter_use_in_expr(cond, parameter, skipped, stubs).or_else(|| {
             conservative_branch_use([
-                first_parameter_use_in_expr(then, parameter, skipped),
+                first_parameter_use_in_expr(then, parameter, skipped, stubs),
                 else_.as_ref().and_then(|expression| {
-                    first_parameter_use_in_expr(expression, parameter, skipped)
+                    first_parameter_use_in_expr(expression, parameter, skipped, stubs)
                 }),
             ])
         }),
@@ -2390,15 +2470,15 @@ mod collect_walker_tests {
     fn parameter_uses(src: &str, parameter: &str) -> ParameterUses {
         let mut uses = ParameterUses::default();
         for statement in &parse_stmts(src) {
-            collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+            collect_parameter_uses_in_stmt(statement, parameter, &BTreeMap::new(), &mut uses);
         }
         uses
     }
 
     fn first_use(src: &str, parameter: &str) -> Option<FirstParameterUse> {
-        parse_stmts(src)
-            .iter()
-            .find_map(|statement| first_parameter_use_in_stmt(statement, parameter, &[]))
+        parse_stmts(src).iter().find_map(|statement| {
+            first_parameter_use_in_stmt(statement, parameter, &[], &BTreeMap::new())
+        })
     }
 
     fn collect(src: &str) -> Checker {
@@ -2509,7 +2589,7 @@ mod collect_walker_tests {
         let index = promise_capture_index();
         assert!(index.contains_key("substitute"));
         assert!(!index.contains_key("mean"));
-        assert!(index.values().flatten().all(|sig| {
+        assert!(index.values().flatten().all(|(_, sig)| {
             sig.eval
                 .values()
                 .any(|mode| *mode == EvalMode::CapturesPromise)

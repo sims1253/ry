@@ -337,7 +337,8 @@ fn non_empty_length_guard_var(expr: &Expr) -> Option<String> {
     }
 }
 
-/// The argument of a `missing(x)` call, bare or `base::`-qualified.
+/// The argument of a `missing(x)` call, bare or with any `pkg::` prefix
+/// (`bare_name`), as the supply analysis's `is_missing_head` reads it.
 fn missing_test_var(expr: &Expr) -> Option<String> {
     let Expr::Call { func, args, .. } = expr else {
         return None;
@@ -695,6 +696,14 @@ fn apply_single_narrowing_branch<'a>(
                     scope.insert_narrowed(var.clone(), narrowed);
                     return Some(var.as_str());
                 }
+                // `is.null(x)` leaves a NULL default's type unchanged but
+                // proves it on this path, so a later `Supplied` keeps it.
+                if target.mode == Mode::Null
+                    && existing.mode == Mode::Null
+                    && scope.is_default_parameter(var)
+                {
+                    scope.insert_narrowed(var.clone(), existing);
+                }
             }
         }
         (Narrowing::Positive { var, target }, NarrowingBranch::Else)
@@ -759,7 +768,10 @@ fn apply_single_narrowing_branch<'a>(
         (Narrowing::ScalarThen { var }, NarrowingBranch::Then) => {
             scope.clear_loop_vector(var);
         }
-        (Narrowing::Supplied { var }, NarrowingBranch::Then) if scope.is_default_parameter(var) => {
+        // Only the omitted-call type goes; an earlier guard's fact stays.
+        (Narrowing::Supplied { var }, NarrowingBranch::Then)
+            if scope.is_default_parameter(var) && !scope.narrowed_bindings.contains(var) =>
+        {
             scope.insert_narrowed(var.clone(), RType::unknown());
             return Some(var.as_str());
         }

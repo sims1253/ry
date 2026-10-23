@@ -65,3 +65,16 @@ g_loop <- function(args, quote_args = NULL) {
   args
 }
 g_loop(list())
+
+## case: a not-missing guard keeps an earlier is.null fact
+# expect: RY001
+# `f(NULL)` reaches `if (x)` with a supplied NULL.
+f <- function(x = NULL) {
+  if (is.null(x)) {
+    if (!missing(x)) {
+      if (x) 1
+    }
+  }
+}
+f()
+f(NULL)

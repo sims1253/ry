@@ -24,3 +24,9 @@ expression: rows
   diagnostics: []
 - case: a for body over a NULL default never sees the NULL
   diagnostics: []
+- case: a not-missing guard keeps an earlier is.null fact
+  diagnostics:
+    - code: RY001
+      line: 75
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning

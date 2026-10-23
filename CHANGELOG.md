@@ -120,6 +120,9 @@ All notable changes to ry are documented in this file.
 - Report a serialized workspace the parser stops reading early, such as an
   `R/sysdata.rda` that holds an external pointer, as a degraded scope instead
   of a complete inventory (#714).
+- Let function bodies see `<<-` updates from writers defined after them or
+  in another package file, such as a `NULL` placeholder filled by
+  `.onLoad`, removing false RY001 and RY070 reports (#706).
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
 - Stop checking a closure's free variables against its defining frame once

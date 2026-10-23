@@ -723,3 +723,22 @@ m <- function() {
   c <- 1
   c(2, 3)$x
 }
+
+## case: `$` on a base data frame partially matches a unique prefix
+# no-diag
+# A base data.frame uses list `$`, so `df$nv` is `df$nvalid` (#753).
+df <- data.frame(nvalid = 1:3, total = c(2, 4, 6))
+df$total / df$nv
+
+## case: `$` on a base data frame with an ambiguous prefix is an undefined column
+# expect: RY060
+df <- data.frame(nvalid = 1:3, nvx = 1:3)
+df$nv
+
+## case: `$` prefix on a tibble is an undefined column
+# expect: RY060, RY060
+# `$.tbl_df` never partial-matches: it warns and returns NULL. A join
+# keeps its left input's tibble class.
+tb <- dplyr::group_by(data.frame(nvalid = 1:3, k = 1:3))
+tb$nv
+dplyr::left_join(tb, data.frame(k = 1:3, z = 4:6), by = "k")$nv

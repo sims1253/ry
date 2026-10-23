@@ -136,6 +136,9 @@ All notable changes to ry are documented in this file.
 - Follow R's partial matching for `$` on a plain list: a unique prefix such
   as `res$nv` reads the `nvalid` field instead of NULL, removing a false
   RY040 (#721).
+- Follow the same partial matching for `$` on a base data frame, so
+  `df$nv` reads a unique `nvalid` column instead of reporting RY060.
+  Tibbles keep RY060, since their `$` never partial-matches (#753).
 - Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
   results such as `merge(a, b)[, 1] - 1`. The vendored base stubs
   (r-typeshed affe513f) now return a data frame from `read.table` and its

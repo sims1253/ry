@@ -64,7 +64,7 @@ impl Narrowing {
         self.mentions_where(&|var| var == name)
     }
 
-    pub(crate) fn mentions_where(&self, about: &dyn Fn(&str) -> bool) -> bool {
+    fn mentions_where(&self, about: &dyn Fn(&str) -> bool) -> bool {
         match self {
             Narrowing::Compound {
                 base,

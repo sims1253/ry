@@ -77,3 +77,21 @@ select_dispatched <- function(data, col) {
   dplyr::select(data, {{ col }})
 }
 select_dispatched(mtcars, gear)
+
+## case: a vendored-style validator with caller_arg() and current_env() defaults
+# no-diag
+# The insightsengineering standalone-checks.R validator that cards vendors.
+check_not_missing <- function(x,
+                              message = "The {.arg {arg_name}} argument cannot be missing.",
+                              arg_name = rlang::caller_arg(x),
+                              envir = rlang::current_env()) {
+  if (missing(x)) {
+    cli::cli_abort(message, .envir = envir)
+  }
+  invisible()
+}
+select_vendored <- function(data, col) {
+  check_not_missing(col)
+  dplyr::select(data, {{ col }})
+}
+select_vendored(mtcars, carb)

@@ -34,3 +34,5 @@ expression: rows
       line: 79
       message: "variable `gear` is not bound in this scope"
       severity: warning
+- case: a vendored-style validator with caller_arg() and current_env() defaults
+  diagnostics: []

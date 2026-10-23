@@ -222,3 +222,9 @@ summ_counted <- function(data, ...) {
 }
 summ_counted.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
 summ_counted(mtcars, col = mpg)
+
+## case: a storage-length method keeps the length(x) == 1L guard
+# no-diag
+# `length(unclass(x))` cannot report 1 for a longer object (#701).
+length.cell <- function(x) length(unclass(x))
+f <- function(x) length(x) == 1L && is.na(x)

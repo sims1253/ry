@@ -754,25 +754,25 @@ expression: rows
   diagnostics:
     - code: RY032
       line: 1115
-      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; the `length(x) == 1` guard is not trusted because `length.disguised` may report 1 for a longer object"
       severity: warning
 - case: a project length method breaks the guard for is.na()
   diagnostics:
     - code: RY032
       line: 1120
-      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; the `length(x) == 1` guard is not trusted because `length.disguised` may report 1 for a longer object"
       severity: warning
 - case: a classed parameter default breaks the length guard
   diagnostics:
     - code: RY032
       line: 1126
-      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; the `length(x) == 1` guard is not trusted because `length.disguised` may report 1 for a longer object"
       severity: warning
 - case: an unclassed parameter default does not save the length guard
   diagnostics:
     - code: RY032
       line: 1132
-      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; the `length(x) == 1` guard is not trusted because `length.disguised` may report 1 for a longer object"
       severity: warning
 - case: reassignment inside the guarded operand breaks the length guard
   diagnostics:

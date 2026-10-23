@@ -517,16 +517,33 @@ impl Checker {
             },
             scope,
         );
-        if rhs_parameter_vector
+        if let Some(distrusting) = rhs_parameter_vector
             && !self.diagnostics[before..]
                 .iter()
                 .any(|diagnostic| diagnostic.code == "RY032")
         {
-            let message = format!(
-                "`{}` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands",
+            let lead = format!(
+                "`{}` operand depends on a parameter whose length is not known to be 1",
                 op_symbol(op)
             );
-            self.emit(Severity::Warning, span, "RY032", message);
+            match distrusting {
+                Some((parameter, method)) => self.emit_related(
+                    Severity::Warning,
+                    span,
+                    "RY032",
+                    format!(
+                        "{lead}; the `length({parameter}) == 1` guard is not trusted because `{}` may report 1 for a longer object",
+                        method.name
+                    ),
+                    method.definition.into_iter().collect(),
+                ),
+                None => self.emit(
+                    Severity::Warning,
+                    span,
+                    "RY032",
+                    format!("{lead}; R errors at runtime for vector operands"),
+                ),
+            }
         }
         if (lhs_loop_vector || rhs_loop_vector)
             && !ops_chooser::operator_rebound(self, op_symbol(op), scope)
@@ -612,13 +629,16 @@ impl Checker {
 /// These forms, however, explicitly test a possibly empty parameter and then
 /// feed the un-scalarized value into a vectorized predicate.
 impl Checker {
+    /// `Some` when the guarded operand may be a vector. The inner value
+    /// names the parameter and the project `length` method that alone kept
+    /// a `length(x) == 1` guard from proving it scalar (#701).
     fn short_circuit_parameter_vector(
         &self,
         op: BinOpKind,
         lhs: &Expr,
         rhs: &Expr,
         scope: &Scope,
-    ) -> bool {
+    ) -> Option<Option<(String, LengthMethod)>> {
         fn direct_parameter<'a>(expr: &'a Expr, scope: &Scope) -> Option<&'a str> {
             match expr {
                 Expr::Ident { name, .. } if scope.is_parameter(name) => Some(name),
@@ -638,20 +658,23 @@ impl Checker {
             direct_parameter(&args.first()?.value, scope)
         }
 
-        fn length_guard_parameter<'a>(
+        /// The parameter of a `length(x) == 1` guard. The RHS of
+        /// `length(x) == 1 && ...` is reached only for a scalar x, so this
+        /// guard is not evidence of an unchecked vector.
+        fn equality_guard_parameter<'a>(
             checker: &Checker,
             expr: &'a Expr,
-            guarded_operand: &Expr,
             scope: &Scope,
         ) -> Option<&'a str> {
-            if let Some(parameter) = call_on_parameter(expr, &["length"], scope) {
-                return Some(parameter);
-            }
-            let Expr::BinOp { op, lhs, rhs, .. } = expr else {
+            let Expr::BinOp {
+                op: BinOpKind::Eq,
+                lhs,
+                rhs,
+                ..
+            } = expr
+            else {
                 return None;
             };
-            // The RHS of `length(x) == 1 && ...` is reached only for a
-            // scalar x. This guard is not evidence of an unchecked vector.
             let base_length = |value: &Expr| {
                 let Expr::Call { func, .. } = value else {
                     return false;
@@ -661,25 +684,32 @@ impl Checker {
                 // and the package would have to define or import its own
                 // `length` for the callee to leave base semantics (#372).
                 ident_name(func).is_some_and(|name| checker.resolves_to_base_lenient(name, scope))
-                    && call_on_parameter(value, &["length"], scope).is_some()
             };
-            if *op == BinOpKind::Eq
-                && let Some(length_side) = compared_with_one(lhs, rhs)
-                && base_length(length_side)
+            compared_with_one(lhs, rhs)
+                .filter(|length_side| base_length(length_side))
+                .and_then(|length_side| call_on_parameter(length_side, &["length"], scope))
+        }
+
+        fn length_guard_parameter<'a>(
+            checker: &Checker,
+            expr: &'a Expr,
+            guarded_operand: &Expr,
+            scope: &Scope,
+        ) -> Option<&'a str> {
+            if let Some(parameter) = call_on_parameter(expr, &["length"], scope) {
+                return Some(parameter);
+            }
+            let Expr::BinOp { lhs, rhs, .. } = expr else {
+                return None;
+            };
+            // The equality guard proves a scalar only when `length` cannot
+            // dispatch to a lying S3 method for the guarded parameter and
+            // the parameter is not reassigned before its guarded use
+            // (docs/scalar-guards.md).
+            if let Some(parameter) = equality_guard_parameter(checker, expr, scope)
+                && checker.equality_length_guard_proves_scalar(parameter, guarded_operand, scope)
             {
-                // The equality guard proves a scalar only when `length`
-                // cannot dispatch to a lying S3 method for the guarded
-                // parameter and the parameter is not reassigned before
-                // its guarded use (docs/scalar-guards.md).
-                if let Some(parameter) = call_on_parameter(length_side, &["length"], scope)
-                    && checker.equality_length_guard_proves_scalar(
-                        parameter,
-                        guarded_operand,
-                        scope,
-                    )
-                {
-                    return None;
-                }
+                return None;
             }
             call_on_parameter(lhs, &["length"], scope)
                 .or_else(|| call_on_parameter(rhs, &["length"], scope))
@@ -725,10 +755,20 @@ impl Checker {
         // `direct_parameter`, which requires `scope.is_parameter`. So if the
         // parameter were reassigned (clearing its marker) neither would
         // return it, making the separate `is_parameter` check redundant.
-        guarded
+        let parameter = guarded
             .filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
-            .filter(|parameter| !scope.is_scalar_asserted(parameter))
-            .is_some()
+            .filter(|parameter| !scope.is_scalar_asserted(parameter))?;
+        let distrusting = (op == BinOpKind::AndAnd)
+            .then(|| equality_guard_parameter(self, lhs, scope))
+            .flatten()
+            .filter(|guarded| *guarded == parameter)
+            .and_then(|_| {
+                self.equality_length_guard(parameter, rhs, scope)
+                    .err()
+                    .flatten()
+            })
+            .map(|method| (parameter.to_string(), method.clone()));
+        Some(distrusting)
     }
 
     /// A successful `stopifnot` may establish a scalar-length fact that a
@@ -1002,7 +1042,7 @@ impl Checker {
                 matches!(generic, "Ops" | "<" | "<=" | ">" | ">=" | "==" | "!=")
             }),
             scalar_proof: self.scan_scalar_proof_methods(),
-            length_s3: self.project_defines_s3_method(|generic| generic == "length"),
+            length_s3: self.scan_untrusted_length_method(),
             frame_effect: crate::semantic_lists::FRAME_EFFECT_DISPATCH_GENERICS
                 .iter()
                 .copied()
@@ -1088,6 +1128,23 @@ impl Checker {
         guarded_operand: &Expr,
         scope: &Scope,
     ) -> bool {
+        self.equality_length_guard(parameter, guarded_operand, scope)
+            .is_ok()
+    }
+
+    /// [`Self::equality_length_guard_proves_scalar`], naming the project
+    /// `length` method when it is the only reason the guard fails.
+    fn equality_length_guard(
+        &self,
+        parameter: &str,
+        guarded_operand: &Expr,
+        scope: &Scope,
+    ) -> Result<(), Option<&LengthMethod>> {
+        let mut assigned = HashSet::new();
+        collect_condition_assignment_names(guarded_operand, &mut assigned);
+        if assigned.contains(parameter) {
+            return Err(None);
+        }
         match scope
             .get(parameter)
             .map(|ty| (ty.class.known, ty.class.len))
@@ -1095,39 +1152,125 @@ impl Checker {
             // A nameable class: refuse outright. An attached package may
             // hold a `length.<class>` method, so the equality is not
             // proven to narrow anything.
-            Some((true, n)) if n > 0 => return false,
+            Some((true, n)) if n > 0 => Err(None),
             // Proven unclassed: `length` cannot dispatch. A parameter's
             // default describes only the omitted-argument call shape —
             // callers can still supply a classed value, the same reason
             // RY105 refuses `default_parameter_bindings` — so a defaulted
             // parameter falls through to the unknown-class arm instead.
-            Some((true, 0)) if !scope.default_parameter_bindings.contains(parameter) => {}
+            Some((true, 0)) if !scope.default_parameter_bindings.contains(parameter) => Ok(()),
             // Unknown class — the usual case for a parameter, whose value
             // comes from callers, or unclassed only by a default. The
             // search path could in principle supply a method for a class
             // ry cannot name; accept that risk only while neither this
-            // project nor its imports define any `length.*` method, the
-            // same line that `resolves_to_base_lenient` draws for the
-            // callee itself.
-            _ => {
-                if self.project_defines_length_method() {
-                    return false;
-                }
-            }
+            // project nor its imports define a `length.*` method that
+            // may report a length other than the storage one, the same
+            // line that `resolves_to_base_lenient` draws for the callee
+            // itself.
+            _ => self
+                .method_screens()
+                .length_s3
+                .as_ref()
+                .map_or(Ok(()), |method| Err(Some(method))),
         }
-        let mut assigned = HashSet::new();
-        collect_condition_assignment_names(guarded_operand, &mut assigned);
-        !assigned.contains(parameter)
     }
 
-    /// Whether any `length.<class>` S3 method is registered, defined, or
-    /// imported by the project, so a value of unknown class could
-    /// dispatch `length` away from base semantics. The equality guard's
-    /// documented boundary (docs/scalar-guards.md) is S3 `length.*`
-    /// methods; S4 methods gate only the stricter `stopifnot` facts.
-    fn project_defines_length_method(&self) -> bool {
-        self.method_screens().length_s3
+    /// The first `length.<class>` S3 method registered, defined, or
+    /// imported by the project that may report a length other than the
+    /// storage length, so a value of unknown class could dispatch `length`
+    /// away from base semantics. A project definition whose whole body is
+    /// `length(unclass(x))` reports the storage length and is skipped
+    /// (#701). The equality guard's documented boundary
+    /// (docs/scalar-guards.md) is S3 `length.*` methods; S4 methods gate
+    /// only the stricter `stopifnot` facts.
+    fn scan_untrusted_length_method(&self) -> Option<LengthMethod> {
+        let method = |name: &&String| {
+            name.strip_prefix("length.")
+                .is_some_and(|class| !class.is_empty())
+        };
+        let functions = &self.fn_table.functions;
+        let registered = self
+            .fn_table
+            .s3_methods
+            .keys()
+            .chain(&self.external_s3_methods)
+            .filter(|(generic, _)| generic == "length")
+            .map(|(_, class)| format!("length.{class}"));
+        let defined: std::collections::BTreeSet<String> = functions
+            .names()
+            .filter(method)
+            .cloned()
+            .chain(registered)
+            .collect();
+        let imported = self
+            .imported_from
+            .keys()
+            .chain(&self.external_bindings)
+            .filter(method)
+            .min()
+            .map(|name| LengthMethod {
+                name: name.clone(),
+                definition: None,
+            });
+        let base = |name: &str| self.resolves_to_base_lenient(name, &Scope::default());
+        defined
+            .into_iter()
+            .find_map(|name| {
+                let function = functions.live_named(&name);
+                let reports_storage_length = function.is_some_and(|function| {
+                    functions.has_single_definition(&name)
+                        && body_is_storage_length(function)
+                        && base("length")
+                        && base("unclass")
+                });
+                (!reports_storage_length).then(|| LengthMethod {
+                    definition: function.map(|function| crate::Related {
+                        path: function.source_path.clone(),
+                        span: function.definition_span,
+                        message: format!("`{name}` is defined here"),
+                    }),
+                    name,
+                })
+            })
+            .or(imported)
     }
+}
+
+/// Whether a one-formal function's whole body is `length(unclass(x))` on
+/// that formal, which reports what base `length` would without the method.
+fn body_is_storage_length(function: &UserFn) -> bool {
+    fn single(body: &[Stmt]) -> Option<&Expr> {
+        match body {
+            [Stmt::Expr(Expr::Block { body, .. })] => single(body),
+            [Stmt::Expr(expr)] => Some(expr),
+            _ => None,
+        }
+    }
+    fn call_on<'a>(expr: &'a Expr, head: &str) -> Option<&'a Expr> {
+        match expr {
+            Expr::Call { func, args, .. } if ident_name(func) == Some(head) && args.len() == 1 => {
+                Some(&args[0].value)
+            }
+            _ => None,
+        }
+    }
+    let [formal] = &*function.source_params else {
+        return false;
+    };
+    !matches!(formal.name.as_str(), "..." | "length" | "unclass")
+        && single(&function.body)
+            .and_then(|expr| call_on(expr, "length"))
+            .and_then(|expr| call_on(expr, "unclass"))
+            .is_some_and(|expr| matches!(expr, Expr::Ident { name, .. } if *name == formal.name))
+}
+
+/// A project or imported `length.<class>` method that may make
+/// `length(x) == 1` hold for a longer object.
+#[derive(Debug, Clone)]
+pub(crate) struct LengthMethod {
+    name: String,
+    /// Where the project defines it, when it does.
+    definition: Option<crate::Related>,
 }
 
 /// Whether the project or its imports define methods that the scalar
@@ -1136,7 +1279,7 @@ impl Checker {
 pub(crate) struct MethodScreens {
     comparison: bool,
     scalar_proof: bool,
-    length_s3: bool,
+    length_s3: Option<LengthMethod>,
     frame_effect: FxSet<&'static str>,
 }
 

@@ -1007,11 +1007,11 @@ impl Checker {
     /// The narrowing for a condition that selects code: an `if` test, the
     /// left of `&&`/`||`, or an assertion (`stopifnot()`) whose passing path
     /// is the continuation. A defaulted parameter's type describes only the
-    /// omitted-argument call shape
-    /// (`diagnostic_parameter_type`). A passing test that reads it but
-    /// proves nothing about it (`is_tensor(dims)`, `"pt" %in%
-    /// colnames(width)`) may be exactly the test that default fails, so the
-    /// arm it selects sees what a supplied argument would (#710).
+    /// omitted-argument call shape (`diagnostic_parameter_type`). A passing
+    /// test that reads it but proves nothing about it (`is_tensor(dims)`,
+    /// `"pt" %in% colnames(width)`) may be exactly the test that default
+    /// fails, so the arm it selects sees what a supplied argument would
+    /// (#710).
     pub(crate) fn extract_branch_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
         let narrowing = self.extract_type_narrowing(cond, scope);
         if scope.default_parameter_bindings.is_empty() {
@@ -1081,8 +1081,9 @@ impl Checker {
     }
 
     /// Names `expr` evaluates. Field names, assignment targets, closures,
-    /// formulas, and arguments a stub quotes or captures (`quote(x)`,
-    /// `substitute(x)`) are not reads.
+    /// formulas, and arguments a stub quotes, captures, or evaluates in a
+    /// data mask (`quote(x)`, `substitute(x)`, `filter(df, x > 1)`, where `x`
+    /// may be a column) are not reads.
     fn evaluated_names(&self, expr: &Expr, names: &mut BTreeSet<String>) {
         ry_core::stack::grow(|| {
             let walk = Walk {
@@ -1115,6 +1116,8 @@ impl Checker {
                                 EvalMode::QuotedSymbol
                                     | EvalMode::QuotedExpression
                                     | EvalMode::CapturesPromise
+                                    | EvalMode::DataMask
+                                    | EvalMode::TidySelect
                             )
                         ) {
                             self.evaluated_names(&argument.value, names);

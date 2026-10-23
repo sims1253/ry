@@ -431,33 +431,39 @@ expression: rows
       line: 1021
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
-- case: a quoted name in a guard is not a test of the specialised default
+- case: a data-masked name in a guard is not a test of the specialised default
   diagnostics:
-    - code: RY061
-      line: 1028
-      message: "$ operator is invalid for atomic vectors of mode `double`"
-      severity: error
     - code: RY061
       line: 1029
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
+- case: a quoted name in a guard is not a test of the specialised default
+  diagnostics:
     - code: RY061
-      line: 1030
+      line: 1036
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+    - code: RY061
+      line: 1037
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+    - code: RY061
+      line: 1038
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
 - case: a missing() or is.null() operand that may pass keeps the specialised default
   diagnostics:
     - code: RY061
-      line: 1038
+      line: 1046
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
     - code: RY061
-      line: 1041
+      line: 1049
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
 - case: a guard that does not read the specialised default keeps its type
   diagnostics:
     - code: RY061
-      line: 1049
+      line: 1057
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error

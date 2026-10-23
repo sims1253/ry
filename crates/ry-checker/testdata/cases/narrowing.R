@@ -1022,6 +1022,14 @@ numel_else <- function(dims = 2) {
 }
 numel_else()
 
+## case: a data-masked name in a guard is not a test of the specialised default
+# expect: RY061
+library(dplyr)
+masked_guard <- function(df, x = 2) {
+  if (nrow(dplyr::filter(df, x > 1)) > 0) x$bar
+}
+masked_guard(data.frame(x = 3))
+
 ## case: a quoted name in a guard is not a test of the specialised default
 # expect: RY061, RY061, RY061
 quoted_guard <- function(x = 2) {

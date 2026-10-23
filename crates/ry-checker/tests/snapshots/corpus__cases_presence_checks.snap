@@ -12,3 +12,19 @@ expression: rows
       line: 27
       message: "variable `hp` is not bound in this scope"
       severity: warning
+- case: a missing()-only validator before an embrace keeps the parameter defused
+  diagnostics: []
+- case: a missing()-only validator before enquo keeps the parameter defused
+  diagnostics: []
+- case: a validator that also reads its formal still forces the parameter
+  diagnostics:
+    - code: RY010
+      line: 61
+      message: "variable `wt` is not bound in this scope"
+      severity: warning
+- case: an unresolved validator still forces the parameter
+  diagnostics:
+    - code: RY010
+      line: 69
+      message: "variable `qsec` is not bound in this scope"
+      severity: warning

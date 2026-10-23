@@ -188,6 +188,9 @@ All notable changes to ry are documented in this file.
 - Skip a `missing(col)` check when deciding whether a function defuses `col`,
   so `if (missing(col)) stop(); dplyr::select(data, {{ col }})` no longer
   makes callers' bare column names RY010 (#688).
+- Treat passing `col` to a project validator that only tests its formal with
+  `missing()`, like rlang's standalone `check_not_missing()`, as no use of
+  `col`, so a later `{{ col }}` still defuses it (#688).
 
 ## [0.11.0] - 2026-09-22
 

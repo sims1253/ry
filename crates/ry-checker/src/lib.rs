@@ -1079,6 +1079,10 @@ pub(crate) struct UserParam {
     /// Whether no evaluation of the body can force this argument, so a
     /// call to this exact definition never evaluates the actual.
     pub(crate) unforced: bool,
+    /// Whether the body and defaults use this argument only through
+    /// `missing()` or promise capture, as a `check_not_missing(x)` validator
+    /// does, so a call never forces the actual.
+    pub(crate) missing_only: bool,
     pub(crate) injection: Option<InjectionMode>,
 }
 

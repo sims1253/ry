@@ -28,3 +28,9 @@ expression: rows
       line: 69
       message: "variable `qsec` is not bound in this scope"
       severity: warning
+- case: "a generic validator dispatches on its argument, which forces it"
+  diagnostics:
+    - code: RY010
+      line: 79
+      message: "variable `gear` is not bound in this scope"
+      severity: warning

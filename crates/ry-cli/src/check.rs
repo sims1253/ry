@@ -809,7 +809,7 @@ fn report_check_parse_failure(
         pipeline::ParseError::Read(error) => {
             eprintln!("ry: {}: {}", path.display(), error);
             (
-                ry_core::Span::new(0, 0, 0, 0),
+                ry_core::Span::new(0, 1, 0, 0),
                 format!("cannot read file: {error}; file not checked"),
             )
         }

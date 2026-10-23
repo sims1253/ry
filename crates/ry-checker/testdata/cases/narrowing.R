@@ -120,16 +120,16 @@ if (x > 0) NULL
 }
 f()
 
-## case: a NULL return guard alone does not prove the value non-empty
-# expect: RY001
+## case: a NULL return guard excludes the omitted NULL default
+# no-diag
 f <- function(x = NULL) {
 if (is.null(x)) return(NULL)
 if (x > 0) NULL
 }
 f()
 
-## case: a missing() guard does not narrow the NULL default
-# expect: RY070
+## case: a missing() stop guard excludes the omitted NULL default
+# no-diag
 apply_fun <- function(x, fun = NULL) {
 if (missing(fun)) stop("fun required")
 fun(x)
@@ -648,10 +648,10 @@ f <- function(input) {
 }
 f("path")
 
-## case: a NULL return guard on a NULL default may still leave a zero-length value
-# expect: RY001
-# A NULL default narrows to an unknown caller value, not to a remainder,
-# so the value may still have length zero.
+## case: a braced NULL return guard excludes the omitted NULL default
+# no-diag
+# Past the guard the value is an unknown caller value; the omitted NULL
+# default's zero length no longer describes it.
 f <- function(x = NULL) {
   if (is.null(x)) {
     return(NULL)
@@ -741,8 +741,8 @@ f <- function() {
 }
 f()
 
-## case: a NULL return guard without replacement may leave a zero-length default
-# expect: RY001
+## case: a NULL return guard without replacement excludes the omitted default
+# no-diag
 f <- function(detail = NULL) {
   if (is.null(detail)) {
     return(NULL)

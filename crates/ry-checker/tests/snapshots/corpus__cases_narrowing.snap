@@ -51,18 +51,10 @@ expression: rows
       line: 119
       message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
-- case: a NULL return guard alone does not prove the value non-empty
-  diagnostics:
-    - code: RY001
-      line: 127
-      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: warning
-- case: a missing() guard does not narrow the NULL default
-  diagnostics:
-    - code: RY070
-      line: 135
-      message: "could not find function `fun` (bound here as `NULL`)"
-      severity: error
+- case: a NULL return guard excludes the omitted NULL default
+  diagnostics: []
+- case: a missing() stop guard excludes the omitted NULL default
+  diagnostics: []
 - case: a helper that always stops narrows the continuation
   diagnostics: []
 - case: a break guard narrows the rest of the loop body
@@ -329,12 +321,8 @@ expression: rows
   diagnostics: []
 - case: an if else NULL check narrows the else arm
   diagnostics: []
-- case: a NULL return guard on a NULL default may still leave a zero-length value
-  diagnostics:
-    - code: RY001
-      line: 659
-      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: warning
+- case: a braced NULL return guard excludes the omitted NULL default
+  diagnostics: []
 - case: a NULL return guard followed by is.character stays silent
   diagnostics: []
 - case: a same-type rebind in a NULL guard keeps the NULL member
@@ -351,12 +339,8 @@ expression: rows
   diagnostics: []
 - case: a mirrored replacement guard on a local NULL removes the stale NULL
   diagnostics: []
-- case: a NULL return guard without replacement may leave a zero-length default
-  diagnostics:
-    - code: RY001
-      line: 750
-      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: warning
+- case: a NULL return guard without replacement excludes the omitted default
+  diagnostics: []
 - case: a positive mode predicate on an omitted NULL default does not keep length 0
   diagnostics: []
 - case: class and compound predicates on an omitted NULL default do not keep length 0

@@ -45,6 +45,9 @@ pub(crate) enum Narrowing {
     /// A true guard proves that the loop-carried vector alternative cannot
     /// reach its body. This does not rewrite the binding's general RType.
     ScalarThen { var: String },
+    /// `!missing(x)`: the caller supplied `x` in the then branch, so a
+    /// defaulted parameter's omitted-call type does not describe it.
+    Supplied { var: String },
 }
 
 impl Narrowing {
@@ -71,7 +74,8 @@ impl Narrowing {
             | Narrowing::Else { var, .. }
             | Narrowing::NonNullElse { var }
             | Narrowing::ScalarElse { var, .. }
-            | Narrowing::ScalarThen { var } => names.contains(var),
+            | Narrowing::ScalarThen { var }
+            | Narrowing::Supplied { var } => names.contains(var),
         }
     }
 }
@@ -109,11 +113,23 @@ fn predicate_call_target(name: &str, args: &[Arg]) -> Option<RType> {
 }
 
 pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
+    if let Some(var) = non_empty_length_guard_var(cond) {
+        return non_null_then(var);
+    }
     match cond {
         Expr::Call { func, args, .. } => {
             let Expr::Ident { name, .. } = func.as_ref() else {
                 return Narrowing::None;
             };
+            if let Some(var) = missing_test_var(cond) {
+                // Compound facts apply as then-branch facts: the else
+                // branch of `missing(x)` has `x` supplied.
+                return Narrowing::Compound {
+                    base: Box::new(Narrowing::None),
+                    on_true: Vec::new(),
+                    on_false: vec![Narrowing::Supplied { var }],
+                };
+            }
             let Some(target) = predicate_call_target(name, args) else {
                 return Narrowing::None;
             };
@@ -133,6 +149,9 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
         } => {
             if let Some(var) = length_guard_var(expr) {
                 return Narrowing::NonNullElse { var };
+            }
+            if let Some(var) = missing_test_var(expr) {
+                return Narrowing::Supplied { var };
             }
             let Expr::Call { func, args, .. } = expr.as_ref() else {
                 return Narrowing::None;
@@ -190,15 +209,21 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             // A true conjunction proves each conjunct.  In particular,
             // `if (ready & !is.null(x))` makes `x` non-null in the body;
             // retaining the NULL default there fabricates length-zero
-            // comparisons such as `x %in% c("a", "b")`.
-            for operand in [lhs.as_ref(), rhs.as_ref()] {
-                if let Narrowing::Negative { var, target } = extract_builtin_type_narrowing(operand)
-                    && target.mode == Mode::Null
-                {
-                    return Narrowing::Negative { var, target };
-                }
+            // comparisons such as `x %in% c("a", "b")`. Every conjunct
+            // counts (`!is.null(a) && !is.null(b)` proves both), and a
+            // false conjunction proves none.
+            let on_true: Vec<Narrowing> = [lhs.as_ref(), rhs.as_ref()]
+                .into_iter()
+                .flat_map(|operand| non_null_then_facts(extract_builtin_type_narrowing(operand)))
+                .collect();
+            if on_true.is_empty() {
+                return Narrowing::None;
             }
-            Narrowing::None
+            Narrowing::Compound {
+                base: Box::new(Narrowing::None),
+                on_true,
+                on_false: Vec::new(),
+            }
         }
         _ => Narrowing::None,
     }
@@ -261,6 +286,70 @@ fn scalar_false_path_fact(expr: &Expr) -> Option<(String, Option<RType>)> {
     let var = leaves.iter().find_map(length_not_one_var)?;
     let target = leaves.iter().find_map(|leaf| false_path_target(leaf, &var));
     Some((var, target))
+}
+
+/// A then-branch-only non-NULL fact; the else branch learns nothing.
+fn non_null_then(var: String) -> Narrowing {
+    Narrowing::Compound {
+        base: Box::new(Narrowing::None),
+        on_true: vec![Narrowing::Negative {
+            var,
+            target: RType::new(Mode::Null, Length::Zero),
+        }],
+        on_false: Vec::new(),
+    }
+}
+
+/// The non-NULL facts a true conjunct proves: `!is.null(x)`, or the
+/// facts of a nested conjunction or length guard.
+fn non_null_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
+    match conjunct {
+        fact if is_non_null_fact(&fact) => vec![fact],
+        Narrowing::Compound { base, on_true, .. }
+            if matches!(*base, Narrowing::None) && on_true.iter().all(is_non_null_fact) =>
+        {
+            on_true
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn is_non_null_fact(fact: &Narrowing) -> bool {
+    matches!(fact, Narrowing::Negative { target, .. } if target.mode == Mode::Null)
+}
+
+/// The `x` of `length(x) == 1` or `length(x) > 0`: both are FALSE for NULL.
+fn non_empty_length_guard_var(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::BinOp {
+            op: BinOpKind::Eq,
+            lhs,
+            rhs,
+            ..
+        } => length_guard_var(compared_with_one(lhs, rhs)?),
+        Expr::BinOp {
+            op: BinOpKind::Gt,
+            lhs,
+            rhs,
+            ..
+        } if is_literal_eq(rhs, 0.0) => length_guard_var(lhs),
+        _ => None,
+    }
+}
+
+/// The argument of a `missing(x)` call, bare or with any `pkg::` prefix
+/// (`bare_name`), as the supply analysis's `is_missing_head` reads it.
+/// A qualified head is still an `Expr::Ident`, so `missing(x)` and
+/// `!missing(x)` accept the same forms.
+fn missing_test_var(expr: &Expr) -> Option<String> {
+    let Expr::Call { func, args, .. } = expr else {
+        return None;
+    };
+    let name = ident_name(func)?;
+    if crate::semantic_lists::bare_name(name) != "missing" || args.len() != 1 {
+        return None;
+    }
+    first_arg_ident(args)
 }
 
 fn length_guard_var(expr: &Expr) -> Option<String> {
@@ -609,6 +698,14 @@ fn apply_single_narrowing_branch<'a>(
                     scope.insert_narrowed(var.clone(), narrowed);
                     return Some(var.as_str());
                 }
+                // `is.null(x)` leaves a NULL default's type unchanged but
+                // proves it on this path, so a later `Supplied` keeps it.
+                if target.mode == Mode::Null
+                    && existing.mode == Mode::Null
+                    && scope.is_default_parameter(var)
+                {
+                    scope.insert_narrowed(var.clone(), existing);
+                }
             }
         }
         (Narrowing::Positive { var, target }, NarrowingBranch::Else)
@@ -672,6 +769,13 @@ fn apply_single_narrowing_branch<'a>(
         }
         (Narrowing::ScalarThen { var }, NarrowingBranch::Then) => {
             scope.clear_loop_vector(var);
+        }
+        // Only the omitted-call type goes; an earlier guard's fact stays.
+        (Narrowing::Supplied { var }, NarrowingBranch::Then)
+            if scope.is_default_parameter(var) && !scope.narrowed_bindings.contains(var) =>
+        {
+            scope.insert_narrowed(var.clone(), RType::unknown());
+            return Some(var.as_str());
         }
         _ => {}
     }

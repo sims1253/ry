@@ -66,3 +66,34 @@ f <- function() {
   local({ x <<- TRUE })
   g
 }
+
+## case: a `<<-` passed bare to `local()` reaches the function's earlier closure
+# no-diag
+f <- function() {
+  x <- NULL
+  g <- function() if (x) 1
+  local(x <<- TRUE)
+  g
+}
+
+## case: a function's own `<<-` to an outer binding reaches its closure
+# no-diag
+# `h` binds no `x`, so the write rebinds the file-level `x` that `g` reads.
+x <- NULL
+h <- function() {
+  g <- function() if (x) 1
+  x <<- TRUE
+  g
+}
+
+## case: a function's own complex `<<-` skips its local root
+# expect: RY001
+# R fetches the root of `a$b <<- v` from the enclosing frames, so the
+# file-level `a` changes and `g` still reads the local `a$b` NULL.
+a <- list(b = NULL)
+f <- function() {
+  a <- list(b = NULL)
+  g <- function() if (a$b) 1
+  a$b <<- TRUE
+  g
+}

@@ -572,6 +572,12 @@ pub fn registry() -> Vec<SemanticList> {
     ]
 }
 
+/// testthat's block verbs, which evaluate their code block in a fresh
+/// child of the caller's environment (#368).
+pub(crate) fn is_testthat_block_verb(name: &str) -> bool {
+    matches!(name, "test_that" | "describe" | "it")
+}
+
 /// Extract the bare function name from a potentially qualified callee,
 /// stripping any `pkg::` or `pkg:::` prefix.
 pub(crate) fn bare_name(name: &str) -> &str {

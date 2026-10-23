@@ -1324,8 +1324,10 @@ pub(crate) fn superassignment_writes_in_expr(expr: &Expr) -> SuperassignmentWrit
 /// land in the frame the body runs in, or further out (issue #706). The
 /// body's own direct writes are left out: they skip its frame, so a
 /// closure reading the body's local keeps seeing the unchanged binding.
-/// A block passed to `local()` or a testthat verb runs in a child of the
-/// body's frame, so its direct writes do land there and are kept.
+/// Code passed to `local()` or a testthat verb runs in a child of the
+/// body's frame, so its direct writes do land there and are kept. A
+/// direct complex write (`a$b <<- v`) also skips the frame: R fetches its
+/// root from the enclosing frames, not the body's own `a`.
 pub(crate) fn nested_superassignment_writes(body: &[Stmt]) -> HashSet<String> {
     let mut writes = SuperassignmentWrites::default();
     let mut formals = InterveningFormals::default();
@@ -1336,18 +1338,14 @@ pub(crate) fn nested_superassignment_writes(body: &[Stmt]) -> HashSet<String> {
             if depth == 0
                 && let AstNode::Expr(Expr::Call { func, args, .. }) = node
                 && ident_name(func).is_some_and(|name| {
-                    matches!(
-                        crate::semantic_lists::bare_name(name),
-                        "local" | "test_that" | "describe" | "it"
-                    )
+                    let name = crate::semantic_lists::bare_name(name);
+                    name == "local" || crate::semantic_lists::is_testthat_block_verb(name)
                 })
             {
                 for argument in args {
-                    if matches!(argument.value, Expr::Block { .. }) {
-                        writes
-                            .names
-                            .extend(superassignment_writes_in_expr(&argument.value).names);
-                    }
+                    writes
+                        .names
+                        .extend(superassignment_writes_in_expr(&argument.value).names);
                 }
             }
             let direct_write = depth == 0

@@ -1663,3 +1663,28 @@ fn character_name_vectors_do_not_make_the_data_pronoun_atomic() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn s3_generic_inherits_embrace_defusing_from_its_methods() {
+    let diagnostics = check(
+        "summarise_col <- function(data, ...) UseMethod(\"summarise_col\")\n\
+         summarise_col.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})\n\
+         plain <- function(data, ...) UseMethod(\"plain\")\n\
+         plain.data.frame <- function(data, col, ...) print(col)\n\
+         summarise_col(mtcars, col = mpg)\n\
+         plain(mtcars, col = unbound_column)\n",
+    );
+    let unbound = |name: &str| {
+        diagnostics
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains(&format!("`{name}`")))
+    };
+    assert!(
+        !unbound("mpg"),
+        "an embracing S3 method must make the generic's dots defused: {diagnostics:?}"
+    );
+    assert!(
+        unbound("unbound_column"),
+        "an evaluating S3 method must keep its generic's dots eager: {diagnostics:?}"
+    );
+}

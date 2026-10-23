@@ -346,9 +346,11 @@ impl Checker {
         self.return_slots.get(slot)
     }
 
-    /// A generic must allow the quoting and injection behavior of its known
-    /// methods. Union their parameter metadata because any selected method
-    /// may capture the supplied arguments.
+    /// A generic must allow the quoting, defusing, and injection behavior of
+    /// its known methods. Union their parameter metadata because any selected
+    /// method may capture the supplied arguments: `UseMethod()` passes the
+    /// generic's promises on unevaluated, so `{{ col }}` in a method defuses
+    /// the generic's actual.
     fn propagate_s3_generic_evaluation(
         &mut self,
         methods: &HashMap<String, Vec<String>>,
@@ -363,7 +365,7 @@ impl Checker {
             for method_name in method_names {
                 let method = &self.fn_table.functions[method_name];
                 for parameter in &method.params {
-                    if !parameter.quoting && parameter.injection.is_none() {
+                    if !parameter.quoting && !parameter.defused && parameter.injection.is_none() {
                         continue;
                     }
                     let target = match generic
@@ -384,6 +386,7 @@ impl Checker {
                             name.clone(),
                             target,
                             parameter.quoting,
+                            parameter.defused,
                             parameter.injection,
                         ));
                     }
@@ -393,13 +396,13 @@ impl Checker {
 
         let table = Arc::make_mut(&mut self.fn_table);
         let mut changed = HashSet::new();
-        for (generic, position, quoting, injection) in inherited {
+        for (generic, position, quoting, defused, injection) in inherited {
             let slot = table.functions[&generic].return_slot;
             if let Some(parameter) = table
                 .functions
                 .live_mut(&generic)
                 .and_then(|function| function.params.get_mut(position))
-                && inherit_nse_flags(parameter, quoting, false, injection)
+                && inherit_nse_flags(parameter, quoting, defused, injection)
             {
                 changed.insert(slot);
             }

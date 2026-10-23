@@ -1,0 +1,14 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: a missing() check before an embrace keeps the parameter defused
+  diagnostics: []
+- case: a missing() check before enquo keeps the parameter defused
+  diagnostics: []
+- case: forcing the parameter before the embrace still evaluates it
+  diagnostics:
+    - code: RY010
+      line: 27
+      message: "variable `hp` is not bound in this scope"
+      severity: warning

@@ -2202,8 +2202,8 @@ fn on_load_block_assignments_are_package_bindings() {
     // rlang's `on_load()` and package-local copies of it evaluate their
     // argument in the namespace when `.onLoad()` runs (#691). An installed
     // package runs an `evalqOnLoad()` block in a child of its namespace,
-    // and an `env` argument, a nested block, or another call proves
-    // nothing, so those reads stay unbound.
+    // and an `env` argument, a loop binder (possibly never bound), a nested
+    // block, or another call proves nothing, so those reads stay unbound.
     let mut project = Project::new();
     project.add_file(
         "hooks.R".to_string(),
@@ -2213,6 +2213,7 @@ fn on_load_block_assignments_are_package_bindings() {
              rlang::on_load(HAS_CLI <- TRUE)\n\
              evalqOnLoad({\n  LOG <- new.env()\n})\n\
              on_load(ELSEWHERE <- 1, env = globalenv())\n\
+             on_load({\n  for (LOOPED in seq_len(0)) NULL\n})\n\
              on_load(local({\n  NESTED <- 1\n}))\n\
              register({\n  REGISTERED <- 1\n})\n",
         ),
@@ -2223,7 +2224,7 @@ fn on_load_block_assignments_are_package_bindings() {
             "use.R",
             "is_local <- function() if (IS_LOCAL_PKG) \"local\" else \"installed\"\n\
              has_cli <- function() HAS_CLI\n\
-             reads <- function() list(LOG, ELSEWHERE, NESTED, REGISTERED)\n",
+             reads <- function() list(LOG, ELSEWHERE, LOOPED, NESTED, REGISTERED)\n",
         ),
     );
     let unbound: Vec<_> = project
@@ -2236,7 +2237,7 @@ fn on_load_block_assignments_are_package_bindings() {
         .collect();
     assert_eq!(
         unbound,
-        ["LOG", "ELSEWHERE", "NESTED", "REGISTERED"]
+        ["LOG", "ELSEWHERE", "LOOPED", "NESTED", "REGISTERED"]
             .map(|name| format!("variable `{name}` is not bound in this scope")),
     );
 }

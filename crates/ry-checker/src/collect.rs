@@ -87,10 +87,11 @@ fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
 /// Names a top-level `on_load(expr)` binds in the package namespace
 /// (#691). rlang's `on_load()`, and the package-local copies of it, store
 /// `expr` for `.onLoad()` to evaluate there, so its plain bindings become
-/// package bindings. Only the hook expression itself and the statements of
-/// a braced block count; `<<-`, `assign()`, and anything nested deeper
-/// prove nothing. `evalqOnLoad()` does not count: an installed package
-/// evaluates its block in a child of the namespace.
+/// package bindings. Only an assignment that is the hook expression itself
+/// or a statement of its braced block counts; `<<-`, `assign()`, loop
+/// binders (as at top level), and anything nested deeper prove nothing.
+/// `evalqOnLoad()` does not count: an installed package evaluates its block
+/// in a child of the namespace.
 fn load_hook_bindings(stmts: &[Stmt]) -> impl Iterator<Item = &str> {
     stmts
         .iter()
@@ -110,7 +111,11 @@ fn load_hook_bindings(stmts: &[Stmt]) -> impl Iterator<Item = &str> {
             _ => None,
         })
         .flat_map(|hook| match hook {
-            Expr::Block { body, .. } => body.iter().map(AstNode::Stmt).collect(),
+            Expr::Block { body, .. } => body
+                .iter()
+                .filter(|stmt| matches!(stmt, Stmt::Assign { .. }))
+                .map(AstNode::Stmt)
+                .collect(),
             hook => vec![AstNode::Expr(hook)],
         })
         .filter_map(|node| frame_binding(node)?.0)

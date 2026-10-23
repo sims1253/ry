@@ -3055,6 +3055,19 @@ impl Checker {
     }
 
     pub(crate) fn infer_block_expr(&mut self, body: &[Stmt], scope: &mut Scope) -> RType {
+        // A block binds in whichever frame runs it, so closures it defines
+        // may read names it binds later, as in a function body (issue
+        // #690). Bare and `if` blocks are already in the body's set.
+        let enclosing = self.deferred_captures.last();
+        let assigned = assigned_names_in_body(body);
+        let extends = assigned
+            .iter()
+            .any(|name| !enclosing.is_some_and(|captures| captures.contains(name)));
+        if extends {
+            let mut captures = enclosing.cloned().unwrap_or_default();
+            captures.extend(assigned);
+            self.deferred_captures.push(captures);
+        }
         let mut value = RType::new(Mode::Null, Length::Zero);
         self.walk_block_with(body, |checker, statement, last| {
             if last {
@@ -3063,6 +3076,9 @@ impl Checker {
                 checker.walk_stmt(statement, scope, None);
             }
         });
+        if extends {
+            self.deferred_captures.pop();
+        }
         value
     }
 

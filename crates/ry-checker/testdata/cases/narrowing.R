@@ -914,3 +914,53 @@ pick_unguarded <- function(p) {
   if (p) x <- "a"
   x$a
 }
+
+## case: a passed if() comparison proves its parameter scalar for a later guard
+# no-diag
+check_kind <- function(kind = "warning") {
+  if (kind == "stop") stop("stopping")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: a not-null if() comparison proves its parameter NULL or scalar for a later guard
+# no-diag
+check_tz <- function(timezone) {
+  if (!is.null(timezone) && timezone == "") return("")
+  if (is.null(timezone) || !timezone %in% c("UTC", "Europe/Berlin")) return("UTC")
+  timezone
+}
+
+## case: an if() guard proves its parameter for the same guard repeated later
+# expect: RY032
+twice <- function(interval = NULL) {
+  a <- if (is.null(interval) || interval == "none") 1 else 2
+  if (is.null(interval) || interval == "none") a <- a + 1
+  a
+}
+
+## case: an if() test of any(x) proves nothing about the length of x
+# expect: RY032
+check_any <- function(kind = "warning") {
+  if (any(kind == "stop")) stop("bad kind")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: an if() test in one branch proves nothing after the branches join
+# expect: RY032
+check_branch <- function(p, kind = "warning") {
+  if (p) {
+    if (kind == "stop") stop("bad kind")
+  }
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: an if() tail that a FALSE head skips proves nothing about its subject
+# expect: RY032
+check_skipped <- function(strict, kind = "warning") {
+  if (strict && kind == "stop") stop("bad kind")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}

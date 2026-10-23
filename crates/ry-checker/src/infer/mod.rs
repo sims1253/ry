@@ -1292,6 +1292,9 @@ impl Checker {
         let ct = self.infer(cond, scope);
         self.boolean_context_span = previous_boolean_context;
         self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ctx);
+        if matches!(ctx, ConditionContext::If) {
+            self.mark_condition_scalar_fact(cond, scope);
+        }
     }
 
     /// Whether a local binding replaces the named callee, so the stub's

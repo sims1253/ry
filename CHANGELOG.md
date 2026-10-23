@@ -179,6 +179,9 @@ All notable changes to ry are documented in this file.
   `if (is.null(x)) return(...)`, `!missing(x)`, every `!is.null()`
   conjunct of `&&`, `length(x) == 1` or `length(x) > 0`, and a `for`
   body over `x`. These no longer report a false RY001 or RY070 (#692).
+- Count a passed `if` test such as `x == ""` or `!is.null(x) && x == ""` as
+  proof that `x` is NULL or scalar, as `stopifnot` already did, so a later
+  `is.null(x) || pred(x)` guard no longer reports a false RY032 (#702).
 - Let an S3 generic inherit `{{ x }}` defusing from its project methods, as it
   already inherits `enquo()` quoting, so `generic(df, col = mpg)` no longer
   reports `mpg` as RY010 when the method forwards `{{ col }}` (#687).

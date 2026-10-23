@@ -46,3 +46,10 @@ fit <- function() train()
 cb_save <- function(x = 0) if (x < 0) FALSE else TRUE
 train <- function(x = NULL) if (!cb_save(x)) NULL
 train()
+
+## case: a superassignment target in a condition is not a guard
+# expect: RY001
+# `<<-` writes the enclosing `bins`; the local one keeps its NULL default.
+callee <- function(bins = 30) if (bins == 1) 1L else 2L
+caller <- function(bins = NULL) if ((bins <<- 1L) > 0) print(callee(bins))
+z <- caller()

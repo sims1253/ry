@@ -97,27 +97,41 @@ pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_start: 
 /// `if (!is.null(source))`, an early `if (is.null(source)) return()`, or
 /// `!is.null(source) && callee(source)`, may exclude the default from the
 /// call. Only reads that start before the call count: the forwarded
-/// argument itself, as in `if (!callee(source))`, guards nothing. Source
-/// order does not prove the guard dominates the call.
+/// argument itself, as in `if (!callee(source))`, guards nothing, and
+/// neither does an assignment target, as in `if ((source <<- 1L) > 0)`.
+/// Source order does not prove the guard dominates the call.
 pub(crate) fn may_guard_source_before(body: &[Stmt], source: &str, call_start: usize) -> bool {
-    let source = semantic_argument_name(source);
-    let walk = Walk {
+    const WALK: Walk = Walk {
         fn_bodies: false,
         ..Walk::ALL
     };
-    let reads_source = |condition: &Expr| {
-        walk_expr(condition, walk, |node, _| match node {
+    fn reads(expr: &Expr, source: &str, call_start: usize) -> bool {
+        walk_expr(expr, WALK, |node, _| match node {
             AstNode::Expr(Expr::Ident { name, span })
                 if span.start < call_start && semantic_argument_name(name) == source =>
             {
                 ControlFlow::Break(())
             }
+            // Skip the target: only the assigned value is read.
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                rhs,
+                ..
+            }) => {
+                if reads(rhs, source, call_start) {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(Descend::Skip)
+                }
+            }
             _ => ControlFlow::Continue(Descend::Into),
         })
         .is_break()
-    };
+    }
+    let source = semantic_argument_name(source);
+    let reads_source = |condition: &Expr| reads(condition, source, call_start);
     body.iter().any(|statement| {
-        walk_stmt(statement, walk, |node, _| {
+        walk_stmt(statement, WALK, |node, _| {
             let condition = match node {
                 AstNode::Stmt(Stmt::If { cond, .. } | Stmt::While { cond, .. }) => cond,
                 AstNode::Expr(Expr::If { cond, .. }) => cond.as_ref(),

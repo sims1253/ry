@@ -870,10 +870,20 @@ expression: rows
       severity: error
 - case: a value formal does not hide a package S4 generic of its name
   diagnostics: []
+- case: a literal read in a partly named list indexes by position
+  diagnostics:
+    - code: RY061
+      line: 1326
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: a literal read past the named elements reaches the unnamed one
+  diagnostics: []
+- case: a literal read after a NULL field write does not trust positions
+  diagnostics: []
 - case: a value formal with no function of its name is still not callable
   diagnostics:
     - code: RY070
-      line: 1323
+      line: 1348
       message: "could not find function `widen` (bound here as `logical`)"
       severity: error
 - case: "a `$` miss on a list ry only partly knows is not NULL"

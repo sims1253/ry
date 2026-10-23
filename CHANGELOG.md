@@ -156,6 +156,9 @@ All notable changes to ry are documented in this file.
 - Keep a name assigned inside a `[` subscript bound when the receiver is
   opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
   reports in lme4 and DescTools (#713).
+- Read a literal `x[[N]]` on a partly named list by position: `list()`
+  numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
+  no longer reads the unnamed list and now reports RY061 on `$b` (#758).
 - Type a `$` or `[[` name missing from a list whose names ry only partly
   knows (`list(...)`, an `lapply()` result, fields written to an argument
   or environment) as unknown instead of NULL, removing RY001 false

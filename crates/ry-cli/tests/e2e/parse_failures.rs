@@ -53,3 +53,36 @@ fn unparseable_file_is_one_ry000_in_every_format() {
         "{human:?}"
     );
 }
+
+/// Invalid UTF-8 decodes lossily, so an unreadable file needs a permission
+/// error. Root reads it anyway, so the test skips itself there.
+#[cfg(unix)]
+#[test]
+fn unreadable_file_is_one_ry000_at_the_start() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    write(temp.path(), &[("locked.R", b"x <- 1\n")]);
+    let locked = temp.path().join("locked.R");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&locked).is_ok() {
+        eprintln!("skipping: permissions do not stop this user from reading");
+        return;
+    }
+
+    let json = check()
+        .cwd(temp.path())
+        .args(["--output-format", "json", "locked.R"])
+        .run();
+    assert_eq!(json.code(), Some(1), "{json:?}");
+    assert_eq!(json.findings(), [["locked.R", "RY000", "error"]]);
+    let diagnostic = &json.json()[0];
+    assert_eq!(
+        (&diagnostic["line"], &diagnostic["column"]),
+        (&1.into(), &1.into())
+    );
+    assert_eq!(
+        diagnostic["message"],
+        "cannot read file: Permission denied (os error 13); file not checked"
+    );
+}

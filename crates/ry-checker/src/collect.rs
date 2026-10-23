@@ -84,15 +84,15 @@ fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
     }
 }
 
-/// Names a top-level `on_load(expr)` binds in the package namespace
-/// (#691). rlang's `on_load()`, and the package-local copies of it, store
-/// `expr` for `.onLoad()` to evaluate there, so its plain bindings become
-/// package bindings. Only an assignment that is the hook expression itself
-/// or a statement of its braced block counts; `<<-`, `assign()`, loop
-/// binders (as at top level), and anything nested deeper prove nothing.
-/// `evalqOnLoad()` does not count: an installed package evaluates its block
-/// in a child of the namespace.
-fn load_hook_bindings(stmts: &[Stmt]) -> impl Iterator<Item = &str> {
+/// The plain assignments a top-level `on_load(expr)` makes in the package
+/// namespace (#691). rlang's `on_load()`, and the package-local copies of
+/// it, store `expr` for `.onLoad()` to evaluate there, so these bindings
+/// become package bindings. Only an assignment that is the hook expression
+/// itself or a statement of its braced block counts; `<<-`, `assign()`,
+/// loop binders (as at top level), and anything nested deeper prove
+/// nothing. `evalqOnLoad()` does not count: an installed package evaluates
+/// its block in a child of the namespace.
+fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, &Expr)> {
     stmts
         .iter()
         .filter_map(|stmt| match stmt {
@@ -113,12 +113,31 @@ fn load_hook_bindings(stmts: &[Stmt]) -> impl Iterator<Item = &str> {
         .flat_map(|hook| match hook {
             Expr::Block { body, .. } => body
                 .iter()
-                .filter(|stmt| matches!(stmt, Stmt::Assign { .. }))
-                .map(AstNode::Stmt)
+                .filter_map(|stmt| match stmt {
+                    // Statement `<<-` repeats itself as the value.
+                    Stmt::Assign {
+                        target,
+                        value,
+                        span,
+                    } if !matches!(
+                        value,
+                        Expr::BinOp { op: BinOpKind::SuperAssign, span: operation, .. }
+                            if operation == span
+                    ) =>
+                    {
+                        Some((target, value))
+                    }
+                    _ => None,
+                })
                 .collect(),
-            hook => vec![AstNode::Expr(hook)],
+            Expr::BinOp {
+                op: BinOpKind::Assign,
+                lhs,
+                rhs,
+                ..
+            } => vec![(lhs.as_ref(), rhs.as_ref())],
+            _ => Vec::new(),
         })
-        .filter_map(|node| frame_binding(node)?.0)
 }
 
 /// Writes `node` can make outside the frame it runs in: a `<<-`, a
@@ -411,11 +430,6 @@ impl Checker {
         if custom_operator::has_escaped_slot_names(stmts) {
             Arc::make_mut(&mut self.fn_table).has_escaped_slot_names = true;
         }
-        for name in load_hook_bindings(stmts) {
-            let table = Arc::make_mut(&mut self.fn_table);
-            table.note_bound_name(name);
-            table.known_vars.insert(name.to_string());
-        }
         // Statement-level walk on the shared core: a binding statement can
         // appear at the top level, in `if` branches, and in `for`/`while`
         // bodies, so those are the only statements whose children this
@@ -464,6 +478,12 @@ impl Checker {
                 })
             },
         );
+        // Hooks run after every file is sourced. Their bindings register the
+        // name only: rlang's hooks run only if `.onLoad()` calls
+        // `run_on_load()`, so ry does not model their values.
+        for (target, value) in load_hook_assignments(stmts) {
+            self.register_binding(target, value);
+        }
         self.collect_capture_writes(stmts);
         let mut registered = FxSet::default();
         s3_registrations(stmts, &mut registered);
@@ -575,11 +595,9 @@ impl Checker {
         table.capture_writes.extend(outward);
     }
 
-    // Records one identifier-bound assignment from the collection
-    // traversal: the bound name in `known_vars` (and `callable_vars` for
-    // constructor calls), and, when the value is a function literal, the
-    // function itself.
-    fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
+    // Records the name an identifier-bound assignment binds: `known_vars`,
+    // and `callable_vars` for constructor calls.
+    fn register_binding(&mut self, target: &Expr, value: &Expr) {
         // Record every identifier-bound top-level assignment in
         // `known_vars`. This is independent of whether the RHS
         // is a function literal: regular variable assignments
@@ -606,6 +624,13 @@ impl Checker {
                 table.callable_vars.remove(name);
             }
         }
+    }
+
+    // Records one identifier-bound assignment from the collection
+    // traversal: its name, and, when the value is a function literal, the
+    // function itself.
+    fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
+        self.register_binding(target, value);
         if let (Some(name), Expr::Function { params, body, span }) = (binding_name(target), value) {
             // An S3 method named like `print.foo` is recorded both
             // as a regular function (so the name resolves to its

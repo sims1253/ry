@@ -299,6 +299,7 @@ mod tests {
                     defused: false,
                     quoting: false,
                     unforced: false,
+                    missing_only: false,
                     injection: None,
                 })
                 .collect(),

@@ -199,6 +199,13 @@ All notable changes to ry are documented in this file.
 - Treat the objects `Rcpp::loadModule()` installs as package bindings: a
   literal `what` binds exactly those names, and `what = TRUE` stops RY010
   for names a function does not assign itself (#704).
+- Treat passing `col` to a project validator that only tests its formal with
+  `missing()`, like the standalone `check_not_missing()` that cards vendors
+  from insightsengineering's standalone-checks.R, as no use of `col`, so a
+  later `{{ col }}` still defuses it (#688).
+- Vendor r-typeshed 7d874359: `rlang::caller_arg()` captures its argument, so
+  a validator default such as `arg_name = rlang::caller_arg(x)` no longer
+  counts as forcing `x` (#688).
 
 ## [0.11.0] - 2026-09-22
 

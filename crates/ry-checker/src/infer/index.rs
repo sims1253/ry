@@ -107,11 +107,7 @@ fn conservative_element_type(bt: &RType) -> RType {
 /// written to an opaque value or environment say nothing about the other
 /// elements (#689).
 fn unrecorded_element_type(schema: &ColumnSchema) -> Option<RType> {
-    let positional = schema
-        .columns
-        .iter()
-        .all(|(name, _)| name.starts_with("[["));
-    if schema.complete || positional {
+    if schema.complete || schema.is_positional() {
         schema.homogeneous_element_type()
     } else {
         None
@@ -309,8 +305,7 @@ impl Checker {
                         // named. A partly named local list reads position N,
                         // unless an earlier element may be NULL: `x$a <- NULL`
                         // drops `a` and shifts the rest.
-                        let positional = schema.names().iter().all(|n| n.starts_with("[["));
-                        let element = if positional {
+                        let element = if schema.is_positional() {
                             schema.get(&format!("[[{}]]", idx as i64))
                         } else if schema.locally_constructed
                             && schema.complete

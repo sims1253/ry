@@ -2334,6 +2334,13 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
         ),
         ["SpatVector", "SpatRastr"].map(unbound),
     );
+    assert_eq!(
+        unbound_beside_module(
+            "loadModule(\"spat\", \"SpatRaster\")\n",
+            "reads <- function() list(SpatRaster, SpatVector)\n",
+        ),
+        [unbound("SpatVector")],
+    );
     // Without `what`, only the module itself loads; another `env` gets the
     // objects instead of the namespace; without loadModule, nothing.
     for module in [

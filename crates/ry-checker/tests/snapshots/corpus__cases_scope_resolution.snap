@@ -282,6 +282,14 @@ expression: rows
       severity: warning
 - case: local block in the caller frame lets closures read later helpers
   diagnostics: []
+- case: closures in a braced call argument read later bindings of the block
+  diagnostics: []
+- case: closures in a braced call argument still flag names the block never binds
+  diagnostics:
+    - code: RY010
+      line: 618
+      message: "variable `not_bound` is not bound in this scope"
+      severity: warning
 - case: bindings made in both arms of an if value are visible afterwards
   diagnostics: []
 - case: an if ending a braced call argument binds after the call
@@ -293,13 +301,13 @@ expression: rows
 - case: an if value joins the types its arms bind
   diagnostics:
     - code: RY040
-      line: 643
+      line: 673
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
 - case: a name no arm of an if value binds stays unbound
   diagnostics:
     - code: RY010
-      line: 651
+      line: 681
       message: "variable `hidden` is not bound in this scope"
       severity: warning
 - case: an opaque parameter call head is not the same-named stats function
@@ -311,7 +319,7 @@ expression: rows
 - case: a function-valued local call head is not the same-named base function
   diagnostics:
     - code: RY061
-      line: 687
+      line: 717
       message: "$ operator is invalid for atomic vectors of mode `character`"
       severity: error
 - case: a closure capturing a definite callable is not the same-named base function
@@ -319,12 +327,30 @@ expression: rows
 - case: a write that may escape an unproven block keeps the base function
   diagnostics:
     - code: RY091
-      line: 717
+      line: 747
       message: "missing required argument `x` in call to `nchar`"
       severity: warning
 - case: a known non-function local still calls the base function
   diagnostics:
     - code: RY061
-      line: 724
+      line: 754
       message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: "`$` on a base data frame partially matches a unique prefix"
+  diagnostics: []
+- case: "`$` on a base data frame with an ambiguous prefix is an undefined column"
+  diagnostics:
+    - code: RY060
+      line: 766
+      message: "column `nv` not found in data frame schema; available columns: nvalid, nvx"
+      severity: error
+- case: "`$` prefix on a tibble is an undefined column"
+  diagnostics:
+    - code: RY060
+      line: 773
+      message: "column `nv` not found in data frame schema; available columns: nvalid, k"
+      severity: error
+    - code: RY060
+      line: 774
+      message: "column `nv` not found in data frame schema; available columns: nvalid, k, z"
       severity: error

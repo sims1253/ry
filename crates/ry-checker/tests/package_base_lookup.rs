@@ -88,3 +88,17 @@ fn guarded_or_masked_switch_stays_silent() {
     let codes = check_package(None, &[("f.R", "f <- function() switch(NULL, a = 1)\n")]);
     assert!(!codes.contains(&"RY001".to_string()), "{codes:?}");
 }
+
+#[test]
+fn unproven_local_block_closures_read_later_bindings() {
+    // From spatstat (issue #690): a whole-package import may mask `local`,
+    // so its block is inferred as an ordinary call argument. Closures in it
+    // still read the helpers it binds later; an unbound name still fires.
+    let scaled = "scaled_total <- local({\n  scaled_total <- function(xs) sum(vapply(xs, get_x, numeric(1))) * SCALE\n  get_x <- function(z) z[[\"x\"]]\n  SCALE <- 2\n  scaled_total\n})\n";
+    let namespace = Some("export(scaled_total)\nimport(stats)\n");
+    let codes = check_package(namespace, &[("scaled.R", scaled)]);
+    assert!(codes.is_empty(), "{codes:?}");
+    let unbound = scaled.replace("* SCALE", "* not_bound");
+    let codes = check_package(namespace, &[("scaled.R", &unbound)]);
+    assert_eq!(codes, ["RY010"]);
+}

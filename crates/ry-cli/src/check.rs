@@ -798,18 +798,37 @@ pub(crate) struct CheckContext<'a> {
 
 /// check's parse-failure policy: report every unreadable or unparseable
 /// file on stderr and keep going. Failed files drop out of the pass and
-/// count as parse errors, which fail the run's exit code.
+/// count as parse errors, which fail the run's exit code. Each one also
+/// comes back as a file-level RY000, at the parser's position when it has
+/// one, so machine-readable output names the file too (#743).
 fn report_check_parse_failure(
     path: &std::path::Path,
     error: &pipeline::ParseError,
-) -> pipeline::FailureAction {
-    match error {
-        pipeline::ParseError::Read(error) => eprintln!("ry: {}: {}", path.display(), error),
-        pipeline::ParseError::Parse(message) => {
-            eprintln!("ry: {}: parse error: {}", path.display(), message)
+) -> ry_checker::Diagnostic {
+    let (span, message) = match error {
+        pipeline::ParseError::Read(error) => {
+            eprintln!("ry: {}: {}", path.display(), error);
+            (
+                ry_core::Span::new(0, 0, 0, 0),
+                format!("cannot read file: {error}; file not checked"),
+            )
         }
-    }
-    pipeline::FailureAction::Skip
+        pipeline::ParseError::Parse(error) => {
+            eprintln!("ry: {}: parse error: {}", path.display(), error);
+            let ry_core::ParseError::TreeSitter { line, col, message } = error;
+            (
+                ry_core::Span::new(0, 0, line.saturating_sub(1), col.saturating_sub(1)),
+                format!("{message}; file not checked"),
+            )
+        }
+    };
+    ry_checker::Diagnostic::new(
+        ry_checker::Severity::Error,
+        span,
+        &path.to_string_lossy(),
+        "RY000",
+        message,
+    )
 }
 
 /// Core check logic: parse all files, run the project checker, apply
@@ -830,9 +849,18 @@ fn run_check_once(
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Parallel parsing through the shared thread-local parser pool.
-    let all_parsed = pipeline::parse_files(paths, overlay, report_check_parse_failure)
-        .expect("check's parse-failure policy never aborts");
+    let failures = std::sync::Mutex::new(Vec::new());
+    let all_parsed = pipeline::parse_files(paths, overlay, |path, error| {
+        let diagnostic = report_check_parse_failure(path, error);
+        failures
+            .lock()
+            .expect("parse-failure list lock")
+            .push((path.to_path_buf(), diagnostic));
+        pipeline::FailureAction::Skip
+    })
+    .expect("check's parse-failure policy never aborts");
     parse_errors += paths.len() - all_parsed.len();
+    synthetic_diagnostics.extend(failures.into_inner().expect("parse-failure list lock"));
     let mut parsed = Vec::with_capacity(all_parsed.len());
     for parsed_file in all_parsed {
         file_count += 1;

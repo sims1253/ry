@@ -85,6 +85,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- `ry check` reports a file it cannot read or parse at all (such as one past
+  ry's syntax nesting limits) as one RY000 in every output format, instead of
+  only a stderr line, so `--output-format json --exit-zero` no longer shows a
+  clean `[]` for it (#743).
 - Stop selections from claiming their input's length. `return: "arg0"`
   combined with a `return_length` rule now keeps the first argument's mode
   and class but re-counts its elements, dropping whole-value facts; a data

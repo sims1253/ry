@@ -1107,8 +1107,23 @@ impl Checker {
                 }
             }
         }
+        // `environment(f) <- rho` re-homes this closure (issue #716): its
+        // free variables resolve in `rho`, so what the defining frame
+        // binds (often an `x <- NULL` R CMD check placeholder) is unknown.
+        if self
+            .dynamic_closure_literals
+            .environment_replaced
+            .contains(&span)
+        {
+            let inherited: Vec<String> = fn_scope.bindings.keys().cloned().collect();
+            for name in inherited {
+                fn_scope.insert(name, RType::unknown());
+            }
+        }
         if named_binding && let Some(name) = function_name {
-            insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
+            if self.runs_as_s3_method(name, &self.path, span) {
+                insert_s3_dispatch_context(&mut fn_scope);
+            }
             // RY108 inspects the definition's own shape (formal defaults
             // vs. `missing()` guards), not the walked body's types, so it
             // runs before the parameter defaults are inserted below.
@@ -1196,7 +1211,11 @@ impl Checker {
         if let Some(saved) = saved_vacuous_map {
             self.vacuous_map_results = saved;
         }
-        if let Some(kind) = self.dynamic_closure_literals.get(&span).copied()
+        if let Some(kind) = self
+            .dynamic_closure_literals
+            .placeholders
+            .get(&span)
+            .copied()
             && !self.discarding
         {
             // Only the placeholder-specific rules go; everything else
@@ -1634,8 +1653,21 @@ impl Checker {
         // Equal inferred function types do not prove equal lexical targets.
         // Drop an adopted declaration identity if any reaching branch may
         // bind the name to a different definition, even when its RType is
-        // unchanged and the ordinary type merge skips that binding.
-        let lexical_names: Vec<_> = scope.lexical_definitions.keys().cloned().collect();
+        // unchanged and the ordinary type merge skips that binding. A name
+        // neither arm changed agrees, so only the deltas are visited: the
+        // enclosing frames' definitions can number in the thousands (#697).
+        let lexical_names: Vec<_> = then_delta
+            .changed
+            .keys()
+            .chain(
+                else_delta
+                    .changed
+                    .keys()
+                    .filter(|name| !then_delta.changed.contains_key(*name)),
+            )
+            .filter(|name| scope.lexical_definitions.contains_key(*name))
+            .cloned()
+            .collect();
         for name in lexical_names {
             let original = scope.lexical_definition(&name);
             let then_agrees =

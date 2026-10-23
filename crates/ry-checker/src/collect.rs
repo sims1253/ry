@@ -1024,7 +1024,13 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
 /// A formal the function never mentions qualifies too.
 fn parameter_only_probed(body: &[Stmt], params: &[Param], parameter: &str) -> bool {
     // Alternate spellings (backticks, escapes) are not compared reliably.
-    if parameter == "..." || parameter.contains(['`', '\\']) {
+    // `UseMethod()` and `standardGeneric()` force the dispatch argument.
+    if parameter == "..."
+        || parameter.contains(['`', '\\'])
+        || body
+            .iter()
+            .any(|statement| stmt_any(statement, &is_dispatch_call))
+    {
         return false;
     }
     let defaults: Vec<Stmt> = params
@@ -1609,7 +1615,9 @@ fn first_parameter_use_in_expr_inner(
         Expr::Ident { name, .. } => (name == parameter).then_some(FirstParameterUse::Normal),
         Expr::Call { func, args, span } => {
             let captured = captured_arguments(func, args);
-            let probes = probes_promise(func) || skipped.contains(&span.start);
+            // `check(col)(col)` shares its start with the inner call.
+            let probes = probes_promise(func)
+                || (matches!(func.as_ref(), Expr::Ident { .. }) && skipped.contains(&span.start));
             first_parameter_use_in_expr(func, parameter, skipped).or_else(|| {
                 // Actual order is not promise force order. A normal use in
                 // another actual must dominate a captured occurrence.

@@ -782,12 +782,16 @@ mod tests {
              forces <- function(x) { if (missing(x)) stop(); x }\n\
              checked <- function(col) { check(col); substitute(col) }\n\
              forced <- function(col) { forces(col); substitute(col) }\n\
-             unknown <- function(col) { validate(col); substitute(col) }\n",
+             unknown <- function(col) { validate(col); substitute(col) }\n\
+             curried <- function(col) { check(col)(col); substitute(col) }\n\
+             dispatch <- function(x) UseMethod(\"dispatch\")\n",
         );
         let param = |name: &str| &checker.fn_table.functions[name].params[0];
         assert!(param("check").missing_only && !param("forces").missing_only);
+        assert!(!param("dispatch").missing_only);
         assert!(param("checked").defused);
         assert!(!param("forced").defused);
         assert!(!param("unknown").defused);
+        assert!(!param("curried").defused);
     }
 }

@@ -67,3 +67,13 @@ select_validated <- function(data, col) {
   dplyr::select(data, {{ col }})
 }
 select_validated(mtcars, qsec)
+
+## case: a generic validator dispatches on its argument, which forces it
+# expect: RY010
+check_input <- function(x) UseMethod("check_input")
+check_input.default <- function(x) invisible()
+select_dispatched <- function(data, col) {
+  check_input(col)
+  dplyr::select(data, {{ col }})
+}
+select_dispatched(mtcars, gear)

@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "43b503fc762ce1b9d9e85ac0640880ed4bed445932ba905fdfdbe2ba2d0907d5",
-  "ry_commit": "6dd0b48adf87ec26b9355a96a769d9a3225f542a",
+  "source_sha256": "6e2a68004d393fb1f7b978d01e0fad7ec6bc6098adada80d24d523d83d3d5c7a",
+  "ry_commit": "e654e59916d55549a46a66da2cb7078a60f0ae7d",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -33,7 +33,7 @@
       "repo": "rstudio/gt",
       "stars": 2161,
       "commit": "caa074012b9825ddd71996f40e309c00f7b9e180",
-      "diagnostics": 15
+      "diagnostics": 14
     },
     {
       "name": "blogdown",
@@ -47,7 +47,7 @@
       "repo": "rstudio/reticulate",
       "stars": 1759,
       "commit": "afe2221ded74a7f18ab3d5e89bb0a49b1f9d3114",
-      "diagnostics": 11
+      "diagnostics": 10
     },
     {
       "name": "broom",
@@ -138,7 +138,7 @@
       "repo": "rstudio/flexdashboard",
       "stars": 846,
       "commit": "8ae8623f2d9cdadb2316b953908bed0ba7bc3f87",
-      "diagnostics": 2
+      "diagnostics": 1
     },
     {
       "name": "pak",
@@ -229,7 +229,7 @@
       "repo": "r-lib/rlang",
       "stars": 581,
       "commit": "1d0e00659b628c07c93c362687550727597ef09f",
-      "diagnostics": 14
+      "diagnostics": 12
     },
     {
       "name": "torch",
@@ -1452,15 +1452,6 @@
       "audit_group": "manual-audit"
     },
     {
-      "package": "flexdashboard",
-      "code": "RY001",
-      "path": "R/flex_dashboard.R",
-      "line": 401,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "ggplot2",
       "code": "RY010",
       "path": "R/facet-.R",
@@ -1628,15 +1619,6 @@
       "path": "R/dt_summary.R",
       "line": 176,
       "column": 59,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "gt",
-      "code": "RY001",
-      "path": "R/fmt.R",
-      "line": 166,
-      "column": 7,
       "label": "false_positive",
       "audit_group": "type-narrowing"
     },
@@ -2560,15 +2542,6 @@
     },
     {
       "package": "reticulate",
-      "code": "RY001",
-      "path": "R/py_require.R",
-      "line": 579,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "reticulate",
       "code": "RY032",
       "path": "R/py_require.R",
       "line": 591,
@@ -2629,24 +2602,6 @@
       "column": 16,
       "label": "false_positive",
       "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "rlang",
-      "code": "RY001",
-      "path": "R/trace.R",
-      "line": 531,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "numeric-if-idiom"
-    },
-    {
-      "package": "rlang",
-      "code": "RY001",
-      "path": "R/trace.R",
-      "line": 540,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "numeric-if-idiom"
     },
     {
       "package": "rlang",
@@ -3829,12 +3784,12 @@
     }
   ],
   "classification": {
-    "false_positive": 288,
+    "false_positive": 283,
     "true_positive": 88
   },
   "audit_group_counts": {
     "reassign-scope": 2,
-    "type-narrowing": 32,
+    "type-narrowing": 29,
     "manual-audit": 136,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 1,
@@ -3844,7 +3799,7 @@
     "function-shadowing": 0,
     "upstream-package": 25,
     "ifelse-mode": 3,
-    "numeric-if-idiom": 3,
+    "numeric-if-idiom": 1,
     "namespace-on-load": 46,
     "ry109-self-defaults": 25,
     "ry111-constant-shadowing": 17,
@@ -3892,6 +3847,7 @@
     "Block-frame closures shadow base stubs (#718): a `name <- function(...)` bound inside an R6Class() member list, a local() block or a testthat block is now a lexical callable, as in a plain function body. Three reviewed false positives disappear, all dplyr function-shadowing (the #350 sites): R/data-mask.R:112:7, R/data-mask.R:117:7 and R/data-mask.R:131:7, RY091 `eval()` missing `expr` where the R6 method calls its own local `eval` closure. No identity is added and every true positive remains; the tidyverse ledger drops the same three identities (P4a).",
     "If-arm bindings merge wherever the if sits (#694): an `if` used as a value and an `if` ending a `{}` block or braced call argument now merge their arm bindings into the enclosing frame like a statement `if`, so later reads no longer report RY010. Four reviewed false positives disappear: blogdown R/serve.R:164:22 (reassign-scope) and R/serve.R:166:38 (type-narrowing), `proc` bound in the processx arm of `pid = if (is_psx <- ...) {...}` and read only under `if (is_psx && ...)`; dplyr R/summarise.R:342:34 (reassign-scope, the #350 site), `group_sizes` bound in both arms of the `if` ending withCallingHandlers({...}); and tinytex R/install.R:335:31 (type-narrowing), `tmp` bound in the `add` arm of `cmd = if (add) {...}` and read only under `if (add && ret == 0)`. No identity is added and every true positive remains; the tidyverse ledger drops the same dplyr identity.",
     "An opaque call head is not the same-named stub (#722): a parameter or unknown call result bound to a call head's name may be a function, and R's call lookup stops at it, so ry no longer applies the base/stats signature or return type there. Two reviewed false positives disappear: torch tests/testthat/test-save.R:415:30 and :416:30 (type-narrowing), `d$x` and `d$y` on `d <- dt()` where `dt <- dataset(...)` was typed as `stats::dt`. One reviewed true positive is dropped: pkgdown R/topics.R:271:16 RY091 (upstream-package), which read the default `error_call = error_call()` as rlang's error_call() missing `call`. R never reaches rlang::error_call there: the call head resolves to the formal itself, and forcing it errors with 'promise already under evaluation'. The real bug stays reported by RY109 at the same location, which this ledger keeps as a true positive. No identity is added; the tidyverse ledger is unchanged.",
-    "S3 dispatcher bindings (#348): a helper registered with registerS3method()/.S3method() inside a top-level evalqOnLoad() block, when it is the name's only global literal, now binds .Generic, .Class, .Method, and .Group like any S3 method. Two reviewed false positives disappear (manual-audit): lubridate R/ops-compare.r:20:64 and :55:14, RY010 on `.Generic` in comp_posix_date, which evalqOnLoad registers as the Date/POSIXt comparison method. No identity is added and every true positive remains."
+    "S3 dispatcher bindings (#348): a helper registered with registerS3method()/.S3method() inside a top-level evalqOnLoad() block, when it is the name's only global literal, now binds .Generic, .Class, .Method, and .Group like any S3 method. Two reviewed false positives disappear (manual-audit): lubridate R/ops-compare.r:20:64 and :55:14, RY010 on `.Generic` in comp_posix_date, which evalqOnLoad registers as the Date/POSIXt comparison method. No identity is added and every true positive remains.",
+    "Guards that exclude an omitted NULL default drop its type (#692): `if (is.null(x)) return(...)`, `!missing(x)`, every `!is.null()` conjunct of `&&`, `length(x) == 1` / `length(x) > 0`, and a `for` body over `x`. Five reviewed false positives disappear, all RY001 on a condition past `if (is.null(x)) return(...)` that read the omitted NULL default: flexdashboard R/flex_dashboard.R:401:13, gt R/fmt.R:166:7 and reticulate R/py_require.R:579:7 (type-narrowing), and rlang R/trace.R:531:7 and :540:7 (numeric-if-idiom). No identity is added and every true positive remains."
   ]
 }

@@ -4,8 +4,6 @@ R/env-special.R:220:16 RY010
 R/trace.R:1125:8 RY010
 R/trace.R:1137:16 RY010
 R/trace.R:1139:16 RY010
-R/trace.R:531:7 RY001
-R/trace.R:540:7 RY001
 tests/testthat/test-cnd-entrace.R:284:28 RY040
 tests/testthat/test-cnd-message.R:481:8 RY040
 tests/testthat/test-nse-defuse.R:329:22 RY109

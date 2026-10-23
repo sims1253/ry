@@ -1,7 +1,6 @@
 R/cols_align.R:197:14 RY109
 R/cols_align.R:198:17 RY109
 R/dt_summary.R:176:59 RY010
-R/fmt.R:166:7 RY001
 R/format_data.R:4057:3 RY106
 R/render_as_i_html.R:922:7 RY032
 R/utils_render_grid.R:421:37 RY109

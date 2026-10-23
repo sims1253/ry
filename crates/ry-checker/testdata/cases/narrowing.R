@@ -964,3 +964,58 @@ check_skipped <- function(strict, kind = "warning") {
   if (is.null(kind) || kind == "ignore") return(NULL)
   kind
 }
+
+## case: a user predicate on a specialised default leaves its arm unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel <- function(dims = 2) {
+  if (is_tensor(dims)) dims$numel()
+}
+numel()
+
+## case: a compound inherits guard on a specialised default leaves its arm unknown
+# no-diag
+lambda_of <- function(model = "ZZZ", lambda = NULL) {
+  if (inherits(model, "ets") && is.null(lambda)) model$lambda
+}
+lambda_of()
+
+## case: a names membership guard on a specialised default leaves its arm unknown
+# no-diag
+values_of <- function(sel = FALSE, width = "\\linewidth") {
+  if ("values" %in% names(sel)) sel$values
+  if (sum(c("pt", "lw") %in% colnames(width)) > 0) width$pt
+}
+values_of()
+
+## case: the right of `&&` after a user predicate on a specialised default is unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel_big <- function(dims = 2) {
+  if (is_tensor(dims) && dims$numel() > 1) 1L
+}
+numel_big()
+
+## case: a negated user predicate stop guard leaves the continuation unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel_checked <- function(dims = 2) {
+  if (!is_tensor(dims)) stop("`dims` must be a tensor")
+  dims$numel()
+}
+numel_checked()
+
+## case: the arm a failing user predicate selects keeps the specialised default
+# expect: RY061
+is_tensor <- function(x) inherits(x, "tensor")
+numel_else <- function(dims = 2) {
+  if (is_tensor(dims)) 1L else dims$size
+}
+numel_else()
+
+## case: a guard that does not read the specialised default keeps its type
+# expect: RY061
+numel_verbose <- function(dims = 2, verbose = TRUE) {
+  if (verbose) dims$numel()
+}
+numel_verbose()

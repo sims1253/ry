@@ -80,7 +80,10 @@ f()
 f(NULL)
 
 ## case: a length guard in a disjunction does not narrow the NULL default
-# expect: RY001, RY001
+# expect: RY001
+# The second arm needs a passing test of `x` that ry cannot decide, and
+# the NULL default fails it (`FALSE || is.na(NULL)` is NA), so `x` is
+# unknown there (#710).
 f <- function(x = NULL, verbose = FALSE) {
   if (length(x) > 0 || verbose) {
     if (x) 1

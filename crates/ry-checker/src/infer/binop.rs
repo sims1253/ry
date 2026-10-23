@@ -468,7 +468,7 @@ impl Checker {
         self.check_class_equality_operand(lhs, scope);
         let lhs_loop_vector = self.loop_vector_operand(lhs, scope);
         let lt = self.infer_boolean_operand(lhs, scope);
-        let narrowing = self.extract_type_narrowing(lhs, scope);
+        let narrowing = self.extract_branch_narrowing(lhs, scope);
         let rhs_parameter_vector = self.short_circuit_parameter_vector(op, lhs, rhs, scope);
         let mut rhs_loop_vector = false;
         let rt = match op {

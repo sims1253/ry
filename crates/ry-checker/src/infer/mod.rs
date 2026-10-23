@@ -904,7 +904,7 @@ impl Checker {
                     vacuous::stmt_span(s),
                     scope,
                 );
-                let narrowing = self.extract_type_narrowing(cond, scope);
+                let narrowing = self.extract_branch_narrowing(cond, scope);
                 let literal_cond = match cond {
                     Expr::Logical(value, _) => Some(*value),
                     _ => None,

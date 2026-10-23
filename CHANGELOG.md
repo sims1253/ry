@@ -217,6 +217,10 @@ All notable changes to ry are documented in this file.
 - Apply `--typeshed` stubs' `captures_promise` arguments when deciding whether
   a project function captures its formal, so a wrapper around a stubbed
   capture no longer reports its caller's name as RY010 (#776).
+- Stop applying an omitted default's type in the arm selected by a passing
+  test of that parameter that ry cannot decide, such as `is_tensor(dims)`,
+  `inherits(model, "ets") && is.null(lambda)` or `"values" %in% names(sel)`
+  (#710).
 
 ## [0.11.0] - 2026-09-22
 

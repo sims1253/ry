@@ -1,6 +1,8 @@
 //! Type facts established by guards and assertions.
 
 use super::*;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
+use std::ops::ControlFlow;
 
 /// A type refinement extracted from an `if` condition. Represents the
 /// information we can glean from a type predicate call like
@@ -983,6 +985,95 @@ impl Checker {
         Narrowing::Positive {
             var: var.clone(),
             target: guard_target(json_rtype_to_rtype(&predicate.target)),
+        }
+    }
+
+    /// The narrowing for a condition that selects code: an `if` test or the
+    /// left of `&&`/`||`. A defaulted parameter's type describes only the
+    /// omitted-argument call shape
+    /// (`diagnostic_parameter_type`). A passing test that reads it but
+    /// proves nothing about it (`is_tensor(dims)`, `"pt" %in%
+    /// colnames(width)`) may be exactly the test that default fails, so the
+    /// arm it selects sees what a supplied argument would (#710).
+    pub(crate) fn extract_branch_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
+        let narrowing = self.extract_type_narrowing(cond, scope);
+        if scope.default_parameter_bindings.is_empty() {
+            return narrowing;
+        }
+        let mut undecided: Vec<String> = Vec::new();
+        let _ = walk_expr(cond, READS, |node, _| {
+            if let AstNode::Expr(Expr::Ident { name, .. }) = node
+                && scope.is_default_parameter(name)
+                && scope.get(name).is_some_and(|t| !t.mode.is_unknown())
+                && !undecided.contains(name)
+                && !narrowing.mentions_any(&HashSet::from([name.clone()]))
+            {
+                undecided.push(name.clone());
+            }
+            ControlFlow::<(), _>::Continue(Descend::Into)
+        });
+        let facts = |truth: bool| -> Vec<Narrowing> {
+            undecided
+                .iter()
+                .filter(|name| passing_test_reads(cond, name, truth))
+                .map(|name| Narrowing::Supplied { var: name.clone() })
+                .collect()
+        };
+        let (on_true, on_false) = (facts(true), facts(false));
+        if on_true.is_empty() && on_false.is_empty() {
+            return narrowing;
+        }
+        Narrowing::Compound {
+            base: Box::new(narrowing),
+            on_true,
+            on_false,
+        }
+    }
+}
+
+/// Evaluated reads only: no assignment targets, field names, or closures.
+const READS: Walk = Walk {
+    assign_targets: false,
+    assign_operands: false,
+    dollar_args: false,
+    fn_bodies: false,
+    ..Walk::ALL
+};
+
+/// Whether `cond` evaluating to `truth` needs a passing test that reads
+/// `name`. A logical operator needs one from either operand on its
+/// short-circuit path (`&&` true, `||` false) and from both otherwise;
+/// `!` flips the path.
+fn passing_test_reads(cond: &Expr, name: &str, truth: bool) -> bool {
+    match cond {
+        Expr::BinOp {
+            op: op @ (BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr),
+            lhs,
+            rhs,
+            ..
+        } => {
+            let lhs = passing_test_reads(lhs, name, truth);
+            let rhs = passing_test_reads(rhs, name, truth);
+            if matches!(op, BinOpKind::And | BinOpKind::AndAnd) == truth {
+                lhs || rhs
+            } else {
+                lhs && rhs
+            }
+        }
+        Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } => passing_test_reads(expr, name, !truth),
+        _ => {
+            truth
+                && walk_expr(cond, READS, |node, _| match node {
+                    AstNode::Expr(Expr::Ident { name: read, .. }) if read == name => {
+                        ControlFlow::Break(())
+                    }
+                    _ => ControlFlow::Continue(Descend::Into),
+                })
+                .is_break()
         }
     }
 }

@@ -715,11 +715,8 @@ impl Checker {
                 // `has_x <- !is.null(x)` lets `if (has_x)` narrow like the
                 // predicate until either name is written.
                 let condition_alias = matches!(target, Expr::Ident { .. })
-                    .then(|| extract_builtin_type_narrowing(value))
-                    .filter(|narrowing| {
-                        !matches!(narrowing, Narrowing::None)
-                            && ops_chooser::base_assignment(self, target, value, scope)
-                    });
+                    && !matches!(extract_builtin_type_narrowing(value), Narrowing::None)
+                    && ops_chooser::base_assignment(self, target, value, scope);
                 let function_alias = self.function_alias_target(value, scope);
                 // A plain identifier assignment copies the current value,
                 // including a proven vector alternative retained after a
@@ -770,10 +767,7 @@ impl Checker {
                     if let Some(value) = known_string {
                         scope.set_known_string(name, value);
                     }
-                    // A predicate on the alias itself would describe its old value.
-                    if let Some(narrowing) = &condition_alias
-                        && !narrowing.mentions(name)
-                    {
+                    if condition_alias {
                         scope.set_condition_alias(name, value);
                     }
                     if self.capture_references {

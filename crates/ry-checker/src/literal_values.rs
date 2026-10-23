@@ -24,7 +24,8 @@ impl Scope {
     /// narrow like `if (cond)`. The alias lives until `name` or a name that
     /// `cond` reads is written (directly or by a call's known writes), a call
     /// may rebind anything, effects become unknown, branches merge, or a loop
-    /// starts or ends.
+    /// starts or ends. A `cond` that reads `name` describes its old value and
+    /// is not recorded.
     pub(crate) fn set_condition_alias(&mut self, name: &str, cond: &Expr) {
         let mut reads = Vec::new();
         let _ = walk_expr(cond, Walk::ALL, |node, _| {
@@ -33,11 +34,14 @@ impl Scope {
             }
             ControlFlow::<(), _>::Continue(Descend::Into)
         });
+        let name = semantic_argument_name(name).to_string();
+        if reads.contains(&name) {
+            return;
+        }
         let alias = Arc::new(ConditionAlias {
             cond: cond.clone(),
             reads,
         });
-        let name = semantic_argument_name(name).to_string();
         let previous = self.condition_aliases.insert(name.clone(), alias);
         if self.journal.depth > 0 {
             self.journal.undo.push(Undo::ConditionAlias(name, previous));
@@ -130,5 +134,27 @@ impl Scope {
         } else {
             self.known_strings.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expr(src: &str) -> Expr {
+        let file = ry_core::RParser::new().unwrap().parse("a.R", src).unwrap();
+        let Some(Stmt::Expr(expr)) = file.stmts.into_iter().next() else {
+            panic!("expected an expression");
+        };
+        expr
+    }
+
+    #[test]
+    fn an_alias_that_reads_its_own_name_is_not_recorded() {
+        let mut scope = Scope::default();
+        scope.set_condition_alias("ok", &expr("is.na(x) && identical(y, ok)"));
+        assert!(scope.condition_alias("ok").is_none());
+        scope.set_condition_alias("has_x", &expr("!is.null(x)"));
+        assert!(scope.condition_alias("has_x").is_some());
     }
 }

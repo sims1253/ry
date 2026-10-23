@@ -1107,6 +1107,13 @@ impl Checker {
         // captured from enclosing frames keep their own origin rule.
         fn_scope.uncertainty.unseen_rebinds = false;
         self.start_reference_scope(&mut fn_scope, span);
+        // A `<<-` writer anywhere in the enclosing body may have run
+        // before this body does, whatever the definition order (#706).
+        if let Some(writes) = self.superassigned_captures.last() {
+            for name in writes {
+                fn_scope.insert(name.clone(), RType::unknown());
+            }
+        }
         if let Some(captures) = self.deferred_captures.last() {
             for capture in captures {
                 if fn_scope.get(capture).is_none() {
@@ -1204,11 +1211,16 @@ impl Checker {
             }
         }
         self.deferred_captures.push(assigned);
+        // Names outside this frame were already widened at its entry, and
+        // nested closures inherit them through `fn_scope`.
+        self.superassigned_captures
+            .push(index::nested_superassignment_writes(body));
         self.push_enclosing_formals(params, span);
         self.check_discarded_branch_results(body);
         self.walk_block(body, &mut fn_scope, None);
         self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
+        self.superassigned_captures.pop();
         self.enclosing_formals.pop();
         self.frame_writes.pop();
         self.deferred_captures.pop();

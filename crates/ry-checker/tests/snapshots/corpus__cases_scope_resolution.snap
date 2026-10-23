@@ -354,3 +354,5 @@ expression: rows
       line: 774
       message: "column `nv` not found in data frame schema; available columns: nvalid, k, z"
       severity: error
+- case: a closure formal named c does not void a stopifnot scalar fact
+  diagnostics: []

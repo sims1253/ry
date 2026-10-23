@@ -208,6 +208,58 @@ fn a_masked_registration_helper_leaves_every_generic_unknown() {
 }
 
 #[test]
+fn only_a_helper_binding_a_registration_can_see_masks_it() {
+    // Each of these reaches a registration's lookup of the helper.
+    for masking in [
+        "f <- function() signature <<- function(...) NULL\n",
+        "f <- function(x) assign(\"c\", function(...) NULL)\n",
+        "register <- function(signature) setMethod(\"g\", signature(\"A\", \"logical\"), function(x, y) NULL)\n",
+        "register <- function() {\n  c <- function(...) \"A\"\n  setMethod(\"g\", c(\"A\", \"logical\"), function(x, y) NULL)\n}\n",
+        "register <- function() {\n  c <- function(...) \"A\"\n  methods::setMethod(\"g\", c(\"A\", \"logical\"), function(x, y) NULL)\n}\n",
+        // An installer may write the binding into another frame.
+        "f <- function() evalq(signature <- function(...) NULL, globalenv())\n",
+        "f <- function() eval.parent(quote(signature <- function(...) NULL))\n",
+        "f <- function() local({ signature <- function(...) NULL }, envir = globalenv())\n",
+    ] {
+        let methods = format!("{masking}{CHR_NUM}");
+        assert_eq!(
+            selected(&methods, "g(new(\"A\"), 2)").1,
+            Mode::Opaque,
+            "{masking}"
+        );
+    }
+    // A formal or local of a function that registers nothing lives in a
+    // frame no registration reads (#780).
+    for unrelated in [
+        "f <- function(c) c\n",
+        "f <- function(x) tryCatch(x, error = function(c) FALSE)\n",
+        "f <- function(x) {\n  c <- 1\n  for (signature in x) NULL\n  x\n}\n",
+    ] {
+        let methods = format!("{unrelated}{CHR_NUM}");
+        assert_eq!(
+            selected(&methods, "g(new(\"A\"), 2)").1,
+            Mode::Integer,
+            "{unrelated}"
+        );
+    }
+}
+
+#[test]
+fn a_generic_formal_masking_standard_generic_leaves_its_calls_unknown() {
+    // The generic calls its own `standardGeneric` default and returns text.
+    let source = "setClass(\"A\", representation(v = \"numeric\"))\n\
+        setGeneric(\"g\", function(x, standardGeneric = function(...) \"text\") standardGeneric(\"g\"), signature = \"x\")\n\
+        setMethod(\"g\", \"A\", function(x, standardGeneric) 1L)\n\
+        r <- g(new(\"A\"))\n";
+    let (_, scope) = check_with_scope(source);
+    assert_eq!(scope.get("r").unwrap().mode, Mode::Opaque);
+    // Control: without the masking formal the same shape selects the method.
+    let unmasked = source.replace(", standardGeneric = function(...) \"text\"", "");
+    let (_, scope) = check_with_scope(&unmasked);
+    assert_eq!(scope.get("r").unwrap().mode, Mode::Integer);
+}
+
+#[test]
 fn a_masked_helper_leaves_a_registered_generic_unknown_for_any_class() {
     // The masked `signature("Q")` registers `length` for `A` in R.
     let source = "setClass(\"A\", representation(v = \"numeric\"))\n\

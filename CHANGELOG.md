@@ -156,6 +156,10 @@ All notable changes to ry are documented in this file.
   positives in ade4 (#715).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Treat a formal or local named `c`, `signature`, `setMethod`,
+  `setGeneric`, or `standardGeneric` as masking S4 registration only in a
+  function that registers, so `error = function(c)` elsewhere no longer
+  turns off every S4 method and scalar fact in the project (#780).
 - Check files with thousands of top-level functions in linear time. torch's
   generated `RcppExports.R` took 22 s alone and now takes under 2 s (#697).
 - Bind `.Generic`, `.Class`, `.Method`, and `.Group` in S3 methods named for

@@ -2282,3 +2282,53 @@ fn on_load_block_assignments_are_package_bindings() {
             .map(|name| format!("variable `{name}` is not bound in this scope")),
     );
 }
+
+// RY010 messages for `use.R` after checking `module.R` beside it.
+fn unbound_beside_module(module: &str, use_src: &str) -> Vec<String> {
+    let mut project = Project::new();
+    project.add_file("module.R".to_string(), parse("module.R", module));
+    project.add_file("use.R".to_string(), parse("use.R", use_src));
+    project
+        .check()
+        .into_iter()
+        .filter(|(path, _)| path == "use.R")
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .filter(|diagnostic| diagnostic.code == "RY010")
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+#[test]
+fn rcpp_load_module_binds_its_objects_in_the_namespace() {
+    // `Rcpp::loadModule(module, what)` assigns module objects into the
+    // package namespace (#704). `what = TRUE` binds every object the C++
+    // module declares, which ry cannot list; a literal `what` binds exactly
+    // those names, under their `names()` where given.
+    let unbound = |name: &str| format!("variable `{name}` is not bound in this scope");
+    let reads = "new_raster <- function() SpatRaster$new()\n";
+    // A function's own variable read before it is bound stays unbound.
+    let read_early = "g <- function(v) {\n  head <- v[seq_len(n)]\n  n <- 2\n  head\n}\n";
+    for module in [
+        "loadModule(\"spat\", TRUE)\n",
+        "Rcpp::loadModule(\"spat\", what = TRUE)\n",
+        "f <- function(what) loadModule(\"spat\", what = what)\n",
+    ] {
+        assert_eq!(unbound_beside_module(module, reads), Vec::<String>::new());
+        assert_eq!(unbound_beside_module(module, read_early), [unbound("n")]);
+    }
+    assert_eq!(
+        unbound_beside_module(
+            "loadModule(\"spat\", c(\"SpatRaster\", Vec = \"SpatVector\"))\n",
+            "reads <- function() list(SpatRaster, Vec, SpatVector, SpatRastr)\n",
+        ),
+        ["SpatVector", "SpatRastr"].map(unbound),
+    );
+    // Without `what`, only the module itself loads; without loadModule,
+    // nothing.
+    for module in ["loadModule(\"spat\")\n", "x <- 1\n"] {
+        assert_eq!(
+            unbound_beside_module(module, reads),
+            [unbound("SpatRaster")]
+        );
+    }
+}

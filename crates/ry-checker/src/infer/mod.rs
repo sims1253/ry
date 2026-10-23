@@ -3369,7 +3369,20 @@ impl Checker {
                 if name.starts_with('`') || name.contains('%') || is_operator_symbol(name) {
                     return RType::unknown();
                 }
-                if scope.data_mask_unknown || scope.search_path_unknown {
+                // `loadModule(module, TRUE)` binds names ry cannot list
+                // in the namespace (#704). A name an enclosing function
+                // assigns itself is that function's variable, read before
+                // it is bound.
+                if scope.data_mask_unknown
+                    || scope.search_path_unknown
+                    || (self
+                        .known_vars
+                        .contains(ry_core::SERIALIZED_BINDINGS_UNENUMERABLE)
+                        && !self
+                            .frame_writes
+                            .iter()
+                            .any(|writes| writes.names.contains(name)))
+                {
                     return RType::unknown();
                 }
                 unresolved = true;

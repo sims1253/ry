@@ -239,6 +239,30 @@ fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
     matches!(func, Expr::Ident { name, .. } if strip_package(semantic_argument_name(name), "base") == Some(bare))
 }
 
+/// The names `Rcpp::loadModule(module, what)` assigns in the package
+/// namespace (#704): each module object `what` names, under its `names()`
+/// entry where one is given. `None` when ry cannot list them: `what = TRUE`
+/// binds every object the C++ module declares, and a computed `what` may
+/// name any of them.
+fn rcpp_module_bindings(args: &[Arg]) -> Option<Vec<String>> {
+    let matched = match_arguments(&["module", "what", "loadNow", "env"], args);
+    let Some(what) = matched.arg_for_param(1).map(|index| &args[index]) else {
+        return Some(Vec::new());
+    };
+    match &what.value {
+        Expr::String(name, _) => Some(vec![name.clone()]),
+        Expr::Call { func, args, .. } if is_c_call_head(func) => args
+            .iter()
+            .map(|element| match (&element.name, &element.value) {
+                (Some(alias), Expr::String(..)) => Some(semantic_argument_name(alias).to_string()),
+                (None, Expr::String(name, _)) => Some(name.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
 /// The argument named `formal`, else the first positional one.
 fn named_or_first_positional<'a>(args: &'a [Arg], formal: &str) -> Option<&'a Arg> {
     args.iter()
@@ -739,6 +763,22 @@ impl Checker {
                                 let table = Arc::make_mut(&mut self.fn_table);
                                 table.note_bound_name(&declared);
                                 table.known_vars.insert(declared);
+                            }
+                        }
+                    }
+                    if matches!(name.as_str(), "loadModule" | "Rcpp::loadModule") {
+                        let table = Arc::make_mut(&mut self.fn_table);
+                        match rcpp_module_bindings(args) {
+                            Some(names) => {
+                                for name in names {
+                                    table.note_bound_name(&name);
+                                    table.known_vars.insert(name);
+                                }
+                            }
+                            None => {
+                                table
+                                    .known_vars
+                                    .insert(ry_core::SERIALIZED_BINDINGS_UNENUMERABLE.to_string());
                             }
                         }
                     }

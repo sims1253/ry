@@ -190,6 +190,9 @@ All notable changes to ry are documented in this file.
 - Skip a `missing(col)` check when deciding whether a function defuses `col`,
   so `if (missing(col)) stop(); dplyr::select(data, {{ col }})` no longer
   makes callers' bare column names RY010 (#688).
+- Treat the objects `Rcpp::loadModule()` installs as package bindings: a
+  literal `what` binds exactly those names, and `what = TRUE` stops RY010
+  for names a function does not assign itself (#704).
 
 ## [0.11.0] - 2026-09-22
 

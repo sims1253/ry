@@ -774,7 +774,7 @@ impl Checker {
                     if let Some(narrowing) = &condition_alias
                         && !narrowing.mentions(name)
                     {
-                        scope.set_condition_alias(name, Arc::new(value.clone()));
+                        scope.set_condition_alias(name, value);
                     }
                     if self.capture_references {
                         self.install_reference_definition(

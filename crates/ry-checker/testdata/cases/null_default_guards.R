@@ -120,3 +120,26 @@ f <- function(x = NULL, y = NULL) {
   }
 }
 f()
+
+## case: a boolean alias stops narrowing after any write it may depend on
+# expect: RY001, RY001, RY001
+# `ok` also tests `y`; `cb` may run `assign("has_x", TRUE, envir =
+# parent.frame())`; a backticked target writes the same `x`.
+f <- function(x = NULL, y = NULL, cb = function() NULL) {
+  ok <- !is.null(x) && is.numeric(y)
+  y <- NULL
+  if (ok) {
+    if (y > 0) 1
+  }
+  has_x <- !is.null(x)
+  cb()
+  if (has_x) {
+    if (x > 0) 1
+  }
+  has_x <- !is.null(x)
+  `x` <- NULL
+  if (`has_x`) {
+    if (x > 0) 1
+  }
+}
+f()

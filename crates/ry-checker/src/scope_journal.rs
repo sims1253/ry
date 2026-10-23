@@ -184,8 +184,8 @@ pub(crate) enum MarkerKind {
 pub(crate) enum Undo {
     KnownString(String, Option<Arc<str>>),
     KnownStrings(FxMap<String, Arc<str>>),
-    ConditionAlias(String, Option<Arc<Expr>>),
-    ConditionAliases(FxMap<String, Arc<Expr>>),
+    ConditionAlias(String, Option<Arc<crate::literal_values::ConditionAlias>>),
+    ConditionAliases(FxMap<String, Arc<crate::literal_values::ConditionAlias>>),
     Assignment(String, AssignmentUndo),
     Binding(String, BindingState),
     Marker(MarkerKind, String, bool),
@@ -861,13 +861,14 @@ mod tests {
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);
         assert_eq!(
-            left.condition_aliases
-                .keys()
-                .collect::<std::collections::BTreeSet<_>>(),
-            right
-                .condition_aliases
-                .keys()
-                .collect::<std::collections::BTreeSet<_>>()
+            format!(
+                "{:?}",
+                left.condition_aliases.iter().collect::<BTreeMap<_, _>>()
+            ),
+            format!(
+                "{:?}",
+                right.condition_aliases.iter().collect::<BTreeMap<_, _>>()
+            )
         );
         assert_eq!(
             left.uncertainty.literal_values,

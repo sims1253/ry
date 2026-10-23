@@ -479,7 +479,7 @@ pub struct Scope {
     pub(crate) known_strings: FxMap<String, Arc<str>>,
     /// Locals bound to a guard predicate (`has_x <- !is.null(x)`), keyed by
     /// the local. See `Scope::set_condition_alias`.
-    pub(crate) condition_aliases: FxMap<String, Arc<Expr>>,
+    pub(crate) condition_aliases: FxMap<String, Arc<literal_values::ConditionAlias>>,
     pub(crate) literal_functions: FxMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: Bindings,
@@ -728,7 +728,8 @@ impl Scope {
 
     fn insert_value(&mut self, name: String, t: RType) {
         self.clear_known_string(&name);
-        self.retain_condition_aliases(|alias| alias != name);
+        let written = semantic_argument_name(&name);
+        self.retain_condition_aliases(|read| read != written);
         if !self.uncertainty.escaped_slot_names {
             self.uncertainty.escaped_slot_names =
                 infer::custom_operator::escaped_name_may_mask_slot(&name);

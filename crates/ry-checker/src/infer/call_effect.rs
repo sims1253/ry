@@ -90,12 +90,17 @@ impl Checker {
                 CallEffect::None | CallEffect::RunsCallerCode => {}
             }
         }
+        // A condition alias dies with any binding the call may rebind.
+        match effect {
+            CallEffect::None | CallEffect::RunsCallerCode => {}
+            CallEffect::Writes(writes) if !writes.opaque => {
+                scope.retain_condition_aliases(|name| !writes.names.contains(name));
+            }
+            _ => scope.clear_condition_aliases(),
+        }
         match effect {
             CallEffect::None => {}
             CallEffect::Writes(writes) => {
-                scope.retain_condition_aliases(|name| {
-                    !writes.names.contains(semantic_argument_name(name))
-                });
                 if writes.opaque {
                     self.invalidate_declaration_identities(scope);
                 }

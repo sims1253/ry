@@ -2,27 +2,50 @@
 //! boolean guard aliases.
 use super::*;
 use crate::scope_journal::Undo;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
+use std::ops::ControlFlow;
+
+/// A local bound to a guard predicate: the predicate, and every name it
+/// reads (each in `semantic_argument_name` form).
+#[derive(Debug)]
+pub(crate) struct ConditionAlias {
+    cond: Expr,
+    reads: Vec<String>,
+}
 
 impl Scope {
-    pub(crate) fn condition_alias(&self, name: &str) -> Option<&Arc<Expr>> {
-        self.condition_aliases.get(name)
+    pub(crate) fn condition_alias(&self, name: &str) -> Option<&Expr> {
+        self.condition_aliases
+            .get(semantic_argument_name(name))
+            .map(|alias| &alias.cond)
     }
 
     /// `name <- cond`, where `cond` is a guard predicate, so `if (name)` may
     /// narrow like `if (cond)`. The alias lives until `name` or a name that
-    /// `cond` narrows is written (directly or by a call's known writes),
-    /// effects become unknown, branches merge, or a loop starts or ends.
-    pub(crate) fn set_condition_alias(&mut self, name: &str, cond: Arc<Expr>) {
-        let previous = self.condition_aliases.insert(name.to_string(), cond);
+    /// `cond` reads is written (directly or by a call's known writes), a call
+    /// may rebind anything, effects become unknown, branches merge, or a loop
+    /// starts or ends.
+    pub(crate) fn set_condition_alias(&mut self, name: &str, cond: &Expr) {
+        let mut reads = Vec::new();
+        let _ = walk_expr(cond, Walk::ALL, |node, _| {
+            if let AstNode::Expr(Expr::Ident { name, .. }) = node {
+                reads.push(semantic_argument_name(name).to_string());
+            }
+            ControlFlow::<(), _>::Continue(Descend::Into)
+        });
+        let alias = Arc::new(ConditionAlias {
+            cond: cond.clone(),
+            reads,
+        });
+        let name = semantic_argument_name(name).to_string();
+        let previous = self.condition_aliases.insert(name.clone(), alias);
         if self.journal.depth > 0 {
-            self.journal
-                .undo
-                .push(Undo::ConditionAlias(name.to_string(), previous));
+            self.journal.undo.push(Undo::ConditionAlias(name, previous));
         }
     }
 
-    /// Drop each alias whose own name, or a name its predicate narrows,
-    /// `keep` rejects.
+    /// Drop each alias whose own name, or a name its predicate reads, `keep`
+    /// rejects. Names reach `keep` in their `semantic_argument_name` form.
     pub(crate) fn retain_condition_aliases(&mut self, keep: impl Fn(&str) -> bool) {
         if self.condition_aliases.is_empty() {
             return;
@@ -30,10 +53,7 @@ impl Scope {
         let lost: Vec<String> = self
             .condition_aliases
             .iter()
-            .filter(|(name, cond)| {
-                !keep(name)
-                    || infer::extract_builtin_type_narrowing(cond).mentions_where(&|var| !keep(var))
-            })
+            .filter(|(name, alias)| !keep(name) || alias.reads.iter().any(|read| !keep(read)))
             .map(|(name, _)| name.clone())
             .collect();
         for name in lost {

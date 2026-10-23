@@ -1014,25 +1014,26 @@ impl Checker {
     /// (#710).
     pub(crate) fn extract_branch_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
         // `if (has_x)` / `if (!has_x)` test the predicate `has_x` holds.
-        let aliased = match cond {
-            Expr::Ident { name, .. } => scope.condition_alias(name).map(|alias| (**alias).clone()),
+        let negated;
+        let cond = match cond {
+            Expr::Ident { name, .. } => scope.condition_alias(name).unwrap_or(cond),
             Expr::UnaryOp {
                 op: UnaryOpKind::Not,
                 expr,
                 span,
-            } => match expr.as_ref() {
-                Expr::Ident { name, .. } => {
-                    scope.condition_alias(name).map(|alias| Expr::UnaryOp {
+            } => match ident_name(expr).and_then(|name| scope.condition_alias(name)) {
+                Some(alias) => {
+                    negated = Expr::UnaryOp {
                         op: UnaryOpKind::Not,
-                        expr: Box::new((**alias).clone()),
+                        expr: Box::new(alias.clone()),
                         span: *span,
-                    })
+                    };
+                    &negated
                 }
-                _ => None,
+                None => cond,
             },
-            _ => None,
+            _ => cond,
         };
-        let cond = aliased.as_ref().unwrap_or(cond);
         let narrowing = self.extract_type_narrowing(cond, scope);
         if scope.default_parameter_bindings.is_empty() {
             return narrowing;

@@ -2365,7 +2365,8 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
 fn user_stub_captures_reach_collected_wrappers() {
     // A `--typeshed` stub's `captures_promise` formal must reach collection
     // (#776): a wrapper forwarding its formal there quotes it, so the
-    // caller's name is no read. Swapping the stubs re-collects.
+    // caller's name is no read. A stub that drops an embedded capture makes
+    // the wrapper force its formal again. Swapping the stubs re-collects.
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("capturepkg.json"),
@@ -2383,7 +2384,29 @@ fn user_stub_captures_reach_collected_wrappers() {
         }"#,
     )
     .unwrap();
+    // A user stub replaces its embedded package wholesale, so this `rlang`
+    // drops the embedded `caller_arg()` capture.
+    std::fs::write(
+        dir.path().join("rlang.json"),
+        r#"{
+            "schema_version": "1",
+            "package": "rlang",
+            "version": "test",
+            "functions": {
+                "caller_arg": {
+                    "params": [{"name": "arg", "required": true}],
+                    "return": {"mode": "character", "length": "1"}
+                }
+            }
+        }"#,
+    )
+    .unwrap();
     let stubs = Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap());
+    let overridden = "library(rlang)\n\
+                      qualified_rlang <- function(x) rlang::caller_arg(x)\n\
+                      bare_rlang <- function(x) caller_arg(x)\n\
+                      qualified_rlang(zz_rlang_qualified)\n\
+                      bare_rlang(zz_rlang_bare)\n";
     let qualified = "label <- function(x) capturepkg::label_of(x)\n\
                      label(zz_wrapper)\n\
                      capturepkg::label_of(zz_direct)\n";
@@ -2396,6 +2419,7 @@ fn user_stub_captures_reach_collected_wrappers() {
     let mut project = Project::new();
     project.add_file("qualified.R".to_string(), parse("qualified.R", qualified));
     project.add_file("attached.R".to_string(), parse("attached.R", attached));
+    project.add_file("rlang.R".to_string(), parse("rlang.R", overridden));
     let mut unbound = |stubs: &Arc<BTreeMap<String, Typeshed>>| -> Vec<(String, String)> {
         project.set_user_stubs(Arc::clone(stubs));
         project
@@ -2418,6 +2442,13 @@ fn user_stub_captures_reach_collected_wrappers() {
     ];
     let none = Arc::new(BTreeMap::new());
     assert_eq!(unbound(&none), embedded);
-    assert_eq!(unbound(&stubs), vec![finding("attached.R", "zz_plain")]);
+    assert_eq!(
+        unbound(&stubs),
+        vec![
+            finding("attached.R", "zz_plain"),
+            finding("rlang.R", "zz_rlang_qualified"),
+            finding("rlang.R", "zz_rlang_bare"),
+        ]
+    );
     assert_eq!(unbound(&none), embedded);
 }

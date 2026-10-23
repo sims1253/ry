@@ -564,7 +564,12 @@ impl Checker {
                     .params
                     .iter()
                     .any(|param| param.name == parameter && !param.defused)
-                && collect::parameter_is_defused(&function.body, &parameter, &skipped)
+                && collect::parameter_is_defused(
+                    &function.body,
+                    &parameter,
+                    &skipped,
+                    &self.user_stubs,
+                )
             {
                 inherited.push((caller, parameter, false, true, None));
             }

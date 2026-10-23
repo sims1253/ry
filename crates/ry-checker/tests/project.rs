@@ -2360,3 +2360,64 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
         );
     }
 }
+
+#[test]
+fn user_stub_captures_reach_collected_wrappers() {
+    // A `--typeshed` stub's `captures_promise` formal must reach collection
+    // (#776): a wrapper forwarding its formal there quotes it, so the
+    // caller's name is no read. Swapping the stubs re-collects.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("capturepkg.json"),
+        r#"{
+            "schema_version": "1",
+            "package": "capturepkg",
+            "version": "test",
+            "functions": {
+                "label_of": {
+                    "params": [{"name": "arg", "required": true}],
+                    "eval": {"arg": "captures_promise"},
+                    "return": {"mode": "character", "length": "1"}
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let stubs = Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap());
+    let qualified = "label <- function(x) capturepkg::label_of(x)\n\
+                     label(zz_wrapper)\n\
+                     capturepkg::label_of(zz_direct)\n";
+    // Attaching a package without a stub silences the whole file.
+    let attached = "library(capturepkg)\n\
+                    bare <- function(x) label_of(x)\n\
+                    bare(zz_bare)\n\
+                    plain <- function(x) x\n\
+                    plain(zz_plain)\n";
+    let mut project = Project::new();
+    project.add_file("qualified.R".to_string(), parse("qualified.R", qualified));
+    project.add_file("attached.R".to_string(), parse("attached.R", attached));
+    let mut unbound = |stubs: &Arc<BTreeMap<String, Typeshed>>| -> Vec<(String, String)> {
+        project.set_user_stubs(Arc::clone(stubs));
+        project
+            .check_incremental()
+            .into_iter()
+            .flat_map(|(path, diagnostics)| diagnostics.into_iter().map(move |d| (path.clone(), d)))
+            .filter(|(_, diagnostic)| diagnostic.code == "RY010")
+            .map(|(path, diagnostic)| (path, diagnostic.message))
+            .collect()
+    };
+    let finding = |path: &str, name: &str| {
+        (
+            path.to_string(),
+            format!("variable `{name}` is not bound in this scope"),
+        )
+    };
+    let embedded = vec![
+        finding("qualified.R", "zz_wrapper"),
+        finding("qualified.R", "zz_direct"),
+    ];
+    let none = Arc::new(BTreeMap::new());
+    assert_eq!(unbound(&none), embedded);
+    assert_eq!(unbound(&stubs), vec![finding("attached.R", "zz_plain")]);
+    assert_eq!(unbound(&none), embedded);
+}

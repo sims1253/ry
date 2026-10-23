@@ -112,3 +112,19 @@ expression: rows
       line: 192
       message: "variable `hp` is not bound in this scope"
       severity: warning
+- case: a preamble that forces through a default or a dots element still reports it
+  diagnostics:
+    - code: RY010
+      line: 213
+      message: "variable `mpg` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 214
+      message: "variable `hp` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 215
+      message: "variable `wt` is not bound in this scope"
+      severity: warning
+- case: counting dots before UseMethod does not force them
+  diagnostics: []

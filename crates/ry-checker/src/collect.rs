@@ -1103,9 +1103,36 @@ fn parameter_is_unforced(body: &[Stmt], params: &[Param], parameter: &str) -> bo
         && !stmts_mention(body, parameter)
 }
 
+/// Formals that `preamble` may force: those it mentions (see
+/// [`parameter_is_unforced`]), plus those a forced formal's default mentions.
+pub(crate) fn formals_read_by<'a>(preamble: &[Stmt], params: &'a [Param]) -> Vec<&'a str> {
+    let mut read: Vec<&str> = params
+        .iter()
+        .map(|formal| formal.name.as_str())
+        .filter(|name| stmts_mention(preamble, name))
+        .collect();
+    let mut next = 0;
+    while let Some(&name) = read.get(next) {
+        next += 1;
+        let Some(default) = params
+            .iter()
+            .find(|formal| formal.name == name)
+            .and_then(|formal| formal.default.as_ref())
+        else {
+            continue;
+        };
+        for formal in params {
+            if !read.contains(&formal.name.as_str()) && expr_mentions(default, &formal.name) {
+                read.push(&formal.name);
+            }
+        }
+    }
+    read
+}
+
 /// Whether `body` may read `parameter`: by name, in a string, or through
 /// frame reflection (see [`parameter_is_unforced`]).
-pub(crate) fn stmts_mention(body: &[Stmt], parameter: &str) -> bool {
+fn stmts_mention(body: &[Stmt], parameter: &str) -> bool {
     body.iter().any(|statement| {
         walk_stmt(statement, Walk::ALL, |node, _| {
             mention_step(node, parameter)
@@ -1125,7 +1152,11 @@ fn mention_step(node: AstNode<'_>, parameter: &str) -> ControlFlow<(), Descend> 
     let mentions = match node {
         AstNode::Expr(Expr::Ident { name, .. }) => {
             let name = semantic_argument_name(name);
-            name == parameter || FRAME_REFLECTION.contains(&bare_name(name))
+            name == parameter
+                // `...elt(n)` forces a dots element; `..1` lowers to
+                // `Expr::Unknown`, which already counts.
+                || (parameter == "..." && bare_name(name) == "...elt")
+                || FRAME_REFLECTION.contains(&bare_name(name))
         }
         AstNode::Expr(Expr::String(text, _)) => {
             mentions_word(text, parameter) || FRAME_REFLECTION.contains(&text.as_str())

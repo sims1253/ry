@@ -190,3 +190,35 @@ summ_dots <- function(data, ...) {
 summ_dots.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
 summ_forced(mtcars, col = mpg)
 summ_dots(mtcars, col = hp)
+
+## case: a preamble that forces through a default or a dots element still reports it
+# expect: RY010, RY010, RY010
+# Forcing `other` evaluates its default `col`; `..1` and `...elt(1)` force
+# the first dots argument. R errors on `mpg`, `hp`, and `wt` before dispatch.
+summ_default <- function(data, col, other = col) {
+  force(other)
+  UseMethod("summ_default")
+}
+summ_default.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_dot1 <- function(data, ...) {
+  force(..1)
+  UseMethod("summ_dot1")
+}
+summ_dot1.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_elt <- function(data, ...) {
+  force(...elt(1))
+  UseMethod("summ_elt")
+}
+summ_elt.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_default(mtcars, col = mpg)
+summ_dot1(mtcars, col = hp)
+summ_elt(mtcars, col = wt)
+
+## case: counting dots before UseMethod does not force them
+# no-diag
+summ_counted <- function(data, ...) {
+  stopifnot(...length() > 0)
+  UseMethod("summ_counted")
+}
+summ_counted.data.frame <- function(data, col, ...) dplyr::select(data, {{ col }})
+summ_counted(mtcars, col = mpg)

@@ -805,30 +805,13 @@ fn report_check_parse_failure(
     path: &std::path::Path,
     error: &pipeline::ParseError,
 ) -> ry_checker::Diagnostic {
-    let (span, message) = match error {
-        pipeline::ParseError::Read(error) => {
-            eprintln!("ry: {}: {}", path.display(), error);
-            (
-                ry_core::Span::new(0, 1, 0, 0),
-                format!("cannot read file: {error}; file not checked"),
-            )
-        }
+    match error {
+        pipeline::ParseError::Read(error) => eprintln!("ry: {}: {}", path.display(), error),
         pipeline::ParseError::Parse(error) => {
-            eprintln!("ry: {}: parse error: {}", path.display(), error);
-            let ry_core::ParseError::TreeSitter { line, col, message } = error;
-            (
-                ry_core::Span::new(0, 0, line.saturating_sub(1), col.saturating_sub(1)),
-                format!("{message}; file not checked"),
-            )
+            eprintln!("ry: {}: parse error: {}", path.display(), error)
         }
-    };
-    ry_checker::Diagnostic::new(
-        ry_checker::Severity::Error,
-        span,
-        &path.to_string_lossy(),
-        "RY000",
-        message,
-    )
+    }
+    ry_checker::frontend::parse_failure(&path.to_string_lossy(), error)
 }
 
 /// Core check logic: parse all files, run the project checker, apply

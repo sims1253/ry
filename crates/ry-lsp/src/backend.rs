@@ -215,16 +215,7 @@ impl FolderAnalysisContext {
         origin: Option<serde_json::Value>,
         related_uri: Option<&Url>,
     ) -> Vec<LspDiagnostic> {
-        let filter = policy_path.map(|native| self.scoped_policy.filter_for(native, &self.filter));
-        let post = ry_checker::PostProcess {
-            filter: filter.as_deref().unwrap_or(&self.filter),
-            baseline: self.baseline.as_ref(),
-            min_confidence: self.min_confidence.unwrap_or(ry_checker::Confidence::Low),
-            repo_root: self.anchor(),
-        };
-        let mut diagnostics = post.pre_demotion(diagnostics, path, Some(file));
-        post.post_demotion(&mut diagnostics);
-        diagnostics
+        self.post_process(diagnostics, path, policy_path, Some(file))
             .iter()
             .map(|diagnostic| {
                 let mut diagnostic =
@@ -233,6 +224,55 @@ impl FolderAnalysisContext {
                 diagnostic
             })
             .collect()
+    }
+
+    /// The RY000 for an open buffer ry cannot parse, which `ry check` lets
+    /// through its severity filter and baseline like any file-level finding.
+    fn publish_parse_failure(
+        &self,
+        path: &str,
+        text: &str,
+        error: ry_core::ParseError,
+        origin: Option<serde_json::Value>,
+    ) -> Vec<LspDiagnostic> {
+        let mut diagnostic =
+            ry_checker::frontend::parse_failure(path, &ry_workspace::SourceError::Parse(error));
+        // The parser gives a line and byte column; positions convert from
+        // byte offsets.
+        let line_start: usize = text
+            .split_inclusive('\n')
+            .take(diagnostic.span.line)
+            .map(str::len)
+            .sum();
+        diagnostic.span.start = (line_start + diagnostic.span.col).min(text.len());
+        diagnostic.span.end = diagnostic.span.start;
+        self.post_process(vec![diagnostic], path, Some(Path::new(path)), None)
+            .iter()
+            .map(|diagnostic| {
+                let mut diagnostic = diagnostic_to_lsp_with_source(diagnostic, text, None);
+                diagnostic.data = origin.clone();
+                diagnostic
+            })
+            .collect()
+    }
+
+    fn post_process(
+        &self,
+        diagnostics: Vec<ry_checker::Diagnostic>,
+        path: &str,
+        policy_path: Option<&Path>,
+        file: Option<&SourceFile>,
+    ) -> Vec<ry_checker::Diagnostic> {
+        let filter = policy_path.map(|native| self.scoped_policy.filter_for(native, &self.filter));
+        let post = ry_checker::PostProcess {
+            filter: filter.as_deref().unwrap_or(&self.filter),
+            baseline: self.baseline.as_ref(),
+            min_confidence: self.min_confidence.unwrap_or(ry_checker::Confidence::Low),
+            repo_root: self.anchor(),
+        };
+        let mut diagnostics = post.pre_demotion(diagnostics, path, file);
+        post.post_demotion(&mut diagnostics);
+        diagnostics
     }
 }
 
@@ -491,15 +531,17 @@ async fn refresh_watchers(client: Client, state: Arc<Mutex<State>>) {
 
 /// Return the AST of the document `path` analyzes, with the exact text it
 /// was parsed from, so position conversions always match the AST's spans.
-/// Parsing runs outside the state lock. Returns `None` when the path is not
-/// open or parsing fails.
-async fn parsed_file(state: &Mutex<State>, path: &str) -> Option<(Arc<SourceFile>, String)> {
+/// Parsing runs outside the state lock.
+async fn parsed_file(
+    state: &Mutex<State>,
+    path: &str,
+) -> Result<(Arc<SourceFile>, String), Unparsed> {
     loop {
         let (edit, text, old_tree, native) = {
             let state = state.lock().await;
-            let doc = state.docs.active(path)?;
+            let doc = state.docs.active(path).ok_or(Unparsed::Closed)?;
             if let Some(file) = &doc.parsed {
-                return Some((Arc::clone(file), doc.text.clone()));
+                return Ok((Arc::clone(file), doc.text.clone()));
             }
             (
                 doc.edit,
@@ -512,14 +554,18 @@ async fn parsed_file(state: &Mutex<State>, path: &str) -> Option<(Arc<SourceFile
         // installs. The edit check below then rejects it.
         #[cfg(feature = "test-util")]
         let paused_parse = crate::test_seam::pause(Seam::Parse).await;
-        let mut parser = RParser::new().ok()?;
-        let (mut parsed, new_tree) = ry_workspace::reports::parse_source_with_tree(
-            &mut parser,
-            path,
-            &text,
-            old_tree.as_ref(),
-        )
-        .ok()?;
+        let result = RParser::new().and_then(|mut parser| {
+            ry_workspace::reports::parse_source_with_tree(
+                &mut parser,
+                path,
+                &text,
+                old_tree.as_ref(),
+            )
+        });
+        let (mut parsed, new_tree) = match result {
+            Ok(parsed) => parsed,
+            Err(error) => return Err(Unparsed::Failed { text, error }),
+        };
         parsed.native_path = native;
         let mut state = state.lock().await;
         // A concurrent parse of the same edit may have landed first. Keep
@@ -539,9 +585,21 @@ async fn parsed_file(state: &Mutex<State>, path: &str) -> Option<(Arc<SourceFile
             crate::test_seam::landed(Seam::Parse);
         }
         if let Some(file) = stored {
-            return Some((file, text));
+            return Ok((file, text));
         }
     }
+}
+
+/// Why [`parsed_file`] returned no AST.
+#[derive(Debug)]
+enum Unparsed {
+    /// The path is not open.
+    Closed,
+    /// The parser rejected `text`, the document's text at the time.
+    Failed {
+        text: String,
+        error: ry_core::ParseError,
+    },
 }
 
 impl Backend {
@@ -573,7 +631,7 @@ impl Backend {
             }
             Arc::clone(stubs)
         };
-        let (file, text) = parsed_file(&self.state, path).await?;
+        let (file, text) = parsed_file(&self.state, path).await.ok()?;
         let mut checker = ry_checker::Checker::new(path);
         checker.set_user_stubs(Arc::clone(&user_stubs));
         checker.enable_assignment_capture();

@@ -2480,7 +2480,8 @@ impl Checker {
             let source = argument.1.as_deref()?;
             let caller_fn = self.fn_table.functions.live_named(&call.caller);
             if let Some(caller_fn) = caller_fn
-                && may_rebind_source_before(&caller_fn.body, source, call.call_start)
+                && (may_rebind_source_before(&caller_fn.body, source, call.call_start)
+                    || may_guard_source_before(&caller_fn.body, source, call.call_start))
             {
                 return None;
             }

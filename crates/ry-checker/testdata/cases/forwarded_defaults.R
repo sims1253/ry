@@ -53,3 +53,9 @@ train()
 callee <- function(bins = 30) if (bins == 1) 1L else 2L
 caller <- function(bins = NULL) if ((bins <<- 1L) > 0) print(callee(bins))
 z <- caller()
+
+## case: a same-named field in a condition is not a guard
+# expect: RY001
+cb <- function(x = 0) if (x < 0) FALSE else TRUE
+run <- function(opts, x = NULL) if (!is.null(opts$x)) cb(x)
+go <- function() run(list(x = 1))

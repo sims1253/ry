@@ -1800,7 +1800,7 @@ impl Checker {
                 for later in &args[index + 1..] {
                     binop::collect_condition_assignment_names(&later.value, &mut later_assigned);
                 }
-                let narrowing = self.extract_type_narrowing(&argument.value, scope);
+                let narrowing = self.extract_branch_narrowing(&argument.value, scope);
                 if !narrowing.mentions_any(&later_assigned) {
                     apply_narrowing_branch(scope, &narrowing, NarrowingBranch::Then);
                 }

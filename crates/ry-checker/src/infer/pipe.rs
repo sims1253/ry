@@ -329,7 +329,7 @@ impl Checker {
         // RY103: an `if` used in expression position still requires a
         // length-1 logical condition.
         self.infer_condition(cond, scope, ConditionContext::If);
-        let narrowing = self.extract_type_narrowing(cond, scope);
+        let narrowing = self.extract_branch_narrowing(cond, scope);
         // The arm a literal condition never takes is inferred silently.
         let literal_cond = match cond {
             Expr::Logical(value, _) => Some(*value),

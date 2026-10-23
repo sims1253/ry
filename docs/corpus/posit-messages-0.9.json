@@ -1260,24 +1260,6 @@
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
-    "gt::RY061::R/utils_render_latex.R:2149:47": {
-      "package": "gt",
-      "code": "RY061",
-      "path": "R/utils_render_latex.R",
-      "line": 2149,
-      "column": 47,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `character`"
-    },
-    "gt::RY061::R/utils_render_latex.R:2149:57": {
-      "package": "gt",
-      "code": "RY061",
-      "path": "R/utils_render_latex.R",
-      "line": 2149,
-      "column": 57,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `character`"
-    },
     "gt::RY090::tests/testthat/test-fmt.R:549:41": {
       "package": "gt",
       "code": "RY090",
@@ -1700,24 +1682,6 @@
       "column": 7,
       "severity": "warning",
       "message": "variable `ffi_standalone_check_number_1.0.7` is not bound in this scope"
-    },
-    "pkgdown::RY061::R/package.R:18:29": {
-      "package": "pkgdown",
-      "code": "RY061",
-      "path": "R/package.R",
-      "line": 18,
-      "column": 29,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `character`"
-    },
-    "pkgdown::RY061::R/package.R:18:5": {
-      "package": "pkgdown",
-      "code": "RY061",
-      "path": "R/package.R",
-      "line": 18,
-      "column": 5,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `character`"
     },
     "pkgdown::RY070::R/templates.R:57:5": {
       "package": "pkgdown",
@@ -2798,24 +2762,6 @@
       "column": 15,
       "severity": "warning",
       "message": "variable `transpose` is not bound in this scope"
-    },
-    "torch::RY061::R/wrapers.R:174:39": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "R/wrapers.R",
-      "line": 174,
-      "column": 39,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
-    },
-    "torch::RY061::R/wrapers.R:179:15": {
-      "package": "torch",
-      "code": "RY061",
-      "path": "R/wrapers.R",
-      "line": 179,
-      "column": 15,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `double`"
     },
     "torch::RY061::tests/testthat/test-ignite.R:196:16": {
       "package": "torch",

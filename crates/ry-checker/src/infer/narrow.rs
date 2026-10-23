@@ -1,6 +1,9 @@
 //! Type facts established by guards and assertions.
 
 use super::*;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
+use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 
 /// A type refinement extracted from an `if` condition. Represents the
 /// information we can glean from a type predicate call like
@@ -53,20 +56,26 @@ pub(crate) enum Narrowing {
 impl Narrowing {
     /// Whether any fact in this narrowing is about one of `names`.
     pub(crate) fn mentions_any(&self, names: &HashSet<String>) -> bool {
-        if names.is_empty() {
-            return false;
-        }
+        !names.is_empty() && self.mentions_where(&|var| names.contains(var))
+    }
+
+    /// Whether any fact in this narrowing is about `name`.
+    pub(crate) fn mentions(&self, name: &str) -> bool {
+        self.mentions_where(&|var| var == name)
+    }
+
+    fn mentions_where(&self, about: &dyn Fn(&str) -> bool) -> bool {
         match self {
             Narrowing::Compound {
                 base,
                 on_true,
                 on_false,
             } => {
-                base.mentions_any(names)
+                base.mentions_where(about)
                     || on_true
                         .iter()
                         .chain(on_false)
-                        .any(|narrowing| narrowing.mentions_any(names))
+                        .any(|narrowing| narrowing.mentions_where(about))
             }
             Narrowing::None => false,
             Narrowing::Positive { var, .. }
@@ -75,7 +84,7 @@ impl Narrowing {
             | Narrowing::NonNullElse { var }
             | Narrowing::ScalarElse { var, .. }
             | Narrowing::ScalarThen { var }
-            | Narrowing::Supplied { var } => names.contains(var),
+            | Narrowing::Supplied { var } => about(var),
         }
     }
 }
@@ -782,6 +791,16 @@ fn apply_single_narrowing_branch<'a>(
     None
 }
 
+/// The target of a predicate a compound guard accepts: a one-argument
+/// type predicate, or `inherits(x, "cls")` with a literal class.
+fn compound_predicate_target(name: &str, args: &[Arg]) -> Option<RType> {
+    match crate::semantic_lists::bare_name(name) {
+        "inherits" if args.len() == 2 => predicate_call_target("inherits", args),
+        name if args.len() == 1 => predicate_target(name),
+        _ => None,
+    }
+}
+
 /// Whether `target` tests only a mode (`is.list`, `is.numeric`, ...).
 /// `Mode::Opaque` targets are class predicates (`inherits`, `is.<class>`),
 /// and a concrete mode can still carry a class claim (`is.data.frame` is
@@ -857,12 +876,11 @@ impl Checker {
                 let Some(name) = ident_name(func) else {
                     return false;
                 };
-                predicate_target(crate::semantic_lists::bare_name(name)).is_some()
+                compound_predicate_target(name, args).is_some()
                     && self.resolves_to_base(name, scope)
                     && !scope.data_mask_unknown
                     && !scope.uncertainty.effects
-                    && args.len() == 1
-                    && matches!(args[0].value, Expr::Ident { .. })
+                    && matches!(args.first().map(|arg| &arg.value), Some(Expr::Ident { .. }))
             }
             _ => false,
         }
@@ -883,8 +901,8 @@ impl Checker {
                 ..
             } => Self::compound_guard_facts(expr, !truth),
             Expr::Call { func, args, .. } => {
-                let Some(target) = ident_name(func)
-                    .and_then(|name| predicate_target(crate::semantic_lists::bare_name(name)))
+                let Some(target) =
+                    ident_name(func).and_then(|name| compound_predicate_target(name, args))
                 else {
                     return Vec::new();
                 };
@@ -984,6 +1002,132 @@ impl Checker {
             var: var.clone(),
             target: guard_target(json_rtype_to_rtype(&predicate.target)),
         }
+    }
+
+    /// The narrowing for a condition that selects code: an `if` test, the
+    /// left of `&&`/`||`, or an assertion (`stopifnot()`) whose passing path
+    /// is the continuation. A defaulted parameter's type describes only the
+    /// omitted-argument call shape (`diagnostic_parameter_type`). A passing
+    /// test that reads it but proves nothing about it (`is_tensor(dims)`,
+    /// `"pt" %in% colnames(width)`) may be exactly the test that default
+    /// fails, so the arm it selects sees what a supplied argument would
+    /// (#710).
+    pub(crate) fn extract_branch_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
+        let narrowing = self.extract_type_narrowing(cond, scope);
+        if scope.default_parameter_bindings.is_empty() {
+            return narrowing;
+        }
+        let undecided = |truth: bool| -> Vec<Narrowing> {
+            self.tested_names(cond, truth, scope)
+                .into_iter()
+                .filter(|name| {
+                    scope.is_default_parameter(name)
+                        && scope.get(name).is_some_and(|t| !t.mode.is_unknown())
+                        && !narrowing.mentions(name)
+                })
+                .map(|var| Narrowing::Supplied { var })
+                .collect()
+        };
+        let (on_true, on_false) = (undecided(true), undecided(false));
+        if on_true.is_empty() && on_false.is_empty() {
+            return narrowing;
+        }
+        Narrowing::Compound {
+            base: Box::new(narrowing),
+            on_true,
+            on_false,
+        }
+    }
+
+    /// The names that some passing (TRUE) test ry cannot decide read, on
+    /// every way `cond` can evaluate to `truth`. A failing test proves
+    /// nothing, and neither does a test ry narrows itself (`missing(x)`,
+    /// `is.null(x)`). `a && b` is TRUE one way (both TRUE) and FALSE two
+    /// ways (`a` FALSE, or `a` TRUE then `b` FALSE), so the names of a
+    /// two-way path are those both ways share; `||` is the mirror image and
+    /// `!` flips the path.
+    fn tested_names(&self, cond: &Expr, truth: bool, scope: &Scope) -> BTreeSet<String> {
+        match cond {
+            Expr::BinOp {
+                op: op @ (BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr),
+                lhs,
+                rhs,
+                ..
+            } => {
+                let both = self.tested_names(rhs, truth, scope);
+                let lhs_decides = self.tested_names(lhs, truth, scope);
+                if matches!(op, BinOpKind::And | BinOpKind::AndAnd) == truth {
+                    lhs_decides.union(&both).cloned().collect()
+                } else {
+                    let mut rhs_decides = self.tested_names(lhs, !truth, scope);
+                    rhs_decides.extend(both);
+                    lhs_decides.intersection(&rhs_decides).cloned().collect()
+                }
+            }
+            Expr::UnaryOp {
+                op: UnaryOpKind::Not,
+                expr,
+                ..
+            } => self.tested_names(expr, !truth, scope),
+            _ if truth => {
+                let mut names = BTreeSet::new();
+                self.evaluated_names(cond, &mut names);
+                let decided = self.extract_type_narrowing(cond, scope);
+                names.retain(|name| !decided.mentions(name));
+                names
+            }
+            _ => BTreeSet::new(),
+        }
+    }
+
+    /// Names `expr` evaluates. Field names, assignment targets, closures,
+    /// formulas, and arguments a stub quotes, captures, or evaluates in a
+    /// data mask (`quote(x)`, `substitute(x)`, `filter(df, x > 1)`, where `x`
+    /// may be a column) are not reads.
+    fn evaluated_names(&self, expr: &Expr, names: &mut BTreeSet<String>) {
+        ry_core::stack::grow(|| {
+            let walk = Walk {
+                assign_targets: false,
+                assign_operands: false,
+                dollar_args: false,
+                fn_bodies: false,
+                ..Walk::ALL
+            };
+            let _ = walk_expr(expr, walk, |node, _| match node {
+                AstNode::Expr(Expr::Ident { name, .. }) => {
+                    names.insert(name.clone());
+                    ControlFlow::<(), _>::Continue(Descend::Into)
+                }
+                AstNode::Expr(Expr::Call { func, args, .. }) => {
+                    let Some(callee) = ident_name(func) else {
+                        return ControlFlow::Continue(Descend::Into);
+                    };
+                    if crate::semantic_lists::is_quoting_form(callee) {
+                        return ControlFlow::Continue(Descend::Skip);
+                    }
+                    let Some(signature) = self.resolve_typeshed_sig_ref(callee) else {
+                        return ControlFlow::Continue(Descend::Into);
+                    };
+                    let bindings = match_params(&signature.params, args);
+                    for (index, argument) in args.iter().enumerate() {
+                        if !matches!(
+                            eval_mode_for_arg(signature, &bindings, index),
+                            Some(
+                                EvalMode::QuotedSymbol
+                                    | EvalMode::QuotedExpression
+                                    | EvalMode::CapturesPromise
+                                    | EvalMode::DataMask
+                                    | EvalMode::TidySelect
+                            )
+                        ) {
+                            self.evaluated_names(&argument.value, names);
+                        }
+                    }
+                    ControlFlow::Continue(Descend::Skip)
+                }
+                _ => ControlFlow::Continue(Descend::Into),
+            });
+        })
     }
 }
 

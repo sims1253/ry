@@ -964,3 +964,96 @@ check_skipped <- function(strict, kind = "warning") {
   if (is.null(kind) || kind == "ignore") return(NULL)
   kind
 }
+
+## case: a user predicate on a specialised default leaves its arm unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel <- function(dims = 2) {
+  if (is_tensor(dims)) dims$numel()
+}
+numel()
+
+## case: a compound inherits guard narrows a specialised default
+# no-diag
+lambda_of <- function(model = "ZZZ", lambda = NULL) {
+  if (inherits(model, "ets") && is.null(lambda)) model$lambda
+}
+lambda_of()
+
+## case: a names membership guard on a specialised default leaves its arm unknown
+# no-diag
+values_of <- function(sel = FALSE, width = "\\linewidth") {
+  if ("values" %in% names(sel)) sel$values
+  if (sum(c("pt", "lw") %in% colnames(width)) > 0) width$pt
+}
+values_of()
+
+## case: the right of `&&` after a user predicate on a specialised default is unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel_big <- function(dims = 2) {
+  if (is_tensor(dims) && dims$numel() > 1) 1L
+}
+numel_big()
+
+## case: a negated user predicate stop guard leaves the continuation unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel_checked <- function(dims = 2) {
+  if (!is_tensor(dims)) stop("`dims` must be a tensor")
+  dims$numel()
+}
+numel_checked()
+
+## case: a user predicate assertion leaves the continuation unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel_asserted <- function(dims = 2) {
+  stopifnot(is_tensor(dims))
+  dims$numel()
+}
+numel_asserted()
+
+## case: the arm a failing user predicate selects keeps the specialised default
+# expect: RY061
+is_tensor <- function(x) inherits(x, "tensor")
+numel_else <- function(dims = 2) {
+  if (is_tensor(dims)) 1L else dims$size
+}
+numel_else()
+
+## case: a data-masked name in a guard is not a test of the specialised default
+# expect: RY061
+library(dplyr)
+masked_guard <- function(df, x = 2) {
+  if (nrow(dplyr::filter(df, x > 1)) > 0) x$bar
+}
+masked_guard(data.frame(x = 3))
+
+## case: a quoted name in a guard is not a test of the specialised default
+# expect: RY061, RY061, RY061
+quoted_guard <- function(x = 2) {
+  if (identical(quote(x), quote(x))) x$field
+  if (!is.null(substitute(x))) x$field
+  if (length(~ x) == 2) x$field
+}
+quoted_guard()
+
+## case: a missing() or is.null() operand that may pass keeps the specialised default
+# expect: RY061, RY061
+is_tensor <- function(x) inherits(x, "tensor")
+bar_missing <- function(x = 2) {
+  if (missing(x) || is_tensor(x)) x$bar
+}
+bar_null <- function(x = 2) {
+  if (is.null(x) || is_tensor(x)) x$bar
+}
+bar_missing()
+bar_null()
+
+## case: a guard that does not read the specialised default keeps its type
+# expect: RY061
+numel_verbose <- function(dims = 2, verbose = TRUE) {
+  if (verbose) dims$numel()
+}
+numel_verbose()

@@ -239,6 +239,59 @@ fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
     matches!(func, Expr::Ident { name, .. } if strip_package(semantic_argument_name(name), "base") == Some(bare))
 }
 
+/// The names `Rcpp::loadModule(module, what)` assigns in the package
+/// namespace (#704): each module object `what` names, under its `names()`
+/// entry where one is given. `None` when ry cannot list them: `what = TRUE`
+/// binds every object the C++ module declares, and a computed `what` may
+/// name any of them. An `env` other than the default
+/// `topenv(parent.frame())`, `topenv()` or `asNamespace(pkg)` binds nothing
+/// in the namespace;
+/// so does `environment()` inside a function, where it is the call's frame.
+fn rcpp_module_bindings(args: &[Arg], top_level: bool) -> Option<Vec<String>> {
+    // A bare or `base::` call head named one of `names`.
+    fn base_head(func: &Expr, names: &[&str]) -> bool {
+        matches!(func, Expr::Ident { name, .. }
+            if names.contains(&strip_package(name, "base").unwrap_or(name)))
+    }
+    fn no_arg_call(expr: &Expr, names: &[&str]) -> bool {
+        matches!(expr, Expr::Call { func, args, .. } if args.is_empty() && base_head(func, names))
+    }
+    let matched = match_arguments(&["module", "what", "loadNow", "env"], args);
+    let namespace_env = matched.arg_for_param(3).is_none_or(|index| {
+        let env = &args[index].value;
+        no_arg_call(env, &["topenv"])
+            || (top_level && no_arg_call(env, &["environment"]))
+            || matches!(env, Expr::Call { func, args, .. }
+                if base_head(func, &["topenv"])
+                    && matches!(args.as_slice(), [frame] if frame.name.is_none()
+                        && no_arg_call(&frame.value, &["parent.frame", "environment"])))
+            // `.onLoad(libname, pkgname)` spells it `asNamespace(pkgname)`.
+            || matches!(env, Expr::Call { func, args, .. }
+                if base_head(func, &["asNamespace", "getNamespace"]) && args.len() == 1)
+    });
+    let Some(what) = matched
+        .arg_for_param(1)
+        .filter(|_| namespace_env)
+        .map(|index| &args[index])
+    else {
+        return Some(Vec::new());
+    };
+    match &what.value {
+        Expr::String(name, _) => Some(vec![name.clone()]),
+        Expr::Call { func, args, .. } if is_c_call_head(func) => args
+            .iter()
+            .map(|element| match (&element.name, &element.value) {
+                (Some(alias), Expr::String(..)) => Some(semantic_argument_name(alias).to_string()),
+                (None, Expr::String(name, _)) => Some(name.clone()),
+                _ => None,
+            })
+            .collect(),
+        // Like an omitted `what`, `NULL` binds nothing.
+        Expr::Null(_) => Some(Vec::new()),
+        _ => None,
+    }
+}
+
 /// The argument named `formal`, else the first positional one.
 fn named_or_first_positional<'a>(args: &'a [Arg], formal: &str) -> Option<&'a Arg> {
     args.iter()
@@ -689,7 +742,7 @@ impl Checker {
         let _ = walk_stmt(
             s,
             Walk::ALL,
-            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            |node: AstNode<'_>, fn_depth: usize| -> ControlFlow<(), Descend> {
                 // A binding installer, called, passed, or named to `do.call`,
                 // may replace a binding in any frame, including the global
                 // one call contracts rely on.
@@ -739,6 +792,22 @@ impl Checker {
                                 let table = Arc::make_mut(&mut self.fn_table);
                                 table.note_bound_name(&declared);
                                 table.known_vars.insert(declared);
+                            }
+                        }
+                    }
+                    if matches!(name.as_str(), "loadModule" | "Rcpp::loadModule") {
+                        let table = Arc::make_mut(&mut self.fn_table);
+                        match rcpp_module_bindings(args, fn_depth == 0) {
+                            Some(names) => {
+                                for bound in names {
+                                    table.note_bound_name(&bound);
+                                    table.known_vars.insert(bound);
+                                }
+                            }
+                            None => {
+                                table
+                                    .known_vars
+                                    .insert(ry_core::SERIALIZED_BINDINGS_UNENUMERABLE.to_string());
                             }
                         }
                     }

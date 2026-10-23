@@ -159,6 +159,8 @@ All notable changes to ry are documented in this file.
 - Read a literal `x[[N]]` on a partly named list by position: `list()`
   numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
   no longer reads the unnamed list and now reports RY061 on `$b` (#758).
+- Treat plain assignments in a top-level rlang-style `on_load({...})` block
+  as package bindings, so reads from other files no longer get RY010 (#691).
 
 ## [0.11.0] - 2026-09-22
 

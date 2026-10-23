@@ -84,6 +84,38 @@ fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
     }
 }
 
+/// Names a top-level `on_load(expr)` binds in the package namespace
+/// (#691). rlang's `on_load()`, and the package-local copies of it, store
+/// `expr` for `.onLoad()` to evaluate there, so its plain bindings become
+/// package bindings. Only the hook expression itself and the statements of
+/// a braced block count; `<<-`, `assign()`, and anything nested deeper
+/// prove nothing. `evalqOnLoad()` does not count: an installed package
+/// evaluates its block in a child of the namespace.
+fn load_hook_bindings(stmts: &[Stmt]) -> impl Iterator<Item = &str> {
+    stmts
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Expr(Expr::Call { func, args, .. })
+                if matches!(
+                    func.as_ref(),
+                    Expr::Ident { name, .. } if name == "on_load" || name == "rlang::on_load"
+                ) =>
+            {
+                // An `env` argument evaluates `expr` somewhere else.
+                match args.as_slice() {
+                    [hook] if hook.name.is_none() => Some(&hook.value),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .flat_map(|hook| match hook {
+            Expr::Block { body, .. } => body.iter().map(AstNode::Stmt).collect(),
+            hook => vec![AstNode::Expr(hook)],
+        })
+        .filter_map(|node| frame_binding(node)?.0)
+}
+
 /// Writes `node` can make outside the frame it runs in: a `<<-`, a
 /// recognized binding installer, or a nested function's defaults (forcing
 /// one runs it in that function's frame, where it may itself write outward).
@@ -373,6 +405,11 @@ impl Checker {
         }
         if custom_operator::has_escaped_slot_names(stmts) {
             Arc::make_mut(&mut self.fn_table).has_escaped_slot_names = true;
+        }
+        for name in load_hook_bindings(stmts) {
+            let table = Arc::make_mut(&mut self.fn_table);
+            table.note_bound_name(name);
+            table.known_vars.insert(name.to_string());
         }
         // Statement-level walk on the shared core: a binding statement can
         // appear at the top level, in `if` branches, and in `for`/`while`

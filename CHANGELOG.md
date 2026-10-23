@@ -89,6 +89,9 @@ All notable changes to ry are documented in this file.
   ry's syntax nesting limits) as one RY000 in every output format, instead of
   only a stderr line, so `--output-format json --exit-zero` no longer shows a
   clean `[]` for it (#743).
+- The language server publishes the same RY000 for an open buffer it cannot
+  parse, instead of keeping the findings from its last parse, and clears it
+  once the buffer parses again (#785).
 - Stop selections from claiming their input's length. `return: "arg0"`
   combined with a `return_length` rule now keeps the first argument's mode
   and class but re-counts its elements, dropping whole-value facts; a data

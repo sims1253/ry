@@ -60,6 +60,17 @@ still fake the proof for a value of unknown class. The rest
 of an `&&` assertion may use only literals, the subject, other local values,
 and base comparisons.
 
+A passed `if` condition records the same fact
+([#702](https://github.com/sims1253/ry/issues/702)). R errors unless the
+condition is TRUE or FALSE, so `if (x == "")`, `if (!is.null(x) && x == "")`,
+and `if (is.null(x) || x == "none")` prove `x` NULL or scalar after the
+statement, under the boundary above. Only a base comparison of the subject
+with a scalar literal counts, possibly negated, as the condition itself or as
+the tail of `||` behind `is.null(x)` or of `&&` behind `!is.null(x)`. An earlier operand
+proves nothing: an empty value is NA there, and `character(0) == "" && FALSE`
+is FALSE. Nor does `if (any(x == ""))`. A call in the condition, such as the
+`c()` in `!x %in% c("a", "b")`, ends the fact like any other call.
+
 Scalar facts and adopted declaration identities
 ([declarations](declarations.md#shared-checking-boundary)) share one call
 rule. Only a few base calls keep the fact: `stopifnot`, `length`, `is.null`,

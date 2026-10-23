@@ -2314,6 +2314,7 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
         "f <- function(what) loadModule(\"spat\", what = what)\n",
         "loadModule(\"spat\", TRUE, env = topenv(parent.frame()))\n",
         "loadModule(\"spat\", TRUE, env = environment())\n",
+        "f <- function() loadModule(\"spat\", TRUE, env = topenv())\n",
         "loadModule(\"spat\", TRUE, env = base::topenv(base::parent.frame()))\n",
     ] {
         assert_eq!(unbound_beside_module(module, reads), Vec::<String>::new());
@@ -2346,6 +2347,7 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
     for module in [
         "loadModule(\"spat\")\n",
         "loadModule(\"spat\", what = NULL)\n",
+        "f <- function() loadModule(\"spat\", TRUE, env = environment())\n",
         "Rcpp::loadModule(\"spat\", TRUE, env = new.env())\n",
         "loadModule(\"spat\", c(\"SpatRaster\"), FALSE, other_env)\n",
         "x <- 1\n",

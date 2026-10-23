@@ -244,9 +244,9 @@ fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
 /// entry where one is given. `None` when ry cannot list them: `what = TRUE`
 /// binds every object the C++ module declares, and a computed `what` may
 /// name any of them. An `env` other than the default
-/// `topenv(parent.frame())`, `topenv()` or `environment()` binds nothing in
-/// the namespace.
-fn rcpp_module_bindings(args: &[Arg]) -> Option<Vec<String>> {
+/// `topenv(parent.frame())` or `topenv()` binds nothing in the namespace;
+/// so does `environment()` inside a function, where it is the call's frame.
+fn rcpp_module_bindings(args: &[Arg], top_level: bool) -> Option<Vec<String>> {
     // A bare or `base::` call head named one of `names`.
     fn base_head(func: &Expr, names: &[&str]) -> bool {
         matches!(func, Expr::Ident { name, .. }
@@ -258,7 +258,8 @@ fn rcpp_module_bindings(args: &[Arg]) -> Option<Vec<String>> {
     let matched = match_arguments(&["module", "what", "loadNow", "env"], args);
     let namespace_env = matched.arg_for_param(3).is_none_or(|index| {
         let env = &args[index].value;
-        no_arg_call(env, &["environment", "topenv"])
+        no_arg_call(env, &["topenv"])
+            || (top_level && no_arg_call(env, &["environment"]))
             || matches!(env, Expr::Call { func, args, .. }
                 if base_head(func, &["topenv"])
                     && matches!(args.as_slice(), [frame] if frame.name.is_none()
@@ -737,7 +738,7 @@ impl Checker {
         let _ = walk_stmt(
             s,
             Walk::ALL,
-            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            |node: AstNode<'_>, fn_depth: usize| -> ControlFlow<(), Descend> {
                 // A binding installer, called, passed, or named to `do.call`,
                 // may replace a binding in any frame, including the global
                 // one call contracts rely on.
@@ -792,7 +793,7 @@ impl Checker {
                     }
                     if matches!(name.as_str(), "loadModule" | "Rcpp::loadModule") {
                         let table = Arc::make_mut(&mut self.fn_table);
-                        match rcpp_module_bindings(args) {
+                        match rcpp_module_bindings(args, fn_depth == 0) {
                             Some(names) => {
                                 for bound in names {
                                     table.note_bound_name(&bound);

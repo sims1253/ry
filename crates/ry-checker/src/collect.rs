@@ -1021,8 +1021,10 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
 /// or promise capture such as `substitute()`, so a call never forces it.
 /// Unlike `parameter_is_unforced`, frame reflection and string mentions do
 /// not count: a validator's `envir = rlang::current_env()` stays quiet.
+/// A formal the function never mentions qualifies too.
 fn parameter_only_probed(body: &[Stmt], params: &[Param], parameter: &str) -> bool {
-    if parameter == "..." {
+    // Alternate spellings (backticks, escapes) are not compared reliably.
+    if parameter == "..." || parameter.contains(['`', '\\']) {
         return false;
     }
     let defaults: Vec<Stmt> = params

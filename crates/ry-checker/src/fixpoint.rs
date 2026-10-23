@@ -537,10 +537,15 @@ impl Checker {
         // A validator such as `check_not_missing(col)` only tests whether
         // `col` was supplied, so the caller's first use is the next one.
         for ((caller, parameter), calls) in probes {
-            let skipped: Vec<usize> = calls
-                .iter()
-                .filter(|(start, _)| calls.iter().all(|(other, only)| other != start || *only))
-                .map(|(start, _)| *start)
+            // `f(col, col)` reaches two formals: skip the call only if both
+            // are missing-only.
+            let mut by_call: HashMap<usize, bool> = HashMap::new();
+            for (start, only) in calls {
+                *by_call.entry(start).or_insert(true) &= only;
+            }
+            let skipped: Vec<usize> = by_call
+                .into_iter()
+                .filter_map(|(start, only)| only.then_some(start))
                 .collect();
             if let Some(function) = self.fn_table.functions.live_named(&caller)
                 && !skipped.is_empty()

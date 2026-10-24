@@ -812,3 +812,21 @@ f <- function() {
   c(found) %<-% list(TRUE)
   if (stale) 1
 }
+
+## case: rlang's lazy assignment binds its lhs and defers its rhs
+# no-diag
+# `lhs %<~% rhs` is delayedAssign(as_string(substitute(lhs)),
+# substitute(rhs)): the lhs is a name to bind, and the rhs is a promise.
+library(rlang)
+f <- function() {
+  x %<~% expensive()
+  y %<~% unbound_value
+}
+
+## case: rlang's lazy assignment leaves direct reads of unbound names
+# expect: RY010
+library(rlang)
+f <- function() {
+  x %<~% 1
+  unbound_value
+}

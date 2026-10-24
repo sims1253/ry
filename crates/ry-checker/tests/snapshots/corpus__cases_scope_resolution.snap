@@ -364,3 +364,11 @@ expression: rows
       line: 813
       message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
+- case: "rlang's lazy assignment binds its lhs and defers its rhs"
+  diagnostics: []
+- case: "rlang's lazy assignment leaves direct reads of unbound names"
+  diagnostics:
+    - code: RY010
+      line: 831
+      message: "variable `unbound_value` is not bound in this scope"
+      severity: warning

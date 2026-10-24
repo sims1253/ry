@@ -251,6 +251,9 @@ All notable changes to ry are documented in this file.
   index step ry does not model makes `x$f` forget its element types instead
   of recording `x$f$g`, removing RY061 false positives in forecast and rgl
   (#708).
+- Vendor r-typeshed d3514747: rlang's `lhs %<~% rhs` binds `lhs` and defers
+  `rhs`, so pkgload's `desc_desc %<~% desc::desc` lazy imports no longer read
+  the bound name as an unbound variable (#706).
 
 ## [0.11.0] - 2026-09-22
 

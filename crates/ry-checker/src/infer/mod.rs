@@ -3908,8 +3908,18 @@ impl Checker {
                 .any(|function| function == name)
     }
 
+    /// Whether `%<-%`/`%->%` is a destructuring operator here: zeallot's
+    /// (or another package's) from the typeshed, or a project's own copy
+    /// such as rlang's `standalone-zeallot.R` (#706). Each assigns its
+    /// pattern names in the caller's frame.
     fn destructuring_operator_in_scope(&self) -> bool {
-        self.loaded
+        ["%<-%", "%->%"].iter().any(|operator| {
+            self.fn_table
+                .functions
+                .select(Callee::Bare(operator))
+                .is_some()
+        }) || self
+            .loaded
             .iter()
             .chain(self.imported_from.values())
             .any(|package| {

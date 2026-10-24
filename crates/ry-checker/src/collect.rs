@@ -1005,7 +1005,13 @@ impl Checker {
                     && p.default.is_none()
                     && !default_writes.may_write(semantic_argument_name(&p.name))
                     && block_force_flow(&body, &p.name).0;
-                let defused = parameter_is_defused(&body, &p.name, &[], &self.user_stubs);
+                let defused = parameter_is_defused(&body, &p.name, &[], &self.user_stubs)
+                    || parameter_only_captured_by_defaults(
+                        &body,
+                        params,
+                        &p.name,
+                        &self.user_stubs,
+                    );
                 UserParam {
                     name: p.name.clone(),
                     type_: t,
@@ -1201,6 +1207,31 @@ fn parameter_only_probed(
         collect_parameter_uses_in_stmt(statement, parameter, stubs, &mut uses);
     }
     !uses.normal
+}
+
+/// Whether the default of a sibling the body uses captures `parameter` (`q
+/// = rlang::enquo(col)`) and nothing else forces it (#793). A call that
+/// omits the sibling captures the actual, and one that supplies it never
+/// touches the actual, so either way it is never evaluated. The body may
+/// not mention `parameter` at all, which also rules out reads through a
+/// string or frame reflection (`get("col")`, see [`parameter_is_unforced`]).
+fn parameter_only_captured_by_defaults(
+    body: &[Stmt],
+    params: &[Param],
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
+    let mut uses = ParameterUses::default();
+    for default in params
+        .iter()
+        .filter(|formal| formal.name != parameter && stmts_mention(body, &formal.name))
+        .filter_map(|formal| formal.default.clone())
+    {
+        collect_parameter_uses_in_stmt(&Stmt::Expr(default), parameter, stubs, &mut uses);
+    }
+    uses.defused
+        && !stmts_mention(body, parameter)
+        && parameter_only_probed(body, params, parameter, stubs)
 }
 
 /// Whether no evaluation of the function can force `parameter`'s promise:

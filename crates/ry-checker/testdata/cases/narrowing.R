@@ -315,15 +315,15 @@ n$field
 }
 m()
 
-## case: a local literal keeps its else branch diagnostic
-# expect: RY061
+## case: a local literal's dead else branch gives it an unknown value
+# no-diag
 g <- function() {
 s <- "a"
 if (is.character(s)) 1 else s$n
 }
 
-## case: a reassigned formal keeps its else branch diagnostic
-# expect: RY061
+## case: a reassigned formal's dead else branch gives it an unknown value
+# no-diag
 h <- function(position = "dodge2") {
 position <- "x"
 if (is.character(position)) 1 else position$n
@@ -1109,4 +1109,42 @@ check_kind_s4 <- function(kind = "warning") {
   if (!kind %in% c("ignore", "warning", "stop")) stop("bad kind")
   if (is.null(kind) || kind == "ignore") return(NULL)
   kind
+}
+
+## case: a rebound default's dead is.numeric else arm stays quiet
+# no-diag
+# The call omits `shape`, so it is NULL or the integer rebound in the first
+# arm. Under `!is.null(shape)` it is integer, and R never enters the `else`
+# of `is.numeric(shape)` (#710).
+reshape_dead_else <- function(x, shape = NULL) {
+  if (!is.null(shape) && !is_tensor(shape)) shape <- as.integer(shape)
+  if (!is.null(shape)) {
+    if (is.numeric(shape)) shape <- as.list(shape)
+    else if (is_tensor(shape) && shape$shape$rank == 0) shape <- 1
+  }
+  x
+}
+is_tensor <- function(x) inherits(x, "tensor")
+reshape_dead_else(1)
+
+## case: a negated is.numeric guard on a numeric local gives the arm an unknown value
+# no-diag
+dead_not_numeric <- function() {
+  s <- 1L
+  if (!is.numeric(s)) s$x
+}
+
+## case: a Date local in the else of is.numeric still reports
+# expect: RY040
+# is.numeric() is FALSE for a Date, so the arm is live.
+date_else <- function() {
+  d <- structure(1, class = "Date")
+  if (is.numeric(d)) 1 else d + "a"
+}
+
+## case: the arm a numeric local passes still reports
+# expect: RY061
+live_numeric <- function() {
+  s <- 1L
+  if (is.numeric(s)) s$x
 }

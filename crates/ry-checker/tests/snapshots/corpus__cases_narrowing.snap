@@ -159,18 +159,10 @@ expression: rows
   diagnostics: []
 - case: an is.numeric false branch drops a numeric default
   diagnostics: []
-- case: a local literal keeps its else branch diagnostic
-  diagnostics:
-    - code: RY061
-      line: 322
-      message: "$ operator is invalid for atomic vectors of mode `character`"
-      severity: error
-- case: a reassigned formal keeps its else branch diagnostic
-  diagnostics:
-    - code: RY061
-      line: 329
-      message: "$ operator is invalid for atomic vectors of mode `character`"
-      severity: error
+- case: "a local literal's dead else branch gives it an unknown value"
+  diagnostics: []
+- case: "a reassigned formal's dead else branch gives it an unknown value"
+  diagnostics: []
 - case: a NULL default else branch stays silent
   diagnostics: []
 - case: "an inherits false branch keeps the default's diagnostic"
@@ -495,3 +487,19 @@ expression: rows
       line: 1110
       message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
+- case: "a rebound default's dead is.numeric else arm stays quiet"
+  diagnostics: []
+- case: a negated is.numeric guard on a numeric local gives the arm an unknown value
+  diagnostics: []
+- case: a Date local in the else of is.numeric still reports
+  diagnostics:
+    - code: RY040
+      line: 1142
+      message: "cannot apply arithmetic op to `double` and `character`"
+      severity: error
+- case: the arm a numeric local passes still reports
+  diagnostics:
+    - code: RY061
+      line: 1149
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error

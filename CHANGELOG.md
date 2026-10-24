@@ -114,6 +114,10 @@ All notable changes to ry are documented in this file.
 - Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 - Bind the target of a base `delayedAssign()` without evaluating its promise,
   removing false RY010 reports for lazily bound values (#349).
+- Treat a project's own `%<-%` or `%->%`, such as rlang's
+  `standalone-zeallot.R` copy, as destructuring like zeallot's, so
+  `c(found, other) %<-% value` binds both names instead of leaving `found` at
+  its `NULL` placeholder (#706).
 - Apply the `data()` and `load()` loaders only when no local, parameter, or
   project binding of that name may be the callee, removing false RY061
   reports on Shiny's `data <- reactive(...)`; `data()$x` (#717).

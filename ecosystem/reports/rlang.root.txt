@@ -1,4 +1,3 @@
-R/cnd-abort.R:548:7 RY001
 tests/testthat/test-cnd-entrace.R:284:28 RY040
 tests/testthat/test-cnd-message.R:480:8 RY040
 tests/testthat/test-nse-defuse.R:329:22 RY109

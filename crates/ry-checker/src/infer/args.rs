@@ -409,6 +409,7 @@ pub(crate) fn match_args_to_params(
 /// Whether a call with these bindings omits a formal whose default forces
 /// the defused `parameter` first (#790), so R evaluates its actual. A
 /// forwarded `...` may supply any formal, so then none counts as omitted.
+/// An empty actual (`f(x, label = )`) still runs the default.
 pub(crate) fn omits_forcing_default(
     params: &[UserParam],
     bindings: &ArgumentMatch,
@@ -419,10 +420,12 @@ pub(crate) fn omits_forcing_default(
         && !args
             .iter()
             .any(|argument| matches!(&argument.value, Expr::Ident { name, .. } if name == "..."))
-        && params
-            .iter()
-            .zip(&bindings.bound_params)
-            .any(|(formal, bound)| !bound && parameter.forcing_defaults.contains(&formal.name))
+        && params.iter().enumerate().any(|(index, formal)| {
+            parameter.forcing_defaults.contains(&formal.name)
+                && bindings
+                    .arg_for_param(index)
+                    .is_none_or(|actual| matches!(args[actual].value, Expr::Missing(_)))
+        })
 }
 
 impl Checker {

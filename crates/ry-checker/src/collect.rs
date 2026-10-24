@@ -1013,7 +1013,7 @@ impl Checker {
                     defaulted: p.default.is_some(),
                     defused,
                     forcing_defaults: if defused {
-                        defaults_forcing_parameter(&body, params, &p.name, &self.user_stubs)
+                        self.defaults_forcing_parameter(&body, params, &p.name)
                     } else {
                         Vec::new()
                     },
@@ -1693,48 +1693,105 @@ pub(crate) fn parameter_is_defused(
     }) == Some(FirstParameterUse::Defused)
 }
 
-/// Sibling formals whose default reads the defused `parameter` (`label =
-/// col`) and which the body uses before `parameter`'s defused first use
-/// (#790). A call that omits one runs that default, which forces
-/// `parameter` first. A formal the body or a default may rebind is left
-/// out, since its default might never run, and so is every formal when
-/// `parameter` itself may be rebound, since a default may then read the
-/// local value instead.
-fn defaults_forcing_parameter(
-    body: &[Stmt],
-    params: &[Param],
-    parameter: &str,
-    stubs: &BTreeMap<String, Typeshed>,
-) -> Vec<String> {
-    let default_writes = default_local_writes(params);
-    let may_rebind = |name: &str| {
-        default_writes.may_write(semantic_argument_name(name))
-            || body
-                .iter()
-                .any(|statement| statement_binds(statement, name))
-    };
-    if may_rebind(parameter) {
-        return Vec::new();
+impl Checker {
+    /// Sibling formals whose default reads the defused `parameter` (`label =
+    /// col`) and which the body uses before `parameter`'s defused first use
+    /// (#790). A call that omits one runs that default, which forces
+    /// `parameter` first. A formal the body or a default may rebind is left
+    /// out, since its default might never run, and so is every formal when
+    /// `parameter` itself may be rebound, since a default may then read the
+    /// local value instead.
+    fn defaults_forcing_parameter(
+        &self,
+        body: &[Stmt],
+        params: &[Param],
+        parameter: &str,
+    ) -> Vec<String> {
+        let default_writes = default_local_writes(params);
+        let may_rebind = |name: &str| {
+            default_writes.may_write(semantic_argument_name(name))
+                || body
+                    .iter()
+                    .any(|statement| statement_binds(statement, name))
+        };
+        if may_rebind(parameter) {
+            return Vec::new();
+        }
+        let first_use = |alias: &str| {
+            body.iter().find_map(|statement| {
+                first_parameter_use_in_stmt(
+                    statement,
+                    parameter,
+                    Some(alias),
+                    &[],
+                    &self.user_stubs,
+                )
+            })
+        };
+        params
+            .iter()
+            .filter(|formal| {
+                formal.name != parameter
+                    && formal.name != "..."
+                    && formal
+                        .default
+                        .as_ref()
+                        .is_some_and(|default| self.evaluates_name(default, parameter))
+                    && !may_rebind(&formal.name)
+                    && first_use(&formal.name) == Some(FirstParameterUse::Normal)
+            })
+            .map(|formal| formal.name.clone())
+            .collect()
     }
-    let first_use = |alias: &str| {
-        body.iter().find_map(|statement| {
-            first_parameter_use_in_stmt(statement, parameter, Some(alias), &[], stubs)
+
+    /// Whether evaluating `expr` may read `name` anywhere. As in
+    /// `evaluated_names` (infer/narrow.rs), field names, assignment targets,
+    /// closures, formulas, and arguments a stub quotes, captures, or
+    /// evaluates in a data mask are no read, and neither is `missing(name)`.
+    /// Unlike there, a call no stub resolves is opaque, erring toward
+    /// silence.
+    fn evaluates_name(&self, expr: &Expr, name: &str) -> bool {
+        let walk = Walk {
+            assign_targets: false,
+            assign_operands: false,
+            dollar_args: false,
+            fn_bodies: false,
+            ..Walk::ALL
+        };
+        walk_expr(expr, walk, |node, _| match node {
+            AstNode::Expr(Expr::Ident { name: read, .. }) if read == name => ControlFlow::Break(()),
+            AstNode::Expr(Expr::Call { func, args, .. }) => {
+                let Some(signature) = ident_name(func)
+                    .filter(|callee| {
+                        !crate::semantic_lists::is_quoting_form(callee) && !probes_promise(func)
+                    })
+                    .and_then(|callee| self.resolve_typeshed_sig_ref(callee))
+                else {
+                    return ControlFlow::Continue(Descend::Skip);
+                };
+                let bindings = match_params(&signature.params, args);
+                let reads = args.iter().enumerate().any(|(index, argument)| {
+                    !matches!(
+                        eval_mode_for_arg(signature, &bindings, index),
+                        Some(
+                            EvalMode::QuotedSymbol
+                                | EvalMode::QuotedExpression
+                                | EvalMode::CapturesPromise
+                                | EvalMode::DataMask
+                                | EvalMode::TidySelect
+                        )
+                    ) && self.evaluates_name(&argument.value, name)
+                });
+                if reads {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(Descend::Skip)
+                }
+            }
+            _ => ControlFlow::Continue(Descend::Into),
         })
-    };
-    params
-        .iter()
-        .filter(|formal| {
-            formal.name != parameter
-                && formal.name != "..."
-                && formal.default.as_ref().is_some_and(|default| {
-                    first_parameter_use_in_expr(default, parameter, None, &[], stubs)
-                        == Some(FirstParameterUse::Normal)
-                })
-                && !may_rebind(&formal.name)
-                && first_use(&formal.name) == Some(FirstParameterUse::Normal)
-        })
-        .map(|formal| formal.name.clone())
-        .collect()
+        .is_break()
+    }
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]

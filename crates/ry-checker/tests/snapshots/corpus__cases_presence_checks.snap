@@ -54,3 +54,21 @@ expression: rows
   diagnostics: []
 - case: missing() on the sibling formal does not run its default
   diagnostics: []
+- case: a sibling default that quotes or only probes the parameter does not force it
+  diagnostics: []
+- case: an empty actual for the sibling formal still runs its default
+  diagnostics:
+    - code: RY010
+      line: 198
+      message: "variable `not_a_column` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 199
+      message: "variable `not_a_column` is not bound in this scope"
+      severity: warning
+- case: a sibling default that reads the parameter after capturing it forces it
+  diagnostics:
+    - code: RY010
+      line: 207
+      message: "variable `not_a_column` is not bound in this scope"
+      severity: warning

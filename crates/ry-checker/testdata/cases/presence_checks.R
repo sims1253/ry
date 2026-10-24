@@ -160,3 +160,48 @@ select_probed <- function(data, col, label = col) {
   dplyr::select(data, {{ col }})
 }
 select_probed(mtcars, mpg)
+
+## case: a sibling default that quotes or only probes the parameter does not force it
+# no-diag
+select_bquoted <- function(data, col, label = bquote(col + 1)) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_bquoted(mtcars, mpg)
+select_quote <- function(data, col, label = quote(col)) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_quote(mtcars, mpg)
+select_formula <- function(data, col, label = ~col) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_formula(mtcars, mpg)
+select_deparsed <- function(data, col, label = deparse(substitute(col))) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_deparsed(mtcars, mpg)
+select_has <- function(data, col, has = !missing(col)) {
+  print(has)
+  dplyr::select(data, {{ col }})
+}
+select_has(mtcars, mpg)
+
+## case: an empty actual for the sibling formal still runs its default
+# expect: RY010, RY010
+select_labelled <- function(data, col, label = col) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_labelled(mtcars, not_a_column, )
+select_labelled(mtcars, not_a_column, label = )
+
+## case: a sibling default that reads the parameter after capturing it forces it
+# expect: RY010
+select_both <- function(data, col, label = { bquote(col); col }) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_both(mtcars, not_a_column)

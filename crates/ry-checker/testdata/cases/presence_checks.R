@@ -95,3 +95,123 @@ select_vendored <- function(data, col) {
   dplyr::select(data, {{ col }})
 }
 select_vendored(mtcars, carb)
+
+# A sibling formal whose default reads the parameter (`label = col`) forces
+# it when the body uses that formal first, unless the call supplies it
+# (#790).
+
+## case: using a sibling formal whose default reads the parameter forces it
+# expect: RY010
+select_labelled <- function(data, col, label = col) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_labelled(mtcars, not_a_column)
+
+## case: a call that supplies the sibling formal never runs its default
+# no-diag
+select_labelled <- function(data, col, label = col) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_labelled(mtcars, mpg, label = "miles")
+select_labelled(mtcars, cyl, "cylinders")
+forward_labelled <- function(...) select_labelled(mtcars, hp, ...)
+
+## case: a sibling formal rebound before its use never runs its default
+# no-diag
+select_relabelled <- function(data, col, label = col) {
+  label <- "fixed"
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_relabelled(mtcars, mpg)
+
+## case: a sibling default read after the parameter is rebound sees the local value
+# no-diag
+select_shadowed <- function(data, col, label = col) {
+  col <- "mpg"
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_shadowed(mtcars, not_a_column)
+
+## case: a sibling default read after the parameter is captured sees the capture
+# no-diag
+select_captured <- function(data, col, label = col) {
+  col <- rlang::enquo(col)
+  print(label)
+  dplyr::select(data, !!col)
+}
+select_captured(mtcars, mpg)
+
+## case: a sibling default that captures the parameter does not force it
+# no-diag
+select_quoted <- function(data, col, quo = rlang::enquo(col)) {
+  print(quo)
+  dplyr::select(data, {{ col }})
+}
+select_quoted(mtcars, mpg)
+
+## case: missing() on the sibling formal does not run its default
+# no-diag
+select_probed <- function(data, col, label = col) {
+  if (missing(label)) message("no label")
+  dplyr::select(data, {{ col }})
+}
+select_probed(mtcars, mpg)
+
+## case: a sibling default that quotes or only probes the parameter does not force it
+# no-diag
+select_bquoted <- function(data, col, label = bquote(col + 1)) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_bquoted(mtcars, mpg)
+select_quote <- function(data, col, label = quote(col)) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_quote(mtcars, mpg)
+select_expr <- function(data, col, label = rlang::expr(col)) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_expr(mtcars, mpg)
+select_expression <- function(data, col, label = expression(col)) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_expression(mtcars, mpg)
+select_formula <- function(data, col, label = ~col) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_formula(mtcars, mpg)
+select_deparsed <- function(data, col, label = deparse(substitute(col))) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_deparsed(mtcars, mpg)
+select_has <- function(data, col, has = !missing(col)) {
+  print(has)
+  dplyr::select(data, {{ col }})
+}
+select_has(mtcars, mpg)
+
+## case: an empty actual for the sibling formal still runs its default
+# expect: RY010, RY010
+select_labelled <- function(data, col, label = col) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_labelled(mtcars, not_a_column, )
+select_labelled(mtcars, not_a_column, label = )
+
+## case: a sibling default that reads the parameter after capturing it forces it
+# expect: RY010
+select_both <- function(data, col, label = { bquote(col); col }) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_both(mtcars, not_a_column)

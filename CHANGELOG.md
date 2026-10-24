@@ -94,6 +94,9 @@ All notable changes to ry are documented in this file.
   once the buffer parses again (#785).
 - The RY000 for a file ry cannot parse gives a character column, like every
   other finding, instead of a byte column after multibyte characters (#784).
+- RY010 reports a bare unbound name passed to a defused formal when the
+  call omits a sibling formal whose default reads it (`label = col`) and the
+  body uses that sibling before the embrace, since R then forces it (#790).
 - Stop selections from claiming their input's length. `return: "arg0"`
   combined with a `return_length` rule now keeps the first argument's mode
   and class but re-counts its elements, dropping whole-value facts; a data

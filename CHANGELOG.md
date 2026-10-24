@@ -243,6 +243,9 @@ All notable changes to ry are documented in this file.
   test of that parameter that ry cannot decide, such as `is_tensor(dims)`,
   `inherits(model, "ets") && is.null(lambda)` or `"values" %in% names(sel)`
   (#710).
+- Stop reporting a classless value inside the arm a mode test rejects when ry
+  typed it as the tested mode, such as the `else` of `is.numeric(shape)` on an
+  integer `shape`. R never enters that arm (#710).
 - Narrow through a local bound to a guard predicate, so
   `has_size <- !is.null(size); if (has_size) ...` drops the omitted `NULL`
   default like `if (!is.null(size))` does, until either name is rebound (#692).

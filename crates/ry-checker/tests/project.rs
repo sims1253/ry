@@ -2283,6 +2283,20 @@ fn on_load_block_assignments_are_package_bindings() {
     );
 }
 
+#[test]
+fn on_load_block_lazy_assignments_are_package_bindings() {
+    // rlang's `name %<~% expr` in an `on_load()` block binds `name` in the
+    // namespace to a promise (pkgload's lazy imports). A nested one still
+    // proves nothing.
+    let unbound = unbound_beside_module(
+        "on_load({\n  desc_desc %<~% desc::desc\n  rlang::`%<~%`(QUALIFIED, 1)\n})\n\
+         on_load(SINGLE %<~% 1)\n\
+         on_load(local({\n  NESTED %<~% 1\n}))\n",
+        "force_deps <- function() list(desc_desc, QUALIFIED, SINGLE, NESTED)\n",
+    );
+    assert_eq!(unbound, ["variable `NESTED` is not bound in this scope"]);
+}
+
 // RY010 messages for `use.R` after checking `module.R` beside it.
 fn unbound_beside_module(module: &str, use_src: &str) -> Vec<String> {
     let mut project = Project::new();

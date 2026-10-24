@@ -91,8 +91,9 @@ fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
 /// itself or a statement of its braced block counts; `<<-`, `assign()`,
 /// loop binders (as at top level), and anything nested deeper prove
 /// nothing. `evalqOnLoad()` does not count: an installed package evaluates
-/// its block in a child of the namespace.
-fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, &Expr)> {
+/// its block in a child of the namespace. rlang's lazy `name %<~% expr`
+/// binds `name` to a promise, so it comes with no value (`None`).
+fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, Option<&Expr>)> {
     stmts
         .iter()
         .filter_map(|stmt| match stmt {
@@ -127,8 +128,9 @@ fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, &Expr)>
                             if operation == span
                     ) =>
                     {
-                        Some((target, value))
+                        Some((target, Some(value)))
                     }
+                    Stmt::Expr(expr) => lazy_assignment_target(expr).map(|target| (target, None)),
                     _ => None,
                 })
                 .collect(),
@@ -137,9 +139,30 @@ fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, &Expr)>
                 lhs,
                 rhs,
                 ..
-            } => vec![(lhs.as_ref(), rhs.as_ref())],
-            _ => Vec::new(),
+            } => vec![(lhs.as_ref(), Some(rhs.as_ref()))],
+            _ => lazy_assignment_target(hook)
+                .map(|target| (target, None))
+                .into_iter()
+                .collect(),
         })
+}
+
+/// The `name` in rlang's `name %<~% expr` (or `` rlang::`%<~%`(name, expr) ``).
+fn lazy_assignment_target(expr: &Expr) -> Option<&Expr> {
+    match expr {
+        Expr::Call { func, args, .. }
+            if matches!(
+                func.as_ref(),
+                Expr::Ident { name, .. } if name == "%<~%" || name == "rlang::%<~%"
+            ) =>
+        {
+            match args.as_slice() {
+                [target, _] if target.name.is_none() => Some(&target.value),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Writes `node` can make outside the frame it runs in: a `<<-`, a
@@ -556,8 +579,9 @@ impl Checker {
         // Hooks run after every file is sourced. Their bindings register the
         // name only: rlang's hooks run only if `.onLoad()` calls
         // `run_on_load()`, so ry does not model their values.
+        let promise = Expr::Unknown(Span::default());
         for (target, value) in load_hook_assignments(stmts) {
-            self.register_binding(target, value);
+            self.register_binding(target, value.unwrap_or(&promise));
         }
         self.collect_capture_writes(stmts);
         let mut registered = FxSet::default();

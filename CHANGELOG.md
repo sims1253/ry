@@ -239,8 +239,8 @@ All notable changes to ry are documented in this file.
   positives in metafor, R.oo, terra, and gridGraphics (#689).
 - Keep every step of a nested replacement such as `x$f[[i]]$g <- v`: an
   index step ry does not model makes `x$f` forget its element types instead
-  of recording `x$f$g`, removing RY061 false positives in torch, forecast,
-  openxlsx, and rgl (#708).
+  of recording `x$f$g`, removing RY061 false positives in forecast and rgl
+  (#708).
 
 ## [0.11.0] - 2026-09-22
 

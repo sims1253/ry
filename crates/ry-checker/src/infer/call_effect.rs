@@ -182,6 +182,9 @@ impl Checker {
     /// the generics it may dispatch internally; a project or imported
     /// method for any of them could run arbitrary code.
     fn audited_base_call(&self, name: &str, args: &[Arg], scope: &Scope) -> bool {
+        if self.literal_c_call(name, args, scope) {
+            return true;
+        }
         let bare = bare_name(name);
         let Some(closure) = frame_effect_dispatch_closure(bare) else {
             return false;
@@ -210,6 +213,14 @@ impl Checker {
                         }));
         }
         dispatch_free
+    }
+
+    /// A base `c()` of scalar literals: it forces no promise and has no
+    /// class to dispatch on, so it runs no code beyond itself.
+    pub(crate) fn literal_c_call(&self, name: &str, args: &[Arg], scope: &Scope) -> bool {
+        bare_name(name) == "c"
+            && self.base_call_head(name, scope)
+            && args.iter().all(|arg| is_scalar_literal(&arg.value))
     }
 
     /// A head that resolves to base, including the `::`/`:::` operator of a
@@ -446,6 +457,37 @@ mod tests {
         assert_eq!(
             classify(&screened, "message('hi')"),
             vec![CallEffect::Unknown]
+        );
+    }
+
+    #[test]
+    fn c_is_inert_only_with_scalar_literal_arguments() {
+        let checker = checker_for("");
+        for (call, inert) in [
+            ("c('a', 'b')", true),
+            ("c(1L, NA, NULL, use.names = FALSE)", true),
+            ("base::c(TRUE)", true),
+            ("c()", true),
+            ("c(x)", false),
+            ("c('a', x)", false),
+            ("c(...)", false),
+            ("c(list('a'))", false),
+        ] {
+            assert_eq!(
+                classify(&checker, call),
+                vec![if inert {
+                    CallEffect::RunsCallerCode
+                } else {
+                    CallEffect::Unknown
+                }],
+                "{call}"
+            );
+        }
+        // A project `c` runs instead.
+        let masked = checker_for("c <- function(...) list(...)\n");
+        assert_ne!(
+            classify(&masked, "c('a')"),
+            vec![CallEffect::RunsCallerCode]
         );
     }
 

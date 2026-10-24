@@ -195,6 +195,9 @@ All notable changes to ry are documented in this file.
 - Count a passed `if` test such as `x == ""` or `!is.null(x) && x == ""` as
   proof that `x` is NULL or scalar, as `stopifnot` already did, so a later
   `is.null(x) || pred(x)` guard no longer reports a false RY032 (#702).
+- Count a passed `if (!x %in% c("a", "b"))` test as the same scalar proof, and
+  let a `c()` of literals keep scalar facts, so the later guard no longer
+  reports a false RY032 (#702).
 - Let an S3 generic inherit `{{ x }}` defusing from its project methods, as it
   already inherits `enquo()` quoting, so `generic(df, col = mpg)` no longer
   reports `mpg` as RY010 when the method forwards `{{ col }}` (#687).

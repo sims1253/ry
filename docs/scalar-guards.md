@@ -77,19 +77,25 @@ A passed `if` condition records the same fact
 ([#702](https://github.com/sims1253/ry/issues/702)). R errors unless the
 condition is TRUE or FALSE, so `if (x == "")`, `if (!is.null(x) && x == "")`,
 and `if (is.null(x) || x == "none")` prove `x` NULL or scalar after the
-statement, under the boundary above. Only a base comparison of the subject
-with a scalar literal counts, possibly negated, as the condition itself or as
-the tail of `||` behind `is.null(x)` or of `&&` behind `!is.null(x)`. An earlier operand
-proves nothing: an empty value is NA there, and `character(0) == "" && FALSE`
-is FALSE. Nor does `if (any(x == ""))`. A call in the condition, such as the
-`c()` in `!x %in% c("a", "b")`, ends the fact like any other call.
+statement, under the boundary above. Two tests count: a base comparison of
+the subject with a scalar literal, and a base `x %in% table` membership test.
+Either may be negated, and may be the whole condition, the tail of `||`
+behind `is.null(x)`, or the tail of `&&` behind `!is.null(x)`. An earlier
+operand proves nothing: an empty value is NA there, and
+`character(0) == "" && FALSE` is FALSE. Nor does `if (any(x == ""))`. The
+membership table must be a literal, a local value, or a `c()` of scalar
+literals, so evaluating it cannot replace the subject. Base `match` compares
+a classed subject through `mtfrm()`, and a project `mtfrm` method can return
+fewer elements than the subject has, so such a method disables the
+membership proof for a subject of unknown class.
 
 Scalar facts and adopted declaration identities
 ([declarations](declarations.md#shared-checking-boundary)) share one call
 rule. Only a few base calls keep the fact: `stopifnot`, `length`, `is.null`,
 `is.na`, `nchar`, `identical`, `inherits`, `missing`, `stop`, the
-`is.character`-style type predicates, and `message` with only character
-literal arguments. Each must resolve to base, and the project must not
+`is.character`-style type predicates, `message` with only character
+literal arguments, and `c` with only scalar literal arguments (it forces no
+promise and has no class to dispatch on). Each must resolve to base, and the project must not
 define or import a method for a generic the call dispatches internally:
 `length`, `is.na`, `nchar`, and `is.numeric` for themselves; `anyNA`,
 `is.na`, `all`, or the `Summary` group for a `stopifnot` predicate that is

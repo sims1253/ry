@@ -866,8 +866,34 @@ impl Checker {
                     (literal, Expr::Ident { name, .. }) if is_scalar_literal(literal) => name,
                     _ => return None,
                 };
-                self.scalar_assertion_class_safe(name, scope)
-                    .then_some(name.as_str())
+                self.scalar_assertion_class_safe(name, scope, || {
+                    self.project_defines_comparison_method()
+                })
+                .then_some(name.as_str())
+            }
+            // `x %in% table` has one element per element of `x`. Base
+            // `match` compares a classed `x` through `mtfrm()`, which a
+            // project method may shorten. Evaluating the table must not
+            // replace the subject, so it is a plain value or literal `c()`.
+            Expr::BinOp {
+                op: BinOpKind::In,
+                lhs,
+                rhs,
+                ..
+            } if not_rebound("%in%") => {
+                let Expr::Ident { name, .. } = lhs.as_ref() else {
+                    return None;
+                };
+                let pure_table = match rhs.as_ref() {
+                    Expr::Call { func, args, .. } => super::call::callee_name(func)
+                        .is_some_and(|callee| self.literal_c_call(&callee, args, scope)),
+                    table => self.scalar_assertion_pure_rhs(table, name, scope),
+                };
+                (pure_table
+                    && self.scalar_assertion_class_safe(name, scope, || {
+                        self.project_defines_method(|generic| generic == "mtfrm")
+                    }))
+                .then_some(name.as_str())
             }
             _ => None,
         }
@@ -946,7 +972,9 @@ impl Checker {
                     return None;
                 };
                 (self.scalar_assertion_subject_stable_on_force(scope)
-                    && self.scalar_assertion_class_safe(name, scope)
+                    && self.scalar_assertion_class_safe(name, scope, || {
+                        self.project_defines_comparison_method()
+                    })
                     && self.scalar_assertion_pure_rhs(assertion_rhs, name, scope))
                 .then(|| name.clone())
             }
@@ -1026,11 +1054,18 @@ impl Checker {
         }
     }
 
-    fn scalar_assertion_class_safe(&self, name: &str, scope: &Scope) -> bool {
+    /// A known unclassed subject reaches no method; one of unknown class is
+    /// safe unless the project defines a method the predicate dispatches.
+    fn scalar_assertion_class_safe(
+        &self,
+        name: &str,
+        scope: &Scope,
+        project_defines_method: impl FnOnce() -> bool,
+    ) -> bool {
         match scope.get(name).map(|ty| (ty.class.known, ty.class.len)) {
             Some((true, n)) if n > 0 => false,
             Some((true, 0)) if !scope.is_default_parameter(name) => true,
-            _ => !self.project_defines_comparison_method(),
+            _ => !project_defines_method(),
         }
     }
 

@@ -1697,7 +1697,9 @@ pub(crate) fn parameter_is_defused(
 /// col`) and which the body uses before `parameter`'s defused first use
 /// (#790). A call that omits one runs that default, which forces
 /// `parameter` first. A formal the body or a default may rebind is left
-/// out, since its default might never run.
+/// out, since its default might never run, and so is every formal when
+/// `parameter` itself may be rebound, since a default may then read the
+/// local value instead.
 fn defaults_forcing_parameter(
     body: &[Stmt],
     params: &[Param],
@@ -1705,6 +1707,15 @@ fn defaults_forcing_parameter(
     stubs: &BTreeMap<String, Typeshed>,
 ) -> Vec<String> {
     let default_writes = default_local_writes(params);
+    let may_rebind = |name: &str| {
+        default_writes.may_write(semantic_argument_name(name))
+            || body
+                .iter()
+                .any(|statement| statement_binds(statement, name))
+    };
+    if may_rebind(parameter) {
+        return Vec::new();
+    }
     let first_use = |alias: &str| {
         body.iter().find_map(|statement| {
             first_parameter_use_in_stmt(statement, parameter, Some(alias), &[], stubs)
@@ -1719,10 +1730,7 @@ fn defaults_forcing_parameter(
                     first_parameter_use_in_expr(default, parameter, None, &[], stubs)
                         == Some(FirstParameterUse::Normal)
                 })
-                && !default_writes.may_write(semantic_argument_name(&formal.name))
-                && !body
-                    .iter()
-                    .any(|statement| statement_binds(statement, &formal.name))
+                && !may_rebind(&formal.name)
                 && first_use(&formal.name) == Some(FirstParameterUse::Normal)
         })
         .map(|formal| formal.name.clone())

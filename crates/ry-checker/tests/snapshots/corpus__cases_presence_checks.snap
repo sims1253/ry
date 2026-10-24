@@ -46,6 +46,8 @@ expression: rows
   diagnostics: []
 - case: a sibling formal rebound before its use never runs its default
   diagnostics: []
+- case: a sibling default read after the parameter is rebound sees the local value
+  diagnostics: []
 - case: a sibling default read after the parameter is captured sees the capture
   diagnostics: []
 - case: a sibling default that captures the parameter does not force it

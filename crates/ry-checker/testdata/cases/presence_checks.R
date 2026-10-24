@@ -127,6 +127,15 @@ select_relabelled <- function(data, col, label = col) {
 }
 select_relabelled(mtcars, mpg)
 
+## case: a sibling default read after the parameter is rebound sees the local value
+# no-diag
+select_shadowed <- function(data, col, label = col) {
+  col <- "mpg"
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_shadowed(mtcars, not_a_column)
+
 ## case: a sibling default read after the parameter is captured sees the capture
 # no-diag
 select_captured <- function(data, col, label = col) {

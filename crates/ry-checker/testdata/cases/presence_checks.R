@@ -173,6 +173,16 @@ select_quote <- function(data, col, label = quote(col)) {
   dplyr::select(data, {{ col }})
 }
 select_quote(mtcars, mpg)
+select_expr <- function(data, col, label = rlang::expr(col)) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_expr(mtcars, mpg)
+select_expression <- function(data, col, label = expression(col)) {
+  print(label)
+  dplyr::select(data, {{ col }})
+}
+select_expression(mtcars, mpg)
 select_formula <- function(data, col, label = ~col) {
   print(label)
   dplyr::select(data, {{ col }})

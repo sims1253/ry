@@ -845,30 +845,38 @@ fn disjoint_mode_guard(scope: &Scope, var: &str, existing: &RType, target: &RTyp
     disjoint || classed_numeric_guard(existing, target)
 }
 
-/// `is.numeric` is the one mode predicate that dispatches: base methods make
-/// it FALSE for a Date, POSIXt or difftime value, and a factor is not numeric
-/// either. On a classed value its passing branch is dead, or reached through
-/// a method ry does not see, so that branch sees an unknown value too.
+/// `is.numeric` dispatches: base's `is.numeric.Date`, `is.numeric.POSIXt`
+/// and `is.numeric.difftime` return FALSE, and so does the primitive for a
+/// factor. Any other class keeps `is.numeric()` TRUE for an integer or
+/// double. The passing branch is dead when every value carries one of these
+/// classes.
 fn classed_numeric_guard(existing: &RType, target: &RType) -> bool {
+    let non_numeric = |cv: &ClassVector| {
+        ["Date", "POSIXt", "difftime", "factor"]
+            .iter()
+            .any(|class| cv.contains(class))
+    };
     let numeric_test = is_mode_predicate(target)
         && target.members.as_ref().is_some_and(|members| {
             members.len() == 2
                 && members.iter().any(|member| member.mode == Mode::Integer)
                 && members.iter().any(|member| member.mode == Mode::Double)
+                && members.iter().all(|member| !member.class.has_known_class())
         });
     numeric_test
-        && (existing.class.has_known_class()
-            || existing
-                .members
-                .as_ref()
-                .is_some_and(|members| members.iter().any(|member| member.class.has_known_class())))
+        && (non_numeric(&existing.class)
+            || existing.members.as_ref().is_some_and(|members| {
+                !members.is_empty() && members.iter().all(|member| non_numeric(&member.class))
+            }))
 }
 
-/// A failing class test (`!inherits(x, "Date")`) on a value whose known
+/// A failing class test (`!inherits(x, "Date")`) on a value whose fully known
 /// classes include every tested class: R never enters that branch.
 fn proven_class_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
     target.class.has_known_class()
         && existing.class.has_known_class()
+        && !existing.class.guarded
+        && (existing.class.len as usize) < existing.class.names.len()
         && !scope.is_default_parameter(var)
         && target
             .class

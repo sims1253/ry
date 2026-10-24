@@ -266,6 +266,13 @@ h <- function() {
   if (!inherits(x, "Date")) x$y
 }
 
+## case: is.numeric() stays TRUE for a custom class over a double
+# expect: RY061
+# Only Date, POSIXt, difftime and factor make is.numeric() FALSE, so this
+# branch runs and its `$` errors.
+x <- structure(1, class = "myclass")
+if (is.numeric(x)) x$y
+
 ## case: a project $ method for the receiver's class keeps $ quiet
 # no-diag
 `$.myclass` <- function(x, name) name
@@ -291,3 +298,30 @@ y <- Sys.Date()$year
 # no-diag
 eval(parse(text = "`$.Date` <- function(x, name) 1"))
 y <- Sys.Date()$year
+
+## case: a function-local $ method keeps $ quiet
+# no-diag
+f <- function() {
+  `$.myclass` <- function(x, name) 1
+  x <- structure(1, class = "myclass")
+  x$field
+}
+
+## case: a $ method in an enclosing function keeps $ quiet
+# no-diag
+f <- function() {
+  `$.myclass` <- function(x, name) 1
+  g <- function() {
+    x <- structure(1, class = "myclass")
+    x$field
+  }
+  g()
+}
+
+## case: a $ method in a script's local environment keeps $ quiet
+# no-diag
+y <- local({
+  `$.myclass` <- function(x, name) 1
+  x <- structure(1, class = "myclass")
+  x$field
+})

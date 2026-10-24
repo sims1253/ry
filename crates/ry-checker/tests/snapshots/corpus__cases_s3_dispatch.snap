@@ -160,12 +160,18 @@ expression: rows
       severity: error
 - case: $ under a dead class test on Sys.Date() is not flagged
   diagnostics: []
+- case: is.numeric() stays TRUE for a custom class over a double
+  diagnostics:
+    - code: RY061
+      line: 274
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
 - case: "a project $ method for the receiver's class keeps $ quiet"
   diagnostics: []
 - case: a classed atomic without any $ method is invalid
   diagnostics:
     - code: RY061
-      line: 278
+      line: 285
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
 - case: a project $.Date method keeps $ on Sys.Date() quiet
@@ -173,4 +179,10 @@ expression: rows
 - case: an unknown attached package may define the $ method
   diagnostics: []
 - case: a project that may install bindings may define the $ method
+  diagnostics: []
+- case: a function-local $ method keeps $ quiet
+  diagnostics: []
+- case: a $ method in an enclosing function keeps $ quiet
+  diagnostics: []
+- case: "a $ method in a script's local environment keeps $ quiet"
   diagnostics: []

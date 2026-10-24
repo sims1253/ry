@@ -263,9 +263,10 @@ All notable changes to ry are documented in this file.
 - Vendor r-typeshed a7838670: `Sys.Date()` returns a `Date` and `Sys.time()`
   a `POSIXct`. RY061 still reports `$` on them, and on any classed atomic
   value, when no `$.<class>` method exists in the stubs, the project, its
-  registrations or its imports. A passing `is.numeric()` or failing
-  `inherits()` test on a value of a known class no longer reports code R
-  never runs.
+  registrations, its imports or the enclosing scope. Code under a passing
+  `is.numeric()` on a Date, POSIXt, difftime or factor value, or under a
+  failing `inherits()` test of a class the value is known to carry, is no
+  longer reported: R never runs it.
 
 ## [0.11.0] - 2026-09-22
 

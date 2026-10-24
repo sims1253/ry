@@ -169,11 +169,11 @@ impl Checker {
         let members = receiver.members.iter().flat_map(|members| members.iter());
         std::iter::once(receiver)
             .chain(members)
-            .any(|ty| self.class_may_have_dollar_method(&ty.class))
+            .any(|ty| self.class_may_have_dollar_method(&ty.class, scope))
     }
 
-    fn class_may_have_dollar_method(&self, cv: &ClassVector) -> bool {
-        if cv.is_unknown() || cv.guarded || usize::from(cv.len) >= cv.names.len() {
+    fn class_may_have_dollar_method(&self, cv: &ClassVector, scope: &Scope) -> bool {
+        if cv.is_unknown() || cv.guarded || cv.len as usize >= cv.names.len() {
             return true;
         }
         cv.names
@@ -183,7 +183,10 @@ impl Checker {
             .any(|class| {
                 let method = format!("$.{class}");
                 let named = |name: &String| semantic_argument_name(name) == method;
-                self.s3_lookup_method("$", class).is_some()
+                // A local or enclosing binding counts, as for `UseMethod`
+                // (`caller_method_may_shadow`); it is spelled `` `$.cls` ``.
+                scope.bindings.keys().any(named)
+                    || self.s3_lookup_method("$", class).is_some()
                     || self.fn_table.functions.names().any(named)
                     || self.fn_table.known_vars.iter().any(named)
                     || self.fn_table.registered_s3_methods.iter().any(named)

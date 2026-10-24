@@ -72,3 +72,15 @@ expression: rows
       line: 217
       message: "variable `not_a_column` is not bound in this scope"
       severity: warning
+- case: a formal only a sibling default captures is never forced
+  diagnostics: []
+- case: a formal the body also forces is evaluated despite the capturing default
+  diagnostics:
+    - code: RY010
+      line: 244
+      message: "variable `not_a_column` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 245
+      message: "variable `not_a_column` is not bound in this scope"
+      severity: warning

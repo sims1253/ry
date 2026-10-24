@@ -97,6 +97,9 @@ All notable changes to ry are documented in this file.
 - RY010 reports a bare unbound name passed to a defused formal when the
   call omits a sibling formal whose default reads it (`label = col`) and the
   body uses that sibling before the embrace, since R then forces it (#790).
+- RY010 no longer reports a bare name passed to a formal that only a used
+  sibling's default captures (`q = rlang::enquo(col)`), since R never
+  forces it (#793).
 - Stop selections from claiming their input's length. `return: "arg0"`
   combined with a `return_length` rule now keeps the first argument's mode
   and class but re-counts its elements, dropping whole-value facts; a data

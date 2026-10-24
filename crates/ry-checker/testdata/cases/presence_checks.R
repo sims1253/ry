@@ -215,3 +215,31 @@ select_both <- function(data, col, label = { bquote(col); col }) {
   dplyr::select(data, {{ col }})
 }
 select_both(mtcars, not_a_column)
+
+# A formal that only a sibling default captures (`q = rlang::enquo(col)`)
+# is never forced: a call that omits the sibling captures the actual, and a
+# call that supplies it never touches the actual (#793).
+
+## case: a formal only a sibling default captures is never forced
+# no-diag
+select_enquoted <- function(data, col, q = rlang::enquo(col)) {
+  print(q)
+  dplyr::select(data, !!q)
+}
+select_enquoted(mtcars, mpg)
+select_enquoted(mtcars, not_a_column, q = rlang::quo(mpg))
+select_named <- function(data, col, label = deparse(substitute(col))) {
+  print(label)
+  data
+}
+select_named(mtcars, mpg)
+
+## case: a formal the body also forces is evaluated despite the capturing default
+# expect: RY010, RY010
+select_enquoted_forced <- function(data, col, q = rlang::enquo(col)) {
+  print(q)
+  print(col)
+  dplyr::select(data, !!q)
+}
+select_enquoted_forced(mtcars, not_a_column)
+select_enquoted_forced(mtcars, not_a_column, q = rlang::quo(mpg))

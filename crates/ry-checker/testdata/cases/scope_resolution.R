@@ -782,3 +782,33 @@ asserted <- function(kind = "warning") {
   kind
 }
 on_error <- function(x) tryCatch(x, error = function(c) FALSE)
+
+## case: a project-defined destructuring operator binds its pattern names
+# no-diag
+# rlang's standalone-zeallot.R and ggdist define their own `%<-%`; like
+# zeallot's, it assigns each pattern name in the caller's frame (#706).
+`%<-%` <- function(lhs, value) {
+  lhs <- substitute(lhs)
+  env <- parent.frame()
+  vars <- as.list(lhs[-1])
+  for (i in seq_along(vars)) assign(as.character(vars[[i]]), value[[i]], envir = env)
+  invisible(value)
+}
+f <- function() {
+  found <- NULL
+  c(found, other) %<-% list(TRUE, 2)
+  if (found) other
+}
+
+## case: a project-defined destructuring operator leaves other names alone
+# expect: RY001
+`%<-%` <- function(lhs, value) {
+  vars <- as.character(substitute(lhs)[-1])
+  for (i in seq_along(vars)) assign(vars[[i]], value[[i]], envir = parent.frame())
+}
+f <- function() {
+  found <- NULL
+  stale <- NULL
+  c(found) %<-% list(TRUE)
+  if (stale) 1
+}

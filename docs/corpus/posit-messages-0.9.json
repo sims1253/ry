@@ -2268,15 +2268,6 @@
       "severity": "warning",
       "message": "argument `convert = FALSE` to `r_to_py_impl` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `convert` value is silently ignored; forward it as `convert = convert` instead"
     },
-    "rlang::RY001::R/cnd-abort.R:548:7": {
-      "package": "rlang",
-      "code": "RY001",
-      "path": "R/cnd-abort.R",
-      "line": 548,
-      "column": 7,
-      "severity": "warning",
-      "message": "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
     "rlang::RY040::tests/testthat/test-cnd-entrace.R:284:28": {
       "package": "rlang",
       "code": "RY040",

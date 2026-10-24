@@ -2565,15 +2565,6 @@
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
-    "tensorflow::RY061::R/generics.R:805:34": {
-      "package": "tensorflow",
-      "code": "RY061",
-      "path": "R/generics.R",
-      "line": 805,
-      "column": 34,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `integer`"
-    },
     "testthat::RY000::tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:6:1": {
       "package": "testthat",
       "code": "RY000",

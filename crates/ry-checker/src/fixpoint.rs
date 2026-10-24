@@ -346,9 +346,11 @@ impl Checker {
         self.return_slots.get(slot)
     }
 
-    /// A generic must allow the quoting and injection behavior of its known
-    /// methods. Union their parameter metadata because any selected method
-    /// may capture the supplied arguments.
+    /// A generic must allow the quoting, defusing, and injection behavior of
+    /// its known methods. Union their parameter metadata because any selected
+    /// method may capture the supplied arguments: `UseMethod()` passes the
+    /// generic's promises on unevaluated, so `{{ col }}` in a method defuses
+    /// the generic's actual.
     fn propagate_s3_generic_evaluation(
         &mut self,
         methods: &HashMap<String, Vec<String>>,
@@ -356,6 +358,15 @@ impl Checker {
         let mut inherited = Vec::new();
         for (name, method_names) in methods {
             let generic = &self.fn_table.functions[name];
+            // A statement before `UseMethod()` that may read a formal,
+            // directly or through a default, can force the caller's argument
+            // before a method defuses it (#774).
+            let preamble = generic
+                .body
+                .split_last()
+                .map(|(_, preamble)| preamble)
+                .unwrap_or_default();
+            let read = collect::formals_read_by(preamble, &generic.source_params);
             let dots = generic
                 .params
                 .iter()
@@ -363,7 +374,7 @@ impl Checker {
             for method_name in method_names {
                 let method = &self.fn_table.functions[method_name];
                 for parameter in &method.params {
-                    if !parameter.quoting && parameter.injection.is_none() {
+                    if !parameter.quoting && !parameter.defused && parameter.injection.is_none() {
                         continue;
                     }
                     let target = match generic
@@ -379,11 +390,14 @@ impl Checker {
                         // `generic(x, ...)` / `generic.class(x, column, ...)`.
                         None => dots,
                     };
-                    if let Some(target) = target {
+                    if let Some(target) = target
+                        && !read.contains(&generic.params[target].name.as_str())
+                    {
                         inherited.push((
                             name.clone(),
                             target,
                             parameter.quoting,
+                            parameter.defused,
                             parameter.injection,
                         ));
                     }
@@ -393,13 +407,13 @@ impl Checker {
 
         let table = Arc::make_mut(&mut self.fn_table);
         let mut changed = HashSet::new();
-        for (generic, position, quoting, injection) in inherited {
+        for (generic, position, quoting, defused, injection) in inherited {
             let slot = table.functions[&generic].return_slot;
             if let Some(parameter) = table
                 .functions
                 .live_mut(&generic)
                 .and_then(|function| function.params.get_mut(position))
-                && inherit_nse_flags(parameter, quoting, false, injection)
+                && inherit_nse_flags(parameter, quoting, defused, injection)
             {
                 changed.insert(slot);
             }
@@ -413,6 +427,9 @@ impl Checker {
     /// `callee(f(p))` evaluate `p` before the callee can capture it.
     fn propagate_forwarded_evaluation(&mut self) -> HashSet<usize> {
         let mut inherited = Vec::new();
+        // Per caller formal: each forwarding call to a project function, and
+        // whether the formal it reaches is only tested with `missing()`.
+        let mut probes: HashMap<(String, String), Vec<(usize, bool)>> = HashMap::new();
 
         for call in &self.fn_table.forwarded_calls {
             let Some(caller) = self.fn_table.functions.live_named(&call.caller) else {
@@ -474,6 +491,14 @@ impl Checker {
                 let Some(target) = target else {
                     continue;
                 };
+                if let Some(callee) = user_callee
+                    && source != "..."
+                {
+                    probes
+                        .entry((call.caller.clone(), source.clone()))
+                        .or_default()
+                        .push((call.call_start, callee.params[target].missing_only));
+                }
                 // Capturing a promise does not imply quoting every caller expression:
                 // mixed-use wrappers still need diagnostics inside their arguments.
                 let inherits_quoting = if let Some(callee) = user_callee {
@@ -517,6 +542,36 @@ impl Checker {
                         inherits_injection,
                     ));
                 }
+            }
+        }
+
+        // A validator such as `check_not_missing(col)` only tests whether
+        // `col` was supplied, so the caller's first use is the next one.
+        for ((caller, parameter), calls) in probes {
+            // `f(col, col)` reaches two formals: skip the call only if both
+            // are missing-only.
+            let mut by_call: HashMap<usize, bool> = HashMap::new();
+            for (start, only) in calls {
+                *by_call.entry(start).or_insert(true) &= only;
+            }
+            let skipped: Vec<usize> = by_call
+                .into_iter()
+                .filter_map(|(start, only)| only.then_some(start))
+                .collect();
+            if let Some(function) = self.fn_table.functions.live_named(&caller)
+                && !skipped.is_empty()
+                && function
+                    .params
+                    .iter()
+                    .any(|param| param.name == parameter && !param.defused)
+                && collect::parameter_is_defused(
+                    &function.body,
+                    &parameter,
+                    &skipped,
+                    &self.user_stubs,
+                )
+            {
+                inherited.push((caller, parameter, false, true, None));
             }
         }
 
@@ -732,5 +787,27 @@ mod tests {
         ] {
             compare(source);
         }
+    }
+
+    #[test]
+    fn missing_only_validator_call_is_not_a_first_use() {
+        let (checker, _) = compare(
+            "check <- function(x, arg = substitute(x), envir = environment()) {\n\
+               if (missing(x)) stop(arg)\n\
+             }\n\
+             forces <- function(x) { if (missing(x)) stop(); x }\n\
+             checked <- function(col) { check(col); substitute(col) }\n\
+             forced <- function(col) { forces(col); substitute(col) }\n\
+             unknown <- function(col) { validate(col); substitute(col) }\n\
+             curried <- function(col) { check(col)(col); substitute(col) }\n\
+             dispatch <- function(x) UseMethod(\"dispatch\")\n",
+        );
+        let param = |name: &str| &checker.fn_table.functions[name].params[0];
+        assert!(param("check").missing_only && !param("forces").missing_only);
+        assert!(!param("dispatch").missing_only);
+        assert!(param("checked").defused);
+        assert!(!param("forced").defused);
+        assert!(!param("unknown").defused);
+        assert!(!param("curried").defused);
     }
 }

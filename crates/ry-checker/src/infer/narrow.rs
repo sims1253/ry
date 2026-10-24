@@ -1,6 +1,9 @@
 //! Type facts established by guards and assertions.
 
 use super::*;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
+use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 
 /// A type refinement extracted from an `if` condition. Represents the
 /// information we can glean from a type predicate call like
@@ -45,25 +48,34 @@ pub(crate) enum Narrowing {
     /// A true guard proves that the loop-carried vector alternative cannot
     /// reach its body. This does not rewrite the binding's general RType.
     ScalarThen { var: String },
+    /// `!missing(x)`: the caller supplied `x` in the then branch, so a
+    /// defaulted parameter's omitted-call type does not describe it.
+    Supplied { var: String },
 }
 
 impl Narrowing {
     /// Whether any fact in this narrowing is about one of `names`.
     pub(crate) fn mentions_any(&self, names: &HashSet<String>) -> bool {
-        if names.is_empty() {
-            return false;
-        }
+        !names.is_empty() && self.mentions_where(&|var| names.contains(var))
+    }
+
+    /// Whether any fact in this narrowing is about `name`.
+    pub(crate) fn mentions(&self, name: &str) -> bool {
+        self.mentions_where(&|var| var == name)
+    }
+
+    fn mentions_where(&self, about: &dyn Fn(&str) -> bool) -> bool {
         match self {
             Narrowing::Compound {
                 base,
                 on_true,
                 on_false,
             } => {
-                base.mentions_any(names)
+                base.mentions_where(about)
                     || on_true
                         .iter()
                         .chain(on_false)
-                        .any(|narrowing| narrowing.mentions_any(names))
+                        .any(|narrowing| narrowing.mentions_where(about))
             }
             Narrowing::None => false,
             Narrowing::Positive { var, .. }
@@ -71,7 +83,8 @@ impl Narrowing {
             | Narrowing::Else { var, .. }
             | Narrowing::NonNullElse { var }
             | Narrowing::ScalarElse { var, .. }
-            | Narrowing::ScalarThen { var } => names.contains(var),
+            | Narrowing::ScalarThen { var }
+            | Narrowing::Supplied { var } => about(var),
         }
     }
 }
@@ -109,11 +122,23 @@ fn predicate_call_target(name: &str, args: &[Arg]) -> Option<RType> {
 }
 
 pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
+    if let Some(var) = non_empty_length_guard_var(cond) {
+        return non_null_then(var);
+    }
     match cond {
         Expr::Call { func, args, .. } => {
             let Expr::Ident { name, .. } = func.as_ref() else {
                 return Narrowing::None;
             };
+            if let Some(var) = missing_test_var(cond) {
+                // Compound facts apply as then-branch facts: the else
+                // branch of `missing(x)` has `x` supplied.
+                return Narrowing::Compound {
+                    base: Box::new(Narrowing::None),
+                    on_true: Vec::new(),
+                    on_false: vec![Narrowing::Supplied { var }],
+                };
+            }
             let Some(target) = predicate_call_target(name, args) else {
                 return Narrowing::None;
             };
@@ -133,6 +158,9 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
         } => {
             if let Some(var) = length_guard_var(expr) {
                 return Narrowing::NonNullElse { var };
+            }
+            if let Some(var) = missing_test_var(expr) {
+                return Narrowing::Supplied { var };
             }
             let Expr::Call { func, args, .. } = expr.as_ref() else {
                 return Narrowing::None;
@@ -190,15 +218,21 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             // A true conjunction proves each conjunct.  In particular,
             // `if (ready & !is.null(x))` makes `x` non-null in the body;
             // retaining the NULL default there fabricates length-zero
-            // comparisons such as `x %in% c("a", "b")`.
-            for operand in [lhs.as_ref(), rhs.as_ref()] {
-                if let Narrowing::Negative { var, target } = extract_builtin_type_narrowing(operand)
-                    && target.mode == Mode::Null
-                {
-                    return Narrowing::Negative { var, target };
-                }
+            // comparisons such as `x %in% c("a", "b")`. Every conjunct
+            // counts (`!is.null(a) && !is.null(b)` proves both), and a
+            // false conjunction proves none.
+            let on_true: Vec<Narrowing> = [lhs.as_ref(), rhs.as_ref()]
+                .into_iter()
+                .flat_map(|operand| non_null_then_facts(extract_builtin_type_narrowing(operand)))
+                .collect();
+            if on_true.is_empty() {
+                return Narrowing::None;
             }
-            Narrowing::None
+            Narrowing::Compound {
+                base: Box::new(Narrowing::None),
+                on_true,
+                on_false: Vec::new(),
+            }
         }
         _ => Narrowing::None,
     }
@@ -261,6 +295,70 @@ fn scalar_false_path_fact(expr: &Expr) -> Option<(String, Option<RType>)> {
     let var = leaves.iter().find_map(length_not_one_var)?;
     let target = leaves.iter().find_map(|leaf| false_path_target(leaf, &var));
     Some((var, target))
+}
+
+/// A then-branch-only non-NULL fact; the else branch learns nothing.
+fn non_null_then(var: String) -> Narrowing {
+    Narrowing::Compound {
+        base: Box::new(Narrowing::None),
+        on_true: vec![Narrowing::Negative {
+            var,
+            target: RType::new(Mode::Null, Length::Zero),
+        }],
+        on_false: Vec::new(),
+    }
+}
+
+/// The non-NULL facts a true conjunct proves: `!is.null(x)`, or the
+/// facts of a nested conjunction or length guard.
+fn non_null_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
+    match conjunct {
+        fact if is_non_null_fact(&fact) => vec![fact],
+        Narrowing::Compound { base, on_true, .. }
+            if matches!(*base, Narrowing::None) && on_true.iter().all(is_non_null_fact) =>
+        {
+            on_true
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn is_non_null_fact(fact: &Narrowing) -> bool {
+    matches!(fact, Narrowing::Negative { target, .. } if target.mode == Mode::Null)
+}
+
+/// The `x` of `length(x) == 1` or `length(x) > 0`: both are FALSE for NULL.
+fn non_empty_length_guard_var(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::BinOp {
+            op: BinOpKind::Eq,
+            lhs,
+            rhs,
+            ..
+        } => length_guard_var(compared_with_one(lhs, rhs)?),
+        Expr::BinOp {
+            op: BinOpKind::Gt,
+            lhs,
+            rhs,
+            ..
+        } if is_literal_eq(rhs, 0.0) => length_guard_var(lhs),
+        _ => None,
+    }
+}
+
+/// The argument of a `missing(x)` call, bare or with any `pkg::` prefix
+/// (`bare_name`), as the supply analysis's `is_missing_head` reads it.
+/// A qualified head is still an `Expr::Ident`, so `missing(x)` and
+/// `!missing(x)` accept the same forms.
+fn missing_test_var(expr: &Expr) -> Option<String> {
+    let Expr::Call { func, args, .. } = expr else {
+        return None;
+    };
+    let name = ident_name(func)?;
+    if crate::semantic_lists::bare_name(name) != "missing" || args.len() != 1 {
+        return None;
+    }
+    first_arg_ident(args)
 }
 
 fn length_guard_var(expr: &Expr) -> Option<String> {
@@ -553,7 +651,7 @@ fn apply_single_narrowing_branch<'a>(
             // class targets and incompatible parameter defaults
             // do install.
             if let Some(existing) = scope.get(var).cloned() {
-                if disjoint_function_guard(scope, var, &existing, target) {
+                if disjoint_mode_guard(scope, var, &existing, target) {
                     scope.insert_narrowed(var.clone(), RType::unknown());
                     return Some(var.as_str());
                 }
@@ -609,6 +707,14 @@ fn apply_single_narrowing_branch<'a>(
                     scope.insert_narrowed(var.clone(), narrowed);
                     return Some(var.as_str());
                 }
+                // `is.null(x)` leaves a NULL default's type unchanged but
+                // proves it on this path, so a later `Supplied` keeps it.
+                if target.mode == Mode::Null
+                    && existing.mode == Mode::Null
+                    && scope.is_default_parameter(var)
+                {
+                    scope.insert_narrowed(var.clone(), existing);
+                }
             }
         }
         (Narrowing::Positive { var, target }, NarrowingBranch::Else)
@@ -622,29 +728,12 @@ fn apply_single_narrowing_branch<'a>(
             // When a mode predicate's false path proves the runtime value
             // is not any tested mode, the default-derived mode cannot
             // describe it here; degrade to unknown in this branch only.
-            // Mode predicates carry a concrete or union mode and no class
-            // claim. `Mode::Opaque` targets are class predicates
-            // (`inherits`, `is.<class>`), and a concrete
-            // mode target can still carry an explicit class
-            // (`is.data.frame` is list + "data.frame"; stub-declared
-            // predicates can express the same shape) — a false path there
-            // rejects the class claim, not the mode, so
-            // `has_known_class()` targets never degrade. Locals keep their
+            // A class predicate's false path rejects the class claim, not
+            // the mode, so it never degrades. Locals keep their
             // type (their rejected branch is genuinely unreachable), mixed
             // unions keep any surviving member, and a rebinding clears the
             // default-parameter marker before this can apply.
-            if matches!(
-                target.mode,
-                Mode::Logical
-                    | Mode::Integer
-                    | Mode::Double
-                    | Mode::Character
-                    | Mode::Complex
-                    | Mode::Raw
-                    | Mode::List
-                    | Mode::Function
-                    | Mode::Union
-            ) && !target.class.has_known_class()
+            if is_mode_predicate(target)
                 && scope.is_default_parameter(var)
                 && let Some(existing) = scope.get(var)
                 && type_is_exactly_tested_family(existing, target)
@@ -690,18 +779,55 @@ fn apply_single_narrowing_branch<'a>(
         (Narrowing::ScalarThen { var }, NarrowingBranch::Then) => {
             scope.clear_loop_vector(var);
         }
+        // Only the omitted-call type goes; an earlier guard's fact stays.
+        (Narrowing::Supplied { var }, NarrowingBranch::Then)
+            if scope.is_default_parameter(var) && !scope.narrowed_bindings.contains(var) =>
+        {
+            scope.insert_narrowed(var.clone(), RType::unknown());
+            return Some(var.as_str());
+        }
         _ => {}
     }
     None
 }
 
-/// A passing function guard on a binding ry typed with no function member,
-/// other than a default parameter (which installs the function). Either the
-/// branch is dead or a caller passed what ry's type misses. Calling the value
-/// cannot fail there, but a function type would make dead branches report
-/// arithmetic on it, so the branch sees an unknown value instead (#741).
-fn disjoint_function_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
-    target.mode == Mode::Function
+/// The target of a predicate a compound guard accepts: a one-argument
+/// type predicate, or `inherits(x, "cls")` with a literal class.
+fn compound_predicate_target(name: &str, args: &[Arg]) -> Option<RType> {
+    match crate::semantic_lists::bare_name(name) {
+        "inherits" if args.len() == 2 => predicate_call_target("inherits", args),
+        name if args.len() == 1 => predicate_target(name),
+        _ => None,
+    }
+}
+
+/// Whether `target` tests only a mode (`is.list`, `is.numeric`, ...).
+/// `Mode::Opaque` targets are class predicates (`inherits`, `is.<class>`),
+/// and a concrete mode can still carry a class claim (`is.data.frame` is
+/// list + "data.frame").
+fn is_mode_predicate(target: &RType) -> bool {
+    matches!(
+        target.mode,
+        Mode::Logical
+            | Mode::Integer
+            | Mode::Double
+            | Mode::Character
+            | Mode::Complex
+            | Mode::Raw
+            | Mode::List
+            | Mode::Function
+            | Mode::Union
+    ) && !target.class.has_known_class()
+}
+
+/// A passing mode guard on a binding ry typed with no member of the tested
+/// mode, other than a default parameter (which installs the tested type).
+/// Either the branch is dead or a caller passed what ry's type misses. The
+/// tested type would make dead branches report errors on it (`dof + 1`
+/// under `is.character(dof)`), so the branch sees an unknown value instead
+/// (#741, #752).
+fn disjoint_mode_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
+    is_mode_predicate(target)
         && !existing.mode.is_unknown_or_non_vector()
         && existing.mode != Mode::Null
         && !scope.is_default_parameter(var)
@@ -712,7 +838,7 @@ fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> b
     let Some(existing) = scope.get(var).cloned() else {
         return false;
     };
-    if disjoint_function_guard(scope, var, &existing, target) {
+    if disjoint_mode_guard(scope, var, &existing, target) {
         scope.insert_narrowed(var.to_string(), RType::unknown());
         return true;
     }
@@ -750,12 +876,11 @@ impl Checker {
                 let Some(name) = ident_name(func) else {
                     return false;
                 };
-                predicate_target(crate::semantic_lists::bare_name(name)).is_some()
+                compound_predicate_target(name, args).is_some()
                     && self.resolves_to_base(name, scope)
                     && !scope.data_mask_unknown
                     && !scope.uncertainty.effects
-                    && args.len() == 1
-                    && matches!(args[0].value, Expr::Ident { .. })
+                    && matches!(args.first().map(|arg| &arg.value), Some(Expr::Ident { .. }))
             }
             _ => false,
         }
@@ -776,8 +901,8 @@ impl Checker {
                 ..
             } => Self::compound_guard_facts(expr, !truth),
             Expr::Call { func, args, .. } => {
-                let Some(target) = ident_name(func)
-                    .and_then(|name| predicate_target(crate::semantic_lists::bare_name(name)))
+                let Some(target) =
+                    ident_name(func).and_then(|name| compound_predicate_target(name, args))
                 else {
                     return Vec::new();
                 };
@@ -878,6 +1003,153 @@ impl Checker {
             target: guard_target(json_rtype_to_rtype(&predicate.target)),
         }
     }
+
+    /// The narrowing for a condition that selects code: an `if` test, the
+    /// left of `&&`/`||`, or an assertion (`stopifnot()`) whose passing path
+    /// is the continuation. A defaulted parameter's type describes only the
+    /// omitted-argument call shape (`diagnostic_parameter_type`). A passing
+    /// test that reads it but proves nothing about it (`is_tensor(dims)`,
+    /// `"pt" %in% colnames(width)`) may be exactly the test that default
+    /// fails, so the arm it selects sees what a supplied argument would
+    /// (#710).
+    pub(crate) fn extract_branch_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
+        // `if (has_x)` / `if (!has_x)` test the predicate `has_x` holds.
+        let negated;
+        let cond = match cond {
+            Expr::Ident { name, .. } => scope.condition_alias(name).unwrap_or(cond),
+            Expr::UnaryOp {
+                op: UnaryOpKind::Not,
+                expr,
+                span,
+            } => match ident_name(expr).and_then(|name| scope.condition_alias(name)) {
+                Some(alias) => {
+                    negated = Expr::UnaryOp {
+                        op: UnaryOpKind::Not,
+                        expr: Box::new(alias.clone()),
+                        span: *span,
+                    };
+                    &negated
+                }
+                None => cond,
+            },
+            _ => cond,
+        };
+        let narrowing = self.extract_type_narrowing(cond, scope);
+        if scope.default_parameter_bindings.is_empty() {
+            return narrowing;
+        }
+        let undecided = |truth: bool| -> Vec<Narrowing> {
+            self.tested_names(cond, truth, scope)
+                .into_iter()
+                .filter(|name| {
+                    scope.is_default_parameter(name)
+                        && scope.get(name).is_some_and(|t| !t.mode.is_unknown())
+                        && !narrowing.mentions(name)
+                })
+                .map(|var| Narrowing::Supplied { var })
+                .collect()
+        };
+        let (on_true, on_false) = (undecided(true), undecided(false));
+        if on_true.is_empty() && on_false.is_empty() {
+            return narrowing;
+        }
+        Narrowing::Compound {
+            base: Box::new(narrowing),
+            on_true,
+            on_false,
+        }
+    }
+
+    /// The names that some passing (TRUE) test ry cannot decide read, on
+    /// every way `cond` can evaluate to `truth`. A failing test proves
+    /// nothing, and neither does a test ry narrows itself (`missing(x)`,
+    /// `is.null(x)`). `a && b` is TRUE one way (both TRUE) and FALSE two
+    /// ways (`a` FALSE, or `a` TRUE then `b` FALSE), so the names of a
+    /// two-way path are those both ways share; `||` is the mirror image and
+    /// `!` flips the path.
+    fn tested_names(&self, cond: &Expr, truth: bool, scope: &Scope) -> BTreeSet<String> {
+        match cond {
+            Expr::BinOp {
+                op: op @ (BinOpKind::And | BinOpKind::AndAnd | BinOpKind::Or | BinOpKind::OrOr),
+                lhs,
+                rhs,
+                ..
+            } => {
+                let both = self.tested_names(rhs, truth, scope);
+                let lhs_decides = self.tested_names(lhs, truth, scope);
+                if matches!(op, BinOpKind::And | BinOpKind::AndAnd) == truth {
+                    lhs_decides.union(&both).cloned().collect()
+                } else {
+                    let mut rhs_decides = self.tested_names(lhs, !truth, scope);
+                    rhs_decides.extend(both);
+                    lhs_decides.intersection(&rhs_decides).cloned().collect()
+                }
+            }
+            Expr::UnaryOp {
+                op: UnaryOpKind::Not,
+                expr,
+                ..
+            } => self.tested_names(expr, !truth, scope),
+            _ if truth => {
+                let mut names = BTreeSet::new();
+                self.evaluated_names(cond, &mut names);
+                let decided = self.extract_type_narrowing(cond, scope);
+                names.retain(|name| !decided.mentions(name));
+                names
+            }
+            _ => BTreeSet::new(),
+        }
+    }
+
+    /// Names `expr` evaluates. Field names, assignment targets, closures,
+    /// formulas, and arguments a stub quotes, captures, or evaluates in a
+    /// data mask (`quote(x)`, `substitute(x)`, `filter(df, x > 1)`, where `x`
+    /// may be a column) are not reads.
+    fn evaluated_names(&self, expr: &Expr, names: &mut BTreeSet<String>) {
+        ry_core::stack::grow(|| {
+            let walk = Walk {
+                assign_targets: false,
+                assign_operands: false,
+                dollar_args: false,
+                fn_bodies: false,
+                ..Walk::ALL
+            };
+            let _ = walk_expr(expr, walk, |node, _| match node {
+                AstNode::Expr(Expr::Ident { name, .. }) => {
+                    names.insert(name.clone());
+                    ControlFlow::<(), _>::Continue(Descend::Into)
+                }
+                AstNode::Expr(Expr::Call { func, args, .. }) => {
+                    let Some(callee) = ident_name(func) else {
+                        return ControlFlow::Continue(Descend::Into);
+                    };
+                    if crate::semantic_lists::is_quoting_form(callee) {
+                        return ControlFlow::Continue(Descend::Skip);
+                    }
+                    let Some(signature) = self.resolve_typeshed_sig_ref(callee) else {
+                        return ControlFlow::Continue(Descend::Into);
+                    };
+                    let bindings = match_params(&signature.params, args);
+                    for (index, argument) in args.iter().enumerate() {
+                        if !matches!(
+                            eval_mode_for_arg(signature, &bindings, index),
+                            Some(
+                                EvalMode::QuotedSymbol
+                                    | EvalMode::QuotedExpression
+                                    | EvalMode::CapturesPromise
+                                    | EvalMode::DataMask
+                                    | EvalMode::TidySelect
+                            )
+                        ) {
+                            self.evaluated_names(&argument.value, names);
+                        }
+                    }
+                    ControlFlow::Continue(Descend::Skip)
+                }
+                _ => ControlFlow::Continue(Descend::Into),
+            });
+        })
+    }
 }
 
 #[cfg(test)]
@@ -932,7 +1204,7 @@ mod selected_branch_tests {
     }
 
     #[test]
-    fn positive_and_negated_union_guards_keep_their_distinct_rules() {
+    fn positive_and_negated_guards_on_a_disjoint_union_give_unknown() {
         let original = RType::union(Arc::from([
             RType::scalar(Mode::Integer),
             RType::scalar(Mode::Character),
@@ -941,8 +1213,8 @@ mod selected_branch_tests {
         positive.insert("x", original.clone());
         let mut negative = positive.clone();
         let target = RType::scalar(Mode::Double);
-        // The positive guard requires an intersecting member. The false path
-        // of the negated predicate has historically installed its target.
+        // No member is a double, so neither passing path keeps the stale
+        // union or installs the tested type (#752).
         assert_eq!(
             apply_single_narrowing_branch(
                 &mut positive,
@@ -952,9 +1224,9 @@ mod selected_branch_tests {
                 },
                 NarrowingBranch::Then,
             ),
-            None
+            Some("x")
         );
-        assert_eq!(positive.get("x"), Some(&original));
+        assert_eq!(positive.get("x"), Some(&RType::unknown()));
         assert_eq!(
             apply_single_narrowing_branch(
                 &mut negative,
@@ -966,7 +1238,7 @@ mod selected_branch_tests {
             ),
             Some("x")
         );
-        assert_eq!(negative.get("x").map(|ty| ty.mode), Some(Mode::Double));
+        assert_eq!(negative.get("x"), Some(&RType::unknown()));
     }
 
     #[test]

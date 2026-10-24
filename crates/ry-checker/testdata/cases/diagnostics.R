@@ -283,3 +283,131 @@ g <- function(x) {
   res <- list(nvalid = length(x), nvx = 1, total = sum(x))
   res$total / res$nv
 }
+
+## case: environment replacement hides the defining frame's NULL placeholder
+# no-diag
+# lme4's modular.R shape. After `environment<-`, `mkTheta` resolves in
+# `rho`, not in the frame that binds it to NULL.
+make_devfun <- function(rho) {
+  mkTheta <- NULL
+  devfun <- function(par) mkTheta(par)
+  environment(devfun) <- rho
+  devfun
+}
+
+## case: environment replacement reaches literals picked by an if value
+# no-diag
+# lme4's mkdevfun shape: the closure comes from an if/else value.
+make_branch <- function(rho, linear) {
+  mkTheta <- NULL
+  ff <- if (linear) {
+    function(par) mkTheta(par)
+  } else {
+    function(pars) mkTheta(pars[1])
+  }
+  environment(ff) <- rho
+  ff
+}
+
+## case: without environment replacement the NULL placeholder is what R calls
+# expect: RY070
+# R errors: could not find function "mkTheta".
+make_plain <- function() {
+  mkTheta <- NULL
+  devfun <- function(par) mkTheta(par)
+  devfun(3)
+}
+
+## case: environment replacement reaches literals bound in if and else branches
+# no-diag
+make_branch_assign <- function(rho, linear) {
+  mkTheta <- NULL
+  if (linear) ff <- function(par) mkTheta(par) else ff <- function(pars) mkTheta(pars[1])
+  environment(ff) <- rho
+  ff
+}
+
+## case: environment replacement after a rebind leaves the earlier closure checked
+# expect: RY070
+# Only the second literal is re-homed; the first runs in the NULL frame.
+make_rebind <- function(rho) {
+  mkTheta <- NULL
+  ff <- function(par) mkTheta(par)
+  ff(1)
+  ff <- function(par) par
+  environment(ff) <- rho
+  ff
+}
+
+## case: an assignment in a subscript of an opaque receiver binds in the frame
+# no-diag
+# lme4's mlist2vec: base `[` evaluates its subscripts in the calling frame.
+ff <- function(x) {
+  if (all(x[iu <- upper.tri(x)] == 0)) t(x[!iu]) else t(x)[!iu]
+}
+
+## case: an assignment in a two-subscript index binds in the frame
+# no-diag
+# DescTools' PlotBag: the second call argument reads `h`.
+loop_points <- function(five) {
+  segments(five[h <- c(1, 5), 1], five[h, 2])
+}
+
+## case: an assignment in a matrix subscript binds at top level
+# no-diag
+m <- matrix(1:4, 2)
+z <- m[j <- 1, 2]
+print(j)
+
+## case: a proven data.table keeps a subscript assignment in its own frame
+# expect: RY010
+# `[.data.table` evaluates `i` and `j` in its own environment.
+dt <- structure(list(a = 1), class = c("data.table", "data.frame"))
+dt[k <- 1]
+print(k)
+
+## case: a closure inside a subscript does not bind its locals in the frame
+# expect: RY010
+f <- function(x) {
+  x[vapply(x, function(v) hidden <- v, numeric(1))]
+  hidden
+}
+
+## case: a superassignment in a subscript leaves the local binding alone
+# expect: RY040
+# `<<-` writes an enclosing frame, so the local `n` is still character.
+f <- function(x) {
+  n <- "a"
+  x[n <<- 2]
+  n + 1
+}
+
+## case: an assignment inside an if body of a subscript block binds in the frame
+# no-diag
+# Silent like the statement form of a one-armed if.
+f <- function(x, p) {
+  x[{ a <- 1; if (p) b <- 2; a }]
+  b
+}
+
+## case: `$` prefix on a tibble column subset is an undefined column
+# expect: RY060, RY060
+# A tibble's `[` keeps the tibble class and drops to a vector only on
+# `drop = TRUE`, so `$` on the subset still never partial-matches (#771).
+tb <- dplyr::group_by(data.frame(nvalid = 1:3, k = 1:3))
+tb[, "nvalid", drop = FALSE]$nv
+tb[, "nvalid"]$nv
+
+## case: `$` on a tibble column subset with drop = TRUE is on a vector
+# expect: RY061, RY061
+# The third positional argument of `[` is `drop` too.
+tb <- dplyr::group_by(data.frame(nvalid = 1:3, k = 1:3))
+tb[, "nvalid", drop = TRUE]$nv
+tb[, "nvalid", TRUE]$nv
+
+## case: `$` prefix on a base data frame column subset partially matches
+# no-diag
+# A base data.frame subset stays a base data.frame, by name or position.
+df <- data.frame(nvalid = 1:3, k = 1:3)
+df[, "nvalid", drop = FALSE]$nv
+df[, 1, drop = FALSE]$nv

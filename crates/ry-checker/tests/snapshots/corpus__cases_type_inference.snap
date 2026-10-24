@@ -754,25 +754,25 @@ expression: rows
   diagnostics:
     - code: RY032
       line: 1115
-      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; the `length(x) == 1` guard is not trusted because `length.disguised` may report 1 for a longer object"
       severity: warning
 - case: a project length method breaks the guard for is.na()
   diagnostics:
     - code: RY032
       line: 1120
-      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; the `length(x) == 1` guard is not trusted because `length.disguised` may report 1 for a longer object"
       severity: warning
 - case: a classed parameter default breaks the length guard
   diagnostics:
     - code: RY032
       line: 1126
-      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; the `length(x) == 1` guard is not trusted because `length.disguised` may report 1 for a longer object"
       severity: warning
 - case: an unclassed parameter default does not save the length guard
   diagnostics:
     - code: RY032
       line: 1132
-      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; the `length(x) == 1` guard is not trusted because `length.disguised` may report 1 for a longer object"
       severity: warning
 - case: reassignment inside the guarded operand breaks the length guard
   diagnostics:
@@ -868,11 +868,63 @@ expression: rows
       line: 1308
       message: "could not find function `z` (bound here as `union`)"
       severity: error
+- case: a literal positional replacement replaces the element type
+  diagnostics: []
+- case: a computed positional replacement forgets the element types
+  diagnostics: []
+- case: a positional NULL replacement shifts the later elements
+  diagnostics: []
+- case: a single-bracket positional replacement forgets the element types
+  diagnostics: []
+- case: a positional replacement in a partly named list forgets the elements
+  diagnostics: []
+- case: a literal positional replacement records the new element type
+  diagnostics:
+    - code: RY040
+      line: 1362
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+- case: a classed list keeps its own positional replacement
+  diagnostics: []
+- case: "a local [[<- keeps its own positional replacement"
+  diagnostics: []
+- case: dollar on a recorded double element still reports RY061
+  diagnostics:
+    - code: RY061
+      line: 1392
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
 - case: a value formal does not hide a package S4 generic of its name
+  diagnostics: []
+- case: a literal read in a partly named list indexes by position
+  diagnostics:
+    - code: RY061
+      line: 1411
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: a literal read past the named elements reaches the unnamed one
+  diagnostics: []
+- case: a literal read after a NULL field write does not trust positions
   diagnostics: []
 - case: a value formal with no function of its name is still not callable
   diagnostics:
     - code: RY070
-      line: 1323
+      line: 1433
       message: "could not find function `widen` (bound here as `logical`)"
+      severity: error
+- case: "a `$` miss on a list ry only partly knows is not NULL"
+  diagnostics: []
+- case: "a `[[` miss on fields written to an opaque value is not their type"
+  diagnostics: []
+- case: "a `$` miss on a closed local list is still NULL"
+  diagnostics:
+    - code: RY001
+      line: 1480
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: "a `[[` on an lapply result keeps the callback's type"
+  diagnostics:
+    - code: RY040
+      line: 1487
+      message: "cannot apply arithmetic op to `character` and `double`"
       severity: error

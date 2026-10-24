@@ -1,0 +1,38 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: a missing() check before an embrace keeps the parameter defused
+  diagnostics: []
+- case: a missing() check before enquo keeps the parameter defused
+  diagnostics: []
+- case: forcing the parameter before the embrace still evaluates it
+  diagnostics:
+    - code: RY010
+      line: 27
+      message: "variable `hp` is not bound in this scope"
+      severity: warning
+- case: a missing()-only validator before an embrace keeps the parameter defused
+  diagnostics: []
+- case: a missing()-only validator before enquo keeps the parameter defused
+  diagnostics: []
+- case: a validator that also reads its formal still forces the parameter
+  diagnostics:
+    - code: RY010
+      line: 61
+      message: "variable `wt` is not bound in this scope"
+      severity: warning
+- case: an unresolved validator still forces the parameter
+  diagnostics:
+    - code: RY010
+      line: 69
+      message: "variable `qsec` is not bound in this scope"
+      severity: warning
+- case: "a generic validator dispatches on its argument, which forces it"
+  diagnostics:
+    - code: RY010
+      line: 79
+      message: "variable `gear` is not bound in this scope"
+      severity: warning
+- case: a vendored-style validator with caller_arg() and current_env() defaults
+  diagnostics: []

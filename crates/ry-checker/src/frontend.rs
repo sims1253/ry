@@ -1,5 +1,6 @@
 //! Inputs the CLI and the language server prepare identically for a
-//! [`Project`]: the resolved workspace context and adopted typehint records.
+//! [`Project`]: the resolved workspace context and adopted typehint records,
+//! and the file-level diagnostics both report the same way.
 
 use crate::{Diagnostic, Project, Severity};
 use ry_core::SourceFile;
@@ -64,6 +65,34 @@ pub fn adopted_records(files: &[Arc<SourceFile>], config: &ry_config::Config) ->
         .map(ambiguous_typehint_identity)
         .collect();
     result
+}
+
+/// The file-level RY000 for a file ry could not read or parse at all
+/// (#743), at the parser's position in the rejected text when it has one.
+/// Renderers convert the byte offsets against that text, as for any finding.
+pub fn parse_failure(path: &str, error: &ry_workspace::SourceError) -> Diagnostic {
+    let (span, message) = match error {
+        ry_workspace::SourceError::Read(error) => (
+            ry_core::Span::new(0, 1, 0, 0),
+            format!("cannot read file: {error}; file not checked"),
+        ),
+        ry_workspace::SourceError::Parse {
+            error: ry_core::ParseError::TreeSitter { line, col, message },
+            text,
+        } => {
+            let (line, col) = (line.saturating_sub(1), col.saturating_sub(1));
+            let line_start: usize = text.split_inclusive('\n').take(line).map(str::len).sum();
+            let mut start = (line_start + col).min(text.len());
+            while !text.is_char_boundary(start) {
+                start -= 1;
+            }
+            (
+                ry_core::Span::new(start, start, line, col),
+                format!("{message}; file not checked"),
+            )
+        }
+    };
+    Diagnostic::new(Severity::Error, span, path, "RY000", message)
 }
 
 /// RY117 for a display path whose native source identity is ambiguous.

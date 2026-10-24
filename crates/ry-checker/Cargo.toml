@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 hashbrown = { version = "0.17.1", default-features = false, features = ["inline-more"] }
+imbl = { version = "7.0.2", default-features = false }
 ry-core = { path = "../ry-core" }
 ry-config = { path = "../ry-config" }
 ry-workspace = { path = "../ry-workspace" }

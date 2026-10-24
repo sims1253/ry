@@ -436,9 +436,9 @@ fn dump_parse_failure(
 ) -> pipeline::FailureAction {
     match error {
         pipeline::ParseError::Read(_) => pipeline::FailureAction::Abort,
-        pipeline::ParseError::Parse(message) => {
+        pipeline::ParseError::Parse { error, .. } => {
             eprintln!(
-                "ry: {}: parse error: {message}; file omitted from dump",
+                "ry: {}: parse error: {error}; file omitted from dump",
                 path.display()
             );
             pipeline::FailureAction::Skip

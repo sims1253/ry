@@ -1,0 +1,132 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: a helper registered at load time sees the S3 dispatcher bindings
+  diagnostics: []
+- case: an evalqOnLoad .S3method registration binds all four dispatcher variables
+  diagnostics: []
+- case: S3 method names bind all four dispatcher variables
+  diagnostics: []
+- case: an unregistered helper still reports dispatcher variables as unbound
+  diagnostics:
+    - code: RY010
+      line: 45
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registration does not reach a local namesake
+  diagnostics:
+    - code: RY010
+      line: 54
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registration after a non-literal rebinding proves nothing
+  diagnostics:
+    - code: RY010
+      line: 61
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a plain top-level registration may run before the definition
+  diagnostics:
+    - code: RY010
+      line: 70
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a rebinding inside the evalqOnLoad block proves nothing
+  diagnostics:
+    - code: RY010
+      line: 74
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a second literal inside the evalqOnLoad block proves nothing
+  diagnostics:
+    - code: RY010
+      line: 83
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: an escaped identifier may rebind the registered name
+  diagnostics:
+    - code: RY010
+      line: 92
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registration inside local() proves nothing
+  diagnostics:
+    - code: RY010
+      line: 99
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: unevaluated registrations prove nothing
+  diagnostics:
+    - code: RY010
+      line: 108
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 111
+      message: "variable `.Class` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 115
+      message: "variable `.Method` is not bound in this scope"
+      severity: warning
+- case: an evalqOnLoad block evaluated elsewhere proves nothing
+  diagnostics:
+    - code: RY010
+      line: 126
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registration inside a function body proves nothing
+  diagnostics:
+    - code: RY010
+      line: 131
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a redefined registerS3method proves nothing
+  diagnostics:
+    - code: RY010
+      line: 137
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: a registered name with two definitions proves nothing
+  diagnostics:
+    - code: RY010
+      line: 142
+      message: "variable `.Generic` is not bound in this scope"
+      severity: warning
+- case: "a validation preamble before UseMethod keeps the method's embrace"
+  diagnostics: []
+- case: a method that evaluates the argument still reports it after a preamble
+  diagnostics:
+    - code: RY010
+      line: 175
+      message: "variable `unbound_column` is not bound in this scope"
+      severity: warning
+- case: a preamble that forces the embraced argument still reports it
+  diagnostics:
+    - code: RY010
+      line: 191
+      message: "variable `mpg` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 192
+      message: "variable `hp` is not bound in this scope"
+      severity: warning
+- case: a preamble that forces through a default or a dots element still reports it
+  diagnostics:
+    - code: RY010
+      line: 213
+      message: "variable `mpg` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 214
+      message: "variable `hp` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 215
+      message: "variable `wt` is not bound in this scope"
+      severity: warning
+- case: counting dots before UseMethod does not force them
+  diagnostics: []
+- case: a storage-length method keeps the length(x) == 1L guard
+  diagnostics: []

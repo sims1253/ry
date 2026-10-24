@@ -120,16 +120,16 @@ if (x > 0) NULL
 }
 f()
 
-## case: a NULL return guard alone does not prove the value non-empty
-# expect: RY001
+## case: a NULL return guard excludes the omitted NULL default
+# no-diag
 f <- function(x = NULL) {
 if (is.null(x)) return(NULL)
 if (x > 0) NULL
 }
 f()
 
-## case: a missing() guard does not narrow the NULL default
-# expect: RY070
+## case: a missing() stop guard excludes the omitted NULL default
+# no-diag
 apply_fun <- function(x, fun = NULL) {
 if (missing(fun)) stop("fun required")
 fun(x)
@@ -648,10 +648,10 @@ f <- function(input) {
 }
 f("path")
 
-## case: a NULL return guard on a NULL default may still leave a zero-length value
-# expect: RY001
-# A NULL default narrows to an unknown caller value, not to a remainder,
-# so the value may still have length zero.
+## case: a braced NULL return guard excludes the omitted NULL default
+# no-diag
+# Past the guard the value is an unknown caller value; the omitted NULL
+# default's zero length no longer describes it.
 f <- function(x = NULL) {
   if (is.null(x)) {
     return(NULL)
@@ -741,8 +741,8 @@ f <- function() {
 }
 f()
 
-## case: a NULL return guard without replacement may leave a zero-length default
-# expect: RY001
+## case: a NULL return guard without replacement excludes the omitted default
+# no-diag
 f <- function(detail = NULL) {
   if (is.null(detail)) {
     return(NULL)
@@ -872,3 +872,188 @@ degrees_unguarded <- function(z, flag) {
   if (flag) dof <- "auto"
   dof(length(z))
 }
+
+## case: is.list on a local union with no list member gives the arm an unknown value
+# no-diag
+# The arm is reachable only if ry's inference missed a list, so `$` there
+# cannot be proven to fail (#752).
+pick_list <- function(p) {
+  x <- 2L
+  if (p) x <- "a"
+  if (is.list(x)) x$a
+}
+
+## case: the else arm of a negated is.list gives a local union an unknown value
+# no-diag
+pick_list_else <- function(p) {
+  x <- 2L
+  if (p) x <- "a"
+  if (!is.list(x)) NULL else x$a
+}
+
+## case: is.numeric on a local union with no numeric member gives the arm an unknown value
+# no-diag
+add_numeric <- function(p) {
+  x <- "a"
+  if (p) x <- list(1)
+  if (is.numeric(x)) x + 1
+}
+
+## case: arithmetic inside a dead is.character guard on a numeric local stays quiet
+# no-diag
+dead_character_arith <- function(z) {
+  dof <- length(z)
+  if (is.character(dof)) dof <- dof + 1
+  dof
+}
+
+## case: a local union with no list member and no guard still reports `$`
+# expect: RY061
+pick_unguarded <- function(p) {
+  x <- 2L
+  if (p) x <- "a"
+  x$a
+}
+
+## case: a passed if() comparison proves its parameter scalar for a later guard
+# no-diag
+check_kind <- function(kind = "warning") {
+  if (kind == "stop") stop("stopping")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: a not-null if() comparison proves its parameter NULL or scalar for a later guard
+# no-diag
+check_tz <- function(timezone) {
+  if (!is.null(timezone) && timezone == "") return("")
+  if (is.null(timezone) || !timezone %in% c("UTC", "Europe/Berlin")) return("UTC")
+  timezone
+}
+
+## case: an if() guard proves its parameter for the same guard repeated later
+# expect: RY032
+twice <- function(interval = NULL) {
+  a <- if (is.null(interval) || interval == "none") 1 else 2
+  if (is.null(interval) || interval == "none") a <- a + 1
+  a
+}
+
+## case: an if() test of any(x) proves nothing about the length of x
+# expect: RY032
+check_any <- function(kind = "warning") {
+  if (any(kind == "stop")) stop("bad kind")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: an if() test in one branch proves nothing after the branches join
+# expect: RY032
+check_branch <- function(p, kind = "warning") {
+  if (p) {
+    if (kind == "stop") stop("bad kind")
+  }
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: an if() tail that a FALSE head skips proves nothing about its subject
+# expect: RY032
+check_skipped <- function(strict, kind = "warning") {
+  if (strict && kind == "stop") stop("bad kind")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: a user predicate on a specialised default leaves its arm unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel <- function(dims = 2) {
+  if (is_tensor(dims)) dims$numel()
+}
+numel()
+
+## case: a compound inherits guard narrows a specialised default
+# no-diag
+lambda_of <- function(model = "ZZZ", lambda = NULL) {
+  if (inherits(model, "ets") && is.null(lambda)) model$lambda
+}
+lambda_of()
+
+## case: a names membership guard on a specialised default leaves its arm unknown
+# no-diag
+values_of <- function(sel = FALSE, width = "\\linewidth") {
+  if ("values" %in% names(sel)) sel$values
+  if (sum(c("pt", "lw") %in% colnames(width)) > 0) width$pt
+}
+values_of()
+
+## case: the right of `&&` after a user predicate on a specialised default is unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel_big <- function(dims = 2) {
+  if (is_tensor(dims) && dims$numel() > 1) 1L
+}
+numel_big()
+
+## case: a negated user predicate stop guard leaves the continuation unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel_checked <- function(dims = 2) {
+  if (!is_tensor(dims)) stop("`dims` must be a tensor")
+  dims$numel()
+}
+numel_checked()
+
+## case: a user predicate assertion leaves the continuation unknown
+# no-diag
+is_tensor <- function(x) inherits(x, "tensor")
+numel_asserted <- function(dims = 2) {
+  stopifnot(is_tensor(dims))
+  dims$numel()
+}
+numel_asserted()
+
+## case: the arm a failing user predicate selects keeps the specialised default
+# expect: RY061
+is_tensor <- function(x) inherits(x, "tensor")
+numel_else <- function(dims = 2) {
+  if (is_tensor(dims)) 1L else dims$size
+}
+numel_else()
+
+## case: a data-masked name in a guard is not a test of the specialised default
+# expect: RY061
+library(dplyr)
+masked_guard <- function(df, x = 2) {
+  if (nrow(dplyr::filter(df, x > 1)) > 0) x$bar
+}
+masked_guard(data.frame(x = 3))
+
+## case: a quoted name in a guard is not a test of the specialised default
+# expect: RY061, RY061, RY061
+quoted_guard <- function(x = 2) {
+  if (identical(quote(x), quote(x))) x$field
+  if (!is.null(substitute(x))) x$field
+  if (length(~ x) == 2) x$field
+}
+quoted_guard()
+
+## case: a missing() or is.null() operand that may pass keeps the specialised default
+# expect: RY061, RY061
+is_tensor <- function(x) inherits(x, "tensor")
+bar_missing <- function(x = 2) {
+  if (missing(x) || is_tensor(x)) x$bar
+}
+bar_null <- function(x = 2) {
+  if (is.null(x) || is_tensor(x)) x$bar
+}
+bar_missing()
+bar_null()
+
+## case: a guard that does not read the specialised default keeps its type
+# expect: RY061
+numel_verbose <- function(dims = 2, verbose = TRUE) {
+  if (verbose) dims$numel()
+}
+numel_verbose()

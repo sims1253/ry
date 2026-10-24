@@ -1307,6 +1307,91 @@ fit <- function(x, grad = NULL) {
 z <- if (runif(1) > 0.5) NULL else 1
 z()
 
+## case: a literal positional replacement replaces the element type
+# no-diag
+# ade4's shape: `list(0)` records a double, then `[[1]] <-` stores a list.
+mk <- function(a) list(dg2 = a, Ng = a)
+f <- function(a) {
+  util <- list(0)
+  util[[1]] <- mk(a)
+  util[[1]]$dg2
+}
+
+## case: a computed positional replacement forgets the element types
+# no-diag
+mk <- function(a) list(dg2 = a, Ng = a)
+f <- function(a, i) {
+  util <- list(0)
+  util[[i]] <- mk(a)
+  util[[1]]$dg2
+}
+
+## case: a positional NULL replacement shifts the later elements
+# no-diag
+f <- function() {
+  x <- list(0, list(f = 1))
+  x[[1]] <- NULL
+  x[[1]]$f
+}
+
+## case: a single-bracket positional replacement forgets the element types
+# no-diag
+f <- function(i) {
+  x <- list(0)
+  x[1] <- list(list(a = 1))
+  y <- list(0)
+  y[i] <- list(list(a = 1))
+  x[[1]]$a + y[[1]]$a
+}
+
+## case: a positional replacement in a partly named list forgets the elements
+# no-diag
+# `list()` keys only the unnamed element as `[[1]]`, but `x[[1]]` is `a`.
+f <- function() {
+  x <- list(a = 1, list(b = 2))
+  x[[1]] <- list(c = 3)
+  x[[2]]$b + x$a$c
+}
+
+## case: a literal positional replacement records the new element type
+# expect: RY040
+# Only the replacement knows `x[[1]]` is now character; forgetting is silent.
+f <- function() {
+  x <- list(0, 1)
+  x[[1]] <- "a"
+  x[[1]] + 1
+}
+
+## case: a classed list keeps its own positional replacement
+# no-diag
+# `[[<-.foo` decides what is stored, so ry does not record `"a"` here.
+`[[<-.foo` <- function(x, i, value) {
+  x <- unclass(x)
+  x[[i]] <- nchar(value)
+  structure(x, class = "foo")
+}
+f <- function() {
+  x <- structure(list(0), class = "foo")
+  x[[1]] <- "a"
+  x[[1]] + 1
+}
+
+## case: a local [[<- keeps its own positional replacement
+# no-diag
+f <- function() {
+  `[[<-` <- function(x, i, value) x
+  x <- list(1)
+  x[[1]] <- "a"
+  x[[1]] + 1
+}
+
+## case: dollar on a recorded double element still reports RY061
+# expect: RY061
+f <- function() {
+  util <- list(0)
+  util[[1]]$dg2
+}
+
 ## case: a value formal does not hide a package S4 generic of its name
 # no-diag
 # R's call lookup skips the logical `res` and finds the generic.
@@ -1318,7 +1403,86 @@ compare <- function(x, res = FALSE) {
 }
 check_all <- function(x) compare(x)
 
+## case: a literal read in a partly named list indexes by position
+# expect: RY061
+# `list()` keys only the unnamed element as `[[1]]`, but `x[[1]]` is `a`.
+f <- function() {
+  x <- list(a = "s", list(b = 2))
+  x[[1]]$b
+}
+
+## case: a literal read past the named elements reaches the unnamed one
+# no-diag
+f <- function() {
+  x <- list(a = "s", list(b = 2))
+  y <- list(0, list(b = 1))
+  x[[2]]$b + y[[2]]$b
+}
+
+## case: a literal read after a NULL field write does not trust positions
+# no-diag
+# `x$a <- NULL` drops `a`, so `x[[2]]` is the third element `list()` built.
+f <- function() {
+  x <- list(a = 1, "s", list(b = 2))
+  x$a <- NULL
+  x[[2]]$b
+}
+
 ## case: a value formal with no function of its name is still not callable
 # expect: RY070
 compare <- function(x, widen = FALSE) widen(x)
 check_all <- function(x) compare(x)
+
+## case: a `$` miss on a list ry only partly knows is not NULL
+# no-diag
+# `list(...)` takes its names from the call, `lapply()` keeps its input's
+# names, and `$<-` on an argument adds to fields already there (#689).
+f_dots <- function(...) {
+  ddd <- list(...)
+  if (is.null(ddd$legend)) TRUE else if (is.na(ddd$legend)) FALSE
+}
+f_lapply <- function(x) {
+  v <- lapply(x, as.numeric)
+  if (v$major >= 3) TRUE
+}
+f_lapply_known <- function() {
+  v <- lapply(list(major = "4"), as.numeric)
+  if (v$major >= 3) TRUE
+}
+f_nested <- function(x) {
+  x$leg$size <- c(1, 1)
+  if (x$leg$horiz) TRUE
+}
+
+## case: a `[[` miss on fields written to an opaque value is not their type
+# no-diag
+# The recorded fields say nothing about the other elements (#689).
+f_removed <- function(x) {
+  x$cex <- NULL
+  if (x[[8]]) TRUE
+}
+registry <- new.env(parent = emptyenv())
+registry$. <- FALSE
+convert <- function(key, obj) {
+  cv <- registry[[key]]
+  if (is.null(cv)) obj else cv$fn(obj)
+}
+halve <- function(o, p) {
+  ee <- o$env
+  ee$parameters <- list(b = 1)
+  ee[[p]] / 2
+}
+
+## case: a `$` miss on a closed local list is still NULL
+# expect: RY001
+f <- function() {
+  r <- list(a = 1)
+  if (r$b >= 3) TRUE
+}
+
+## case: a `[[` on an lapply result keeps the callback's type
+# expect: RY040
+f <- function(x, i) {
+  v <- lapply(x, function(e) "a")
+  v[[i]] + 1
+}

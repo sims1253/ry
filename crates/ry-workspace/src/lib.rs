@@ -331,14 +331,18 @@ pub fn load_stub_dirs(dirs: &[PathBuf]) -> LoadedStubs {
 #[derive(Debug)]
 pub enum SourceError {
     Read(std::io::Error),
-    Parse(String),
+    /// The parser rejected `text`, the decoded source.
+    Parse {
+        error: ry_core::ParseError,
+        text: String,
+    },
 }
 
 impl std::fmt::Display for SourceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Read(error) => write!(f, "{error}"),
-            Self::Parse(message) => f.write_str(message),
+            Self::Parse { error, .. } => write!(f, "{error}"),
         }
     }
 }
@@ -356,16 +360,24 @@ pub fn parse_source_file(path: &Path, overlay: Option<&[u8]>) -> Result<SourceFi
         None => read_r_source_decoded(path).map_err(SourceError::Read)?,
     };
     let display = path.to_string_lossy();
-    let parse_error = |error: ry_core::ParseError| SourceError::Parse(error.to_string());
-    let mut file = PARSER.with(|cell| {
+    let parsed = PARSER.with(|cell| {
         let mut slot = cell.borrow_mut();
         // A failed construction leaves the slot empty so the next file retries.
         let parser = match slot.as_mut() {
             Some(parser) => parser,
-            None => slot.insert(ry_core::RParser::new().map_err(parse_error)?),
+            None => slot.insert(ry_core::RParser::new()?),
         };
-        reports::parse_source(parser, &display, &decoded.text).map_err(parse_error)
-    })?;
+        reports::parse_source(parser, &display, &decoded.text)
+    });
+    let mut file = match parsed {
+        Ok(file) => file,
+        Err(error) => {
+            return Err(SourceError::Parse {
+                error,
+                text: decoded.text,
+            });
+        }
+    };
     file.native_path = Some(path.to_path_buf());
     decoded.attach_boundary_findings(&mut file);
     Ok(file)

@@ -773,11 +773,16 @@ impl IndexWriter {
         let colliding = |path: &str| open_uris.get(path).is_some_and(|(uris, _)| uris.len() > 1);
 
         let mut open_files = Vec::with_capacity(doc_versions.len());
+        // Buffers ry cannot parse publish one RY000 each, as in `ry check`.
+        let mut unparsed = Vec::new();
         for (doc_path, version) in &doc_versions {
-            let Some((file, _)) = parsed_file(&self.state, doc_path).await else {
-                continue;
-            };
-            open_files.push((doc_path.clone(), *version, file));
+            match parsed_file(&self.state, doc_path).await {
+                Ok((file, _)) => open_files.push((doc_path.clone(), *version, file)),
+                Err(Unparsed::Failed { text, error }) => {
+                    unparsed.push((doc_path.clone(), *version, text, error));
+                }
+                Err(Unparsed::Closed) => {}
+            }
         }
         // An open buffer owns its path, eligible or not, so its disk twin
         // never contributes. Sorting by path gives the CLI's order, which
@@ -986,6 +991,26 @@ impl IndexWriter {
                     related_uri,
                 );
                 outgoing.push((diagnostic_path, Some(diagnostics)));
+            }
+        }
+        if !unparsed.is_empty() {
+            // Snapshot the contexts so post-processing runs without the lock,
+            // as it does for checked files.
+            let contexts: Vec<FolderAnalysisContext> = {
+                let state = self.state.lock().await;
+                unparsed
+                    .iter()
+                    .map(|(path, ..)| state.context_for_path(path).clone())
+                    .collect()
+            };
+            for ((path, version, text, error), ctx) in unparsed.into_iter().zip(contexts) {
+                if ctx.excludes_path(&path) {
+                    continue;
+                }
+                let origin =
+                    supports_diagnostic_data.then(|| diagnostic_origin(&path, version, generation));
+                let diagnostics = ctx.publish_parse_failure(&path, &text, error, origin);
+                outgoing.push((path, Some(diagnostics)));
             }
         }
         for path in collision_diagnostics.keys() {

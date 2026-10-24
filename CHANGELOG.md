@@ -85,6 +85,15 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- `ry check` reports a file it cannot read or parse at all (such as one past
+  ry's syntax nesting limits) as one RY000 in every output format, instead of
+  only a stderr line, so `--output-format json --exit-zero` no longer shows a
+  clean `[]` for it (#743).
+- The language server publishes the same RY000 for an open buffer it cannot
+  parse, instead of keeping the findings from its last parse, and clears it
+  once the buffer parses again (#785).
+- The RY000 for a file ry cannot parse gives a character column, like every
+  other finding, instead of a byte column after multibyte characters (#784).
 - Stop selections from claiming their input's length. `return: "arg0"`
   combined with a `return_length` rule now keeps the first argument's mode
   and class but re-counts its elements, dropping whole-value facts; a data
@@ -99,6 +108,9 @@ All notable changes to ry are documented in this file.
 - Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 - Bind the target of a base `delayedAssign()` without evaluating its promise,
   removing false RY010 reports for lazily bound values (#349).
+- Apply the `data()` and `load()` loaders only when no local, parameter, or
+  project binding of that name may be the callee, removing false RY061
+  reports on Shiny's `data <- reactive(...)`; `data()$x` (#717).
 - Accept a logical `NA` callback result in purrr's typed maps, which widen it
   to the target's `NA` (#352).
 - End quietly instead of panicking when stdout closes early, as in
@@ -109,10 +121,22 @@ All notable changes to ry are documented in this file.
   scripts (#568).
 - Stop RY070 from reporting a call guarded by `is.function(x)` when ry
   inferred no function type for `x` (#741).
+- Stop mode guards such as `is.list(x)` and `is.numeric(x)` from keeping a
+  stale type for `x` when ry inferred none of the tested mode; the guarded
+  arm now sees an unknown value (#752).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
+- Report a serialized workspace the parser stops reading early, such as an
+  `R/sysdata.rda` that holds an external pointer, as a degraded scope instead
+  of a complete inventory (#714).
+- Let function bodies see `<<-` updates from writers defined after them or
+  in another package file, such as a `NULL` placeholder filled by
+  `.onLoad`, removing false RY001 and RY070 reports (#706).
 - Stop RY070 from reporting a call head bound to a NULL-or-function or
   value-or-function join, such as an optional callback (#700).
+- Stop checking a closure's free variables against its defining frame once
+  `environment(f) <- rho` re-homes it, removing false RY070 reports on
+  lme4's `mkTheta <- NULL` R CMD check placeholders (#716).
 - Check files with long flat `else if` chains instead of skipping them at
   the 128-level syntax nesting limit. Up to 1024 `else if` arms may nest,
   counting chains inside chains; lavaan's `lav_object_inspect.R` is now
@@ -124,16 +148,95 @@ All notable changes to ry are documented in this file.
 - Follow R's partial matching for `$` on a plain list: a unique prefix such
   as `res$nv` reads the `nvalid` field instead of NULL, removing a false
   RY040 (#721).
+- Follow the same partial matching for `$` on a base data frame, so
+  `df$nv` reads a unique `nvalid` column instead of reporting RY060.
+  Tibbles keep RY060, since their `$` never partial-matches (#753).
+- Keep a tibble's class on a column subset such as `tb[, "a"]`, which a
+  tibble never drops to a vector without `drop = TRUE`. A prefix `$` on it
+  now reports RY060 instead of nothing or a false RY061 (#771).
 - Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
   results such as `merge(a, b)[, 1] - 1`. The vendored base stubs
   (r-typeshed affe513f) now return a data frame from `read.table` and its
   `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
   double matrix from `gc` (#709).
+- Let a literal positional `x[[1]] <- value` replace the element type a
+  list recorded, and make a computed `x[[i]] <- value` or a positional
+  `x[i] <- value` forget the recorded element types, removing RY061 false
+  positives in ade4 (#715).
 - Stop RY070 from reporting a call to a package S4 generic whose name a
   value formal shares, such as `res()` next to `res = FALSE` (#712).
+- Treat a formal or local named `c`, `signature`, `setMethod`,
+  `setGeneric`, or `standardGeneric` as masking S4 registration only in a
+  function that registers, so `error = function(c)` elsewhere no longer
+  turns off every S4 method and scalar fact in the project (#780).
+- Check files with thousands of top-level functions in linear time. torch's
+  generated `RcppExports.R` took 22 s alone and now takes under 2 s (#697).
+- Bind `.Generic`, `.Class`, `.Method`, and `.Group` in S3 methods named for
+  a known or NAMESPACE-registered generic, and in a helper that
+  `registerS3method()` or `.S3method()` registers in a top-level
+  `evalqOnLoad()` block, removing RY010 false positives such as lubridate's
+  `comp_posix_date` (#348).
 - Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
   as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
   S3 generic, so ry dispatches to `cut.dendrogram` (#711).
+- Keep a name assigned inside a `[` subscript bound when the receiver is
+  opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
+  reports in lme4 and DescTools (#713).
+- Stop typing a callee's formal as the caller's forwarded default when a
+  condition in the caller tests that argument before the call, as in
+  `if (!is.null(save_period)) cb_save(save_period)` (#719).
+- Read a literal `x[[N]]` on a partly named list by position: `list()`
+  numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
+  no longer reads the unnamed list and now reports RY061 on `$b` (#758).
+- Stop applying an omitted `NULL` default after guards that exclude it:
+  `if (is.null(x)) return(...)`, `!missing(x)`, every `!is.null()`
+  conjunct of `&&`, `length(x) == 1` or `length(x) > 0`, and a `for`
+  body over `x`. These no longer report a false RY001 or RY070 (#692).
+- Count a passed `if` test such as `x == ""` or `!is.null(x) && x == ""` as
+  proof that `x` is NULL or scalar, as `stopifnot` already did, so a later
+  `is.null(x) || pred(x)` guard no longer reports a false RY032 (#702).
+- Let an S3 generic inherit `{{ x }}` defusing from its project methods, as it
+  already inherits `enquo()` quoting, so `generic(df, col = mpg)` no longer
+  reports `mpg` as RY010 when the method forwards `{{ col }}` (#687).
+- Recognise an S3 generic that runs statements before its final
+  `UseMethod()`, such as `check_not_missing(data)`, so it inherits its
+  methods' `{{ x }}` defusing unless that preamble reads the argument (#774).
+- Stop RY010 from reporting a closure's free name that a braced call
+  argument binds later, as in `suppressWarnings({ ... })`, a `switch()` arm,
+  or `local({ ... })` when `local` may be masked (#690).
+- Treat plain assignments in a top-level rlang-style `on_load({...})` block
+  as package bindings, so reads from other files no longer get RY010 (#691).
+- Skip a `missing(col)` check when deciding whether a function defuses `col`,
+  so `if (missing(col)) stop(); dplyr::select(data, {{ col }})` no longer
+  makes callers' bare column names RY010 (#688).
+- Treat the objects `Rcpp::loadModule()` installs as package bindings: a
+  literal `what` binds exactly those names, and `what = TRUE` stops RY010
+  for names a function does not assign itself (#704).
+- Treat passing `col` to a project validator that only tests its formal with
+  `missing()`, like the standalone `check_not_missing()` that cards vendors
+  from insightsengineering's standalone-checks.R, as no use of `col`, so a
+  later `{{ col }}` still defuses it (#688).
+- Vendor r-typeshed 7d874359: `rlang::caller_arg()` captures its argument, so
+  a validator default such as `arg_name = rlang::caller_arg(x)` no longer
+  counts as forcing `x` (#688).
+- Keep trusting a `length(x) == 1L &&` guard when the project's only
+  `length.*` methods are `function(x) length(unclass(x))`, and name the
+  method, with a note at its definition, when RY032 distrusts the guard
+  because of one (#701).
+- Apply `--typeshed` stubs' `captures_promise` arguments when deciding whether
+  a project function captures its formal, so a wrapper around a stubbed
+  capture no longer reports its caller's name as RY010 (#776).
+- Stop applying an omitted default's type in the arm selected by a passing
+  test of that parameter that ry cannot decide, such as `is_tensor(dims)`,
+  `inherits(model, "ets") && is.null(lambda)` or `"values" %in% names(sel)`
+  (#710).
+- Narrow through a local bound to a guard predicate, so
+  `has_size <- !is.null(size); if (has_size) ...` drops the omitted `NULL`
+  default like `if (!is.null(size))` does, until either name is rebound (#692).
+- Type a `$` or `[[` name missing from a list whose names ry only partly
+  knows (`list(...)`, an `lapply()` result, fields written to an argument
+  or environment) as unknown instead of NULL, removing RY001 false
+  positives in metafor, R.oo, terra, and gridGraphics (#689).
 - Keep every step of a nested replacement such as `x$f[[i]]$g <- v`: an
   index step ry does not model makes `x$f` forget its element types instead
   of recording `x$f$g`, removing RY061 false positives in torch, forecast,

@@ -84,6 +84,64 @@ fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
     }
 }
 
+/// The plain assignments a top-level `on_load(expr)` makes in the package
+/// namespace (#691). rlang's `on_load()`, and the package-local copies of
+/// it, store `expr` for `.onLoad()` to evaluate there, so these bindings
+/// become package bindings. Only an assignment that is the hook expression
+/// itself or a statement of its braced block counts; `<<-`, `assign()`,
+/// loop binders (as at top level), and anything nested deeper prove
+/// nothing. `evalqOnLoad()` does not count: an installed package evaluates
+/// its block in a child of the namespace.
+fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, &Expr)> {
+    stmts
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Expr(Expr::Call { func, args, .. })
+                if matches!(
+                    func.as_ref(),
+                    Expr::Ident { name, .. } if name == "on_load" || name == "rlang::on_load"
+                ) =>
+            {
+                // An `env` argument evaluates `expr` somewhere else.
+                match args.as_slice() {
+                    [hook] if matches!(hook.name.as_deref(), None | Some("expr")) => {
+                        Some(&hook.value)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .flat_map(|hook| match hook {
+            Expr::Block { body, .. } => body
+                .iter()
+                .filter_map(|stmt| match stmt {
+                    // Statement `<<-` repeats itself as the value.
+                    Stmt::Assign {
+                        target,
+                        value,
+                        span,
+                    } if !matches!(
+                        value,
+                        Expr::BinOp { op: BinOpKind::SuperAssign, span: operation, .. }
+                            if operation == span
+                    ) =>
+                    {
+                        Some((target, value))
+                    }
+                    _ => None,
+                })
+                .collect(),
+            Expr::BinOp {
+                op: BinOpKind::Assign,
+                lhs,
+                rhs,
+                ..
+            } => vec![(lhs.as_ref(), rhs.as_ref())],
+            _ => Vec::new(),
+        })
+}
+
 /// Writes `node` can make outside the frame it runs in: a `<<-`, a
 /// recognized binding installer, or a nested function's defaults (forcing
 /// one runs it in that function's frame, where it may itself write outward).
@@ -179,6 +237,59 @@ fn collect_rm_targets(args: &[Arg], writes: &mut WriteSet) {
 /// masked.
 fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
     matches!(func, Expr::Ident { name, .. } if strip_package(semantic_argument_name(name), "base") == Some(bare))
+}
+
+/// The names `Rcpp::loadModule(module, what)` assigns in the package
+/// namespace (#704): each module object `what` names, under its `names()`
+/// entry where one is given. `None` when ry cannot list them: `what = TRUE`
+/// binds every object the C++ module declares, and a computed `what` may
+/// name any of them. An `env` other than the default
+/// `topenv(parent.frame())`, `topenv()` or `asNamespace(pkg)` binds nothing
+/// in the namespace;
+/// so does `environment()` inside a function, where it is the call's frame.
+fn rcpp_module_bindings(args: &[Arg], top_level: bool) -> Option<Vec<String>> {
+    // A bare or `base::` call head named one of `names`.
+    fn base_head(func: &Expr, names: &[&str]) -> bool {
+        matches!(func, Expr::Ident { name, .. }
+            if names.contains(&strip_package(name, "base").unwrap_or(name)))
+    }
+    fn no_arg_call(expr: &Expr, names: &[&str]) -> bool {
+        matches!(expr, Expr::Call { func, args, .. } if args.is_empty() && base_head(func, names))
+    }
+    let matched = match_arguments(&["module", "what", "loadNow", "env"], args);
+    let namespace_env = matched.arg_for_param(3).is_none_or(|index| {
+        let env = &args[index].value;
+        no_arg_call(env, &["topenv"])
+            || (top_level && no_arg_call(env, &["environment"]))
+            || matches!(env, Expr::Call { func, args, .. }
+                if base_head(func, &["topenv"])
+                    && matches!(args.as_slice(), [frame] if frame.name.is_none()
+                        && no_arg_call(&frame.value, &["parent.frame", "environment"])))
+            // `.onLoad(libname, pkgname)` spells it `asNamespace(pkgname)`.
+            || matches!(env, Expr::Call { func, args, .. }
+                if base_head(func, &["asNamespace", "getNamespace"]) && args.len() == 1)
+    });
+    let Some(what) = matched
+        .arg_for_param(1)
+        .filter(|_| namespace_env)
+        .map(|index| &args[index])
+    else {
+        return Some(Vec::new());
+    };
+    match &what.value {
+        Expr::String(name, _) => Some(vec![name.clone()]),
+        Expr::Call { func, args, .. } if is_c_call_head(func) => args
+            .iter()
+            .map(|element| match (&element.name, &element.value) {
+                (Some(alias), Expr::String(..)) => Some(semantic_argument_name(alias).to_string()),
+                (None, Expr::String(name, _)) => Some(name.clone()),
+                _ => None,
+            })
+            .collect(),
+        // Like an omitted `what`, `NULL` binds nothing.
+        Expr::Null(_) => Some(Vec::new()),
+        _ => None,
+    }
 }
 
 /// The argument named `formal`, else the first positional one.
@@ -313,6 +424,26 @@ fn installs_bindings(name: &str) -> bool {
     BINDING_INSTALLERS.contains(&strip_package(name, "base").unwrap_or(name))
 }
 
+/// Whether `node` may replace a binding in any frame, including the global
+/// one call contracts rely on: a binding installer, called, passed, or named
+/// to `do.call`, or `assign`/`delayedAssign`/`makeActiveBinding`/`rm` with a
+/// computed name.
+fn node_installs_bindings(node: AstNode<'_>) -> bool {
+    match node {
+        AstNode::Expr(Expr::Ident { name, .. }) => installs_bindings(name),
+        AstNode::Expr(Expr::Call { func, args, .. }) => {
+            let mut writes = WriteSet::default();
+            collect_callable_binding_write(func, args, &mut writes);
+            writes.opaque
+                || matches!(func.as_ref(), Expr::Ident { name, .. } if bare_name(name) == "do.call")
+                    && args.first().is_some_and(|first| {
+                        matches!(&first.value, Expr::String(name, _) if installs_bindings(name))
+                    })
+        }
+        _ => false,
+    }
+}
+
 /// Whether a call to `name` may bind anything in the frame it runs in: an
 /// installer, or any frame-reflective function.
 fn reflects_frame(name: &str) -> bool {
@@ -422,9 +553,28 @@ impl Checker {
                 })
             },
         );
+        // Hooks run after every file is sourced. Their bindings register the
+        // name only: rlang's hooks run only if `.onLoad()` calls
+        // `run_on_load()`, so ry does not model their values.
+        for (target, value) in load_hook_assignments(stmts) {
+            self.register_binding(target, value);
+        }
         self.collect_capture_writes(stmts);
+        let mut registered = FxSet::default();
+        s3_registrations(stmts, &mut registered);
+        if !registered.is_empty() {
+            Arc::make_mut(&mut self.fn_table)
+                .registered_s3_methods
+                .extend(registered);
+        }
         if function_outward_writes(&[], stmts).opaque {
             Arc::make_mut(&mut self.fn_table).unproven_top_level = true;
+        }
+        let superassigned = index::superassignment_writes(&[], stmts).names;
+        if !superassigned.is_empty() {
+            Arc::make_mut(&mut self.fn_table)
+                .superassigned
+                .extend(superassigned);
         }
     }
 
@@ -493,17 +643,21 @@ impl Checker {
         for (name, spans) in literal_names {
             for span in spans {
                 let key = (self.path.clone(), span.start, span.end);
-                if global_literals.contains(&span)
-                    && table
-                        .functions
-                        .get(&FunctionId::new(&self.path, span))
-                        .is_some()
+                if !global_literals.contains(&span) {
+                    continue;
+                }
+                if table
+                    .functions
+                    .get(&FunctionId::new(&self.path, span))
+                    .is_some()
                 {
                     table
                         .capture_literal_bindings
                         .entry(name.clone())
                         .or_default()
                         .insert(key);
+                } else {
+                    table.unrecorded_global_literals.insert(name.clone());
                 }
             }
         }
@@ -522,11 +676,9 @@ impl Checker {
         table.capture_writes.extend(outward);
     }
 
-    // Records one identifier-bound assignment from the collection
-    // traversal: the bound name in `known_vars` (and `callable_vars` for
-    // constructor calls), and, when the value is a function literal, the
-    // function itself.
-    fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
+    // Records the name an identifier-bound assignment binds: `known_vars`,
+    // and `callable_vars` for constructor calls.
+    fn register_binding(&mut self, target: &Expr, value: &Expr) {
         // Record every identifier-bound top-level assignment in
         // `known_vars`. This is independent of whether the RHS
         // is a function literal: regular variable assignments
@@ -553,6 +705,13 @@ impl Checker {
                 table.callable_vars.remove(name);
             }
         }
+    }
+
+    // Records one identifier-bound assignment from the collection
+    // traversal: its name, and, when the value is a function literal, the
+    // function itself.
+    fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
+        self.register_binding(target, value);
         if let (Some(name), Expr::Function { params, body, span }) = (binding_name(target), value) {
             // An S3 method named like `print.foo` is recorded both
             // as a regular function (so the name resolves to its
@@ -600,36 +759,18 @@ impl Checker {
     // subscript arguments, nested function bodies — so the policy is
     // `Walk::ALL` with no skip rules at all.
     fn collect_declared_globals_stmt(&mut self, s: &Stmt) {
+        if masks_s4_registration(s) {
+            Arc::make_mut(&mut self.fn_table)
+                .functions
+                .s4_mut()
+                .mark_all_incomplete();
+        }
         let _ = walk_stmt(
             s,
             Walk::ALL,
-            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-                // A binding installer, called, passed, or named to `do.call`,
-                // may replace a binding in any frame, including the global
-                // one call contracts rely on.
-                // So may `assign`/`delayedAssign`/`makeActiveBinding`/`rm`
-                // with a computed name.
-                let installer = match node {
-                    AstNode::Expr(Expr::Ident { name, .. }) => installs_bindings(name),
-                    AstNode::Expr(Expr::Call { func, args, .. }) => {
-                        let mut writes = WriteSet::default();
-                        collect_callable_binding_write(func, args, &mut writes);
-                        writes.opaque
-                            || matches!(func.as_ref(), Expr::Ident { name, .. } if bare_name(name) == "do.call")
-                                && args.first().is_some_and(|first| {
-                                    matches!(&first.value, Expr::String(name, _) if installs_bindings(name))
-                                })
-                    }
-                    _ => false,
-                };
-                if installer && !self.fn_table.may_install_bindings {
+            |node: AstNode<'_>, fn_depth: usize| -> ControlFlow<(), Descend> {
+                if node_installs_bindings(node) && !self.fn_table.may_install_bindings {
                     Arc::make_mut(&mut self.fn_table).may_install_bindings = true;
-                }
-                if masks_s4_registration(node) {
-                    Arc::make_mut(&mut self.fn_table)
-                        .functions
-                        .s4_mut()
-                        .mark_all_incomplete();
                 }
                 if let AstNode::Expr(Expr::Call { func, args, .. }) = node
                     && let Expr::Ident { name, .. } = func.as_ref()
@@ -653,6 +794,22 @@ impl Checker {
                                 let table = Arc::make_mut(&mut self.fn_table);
                                 table.note_bound_name(&declared);
                                 table.known_vars.insert(declared);
+                            }
+                        }
+                    }
+                    if matches!(name.as_str(), "loadModule" | "Rcpp::loadModule") {
+                        let table = Arc::make_mut(&mut self.fn_table);
+                        match rcpp_module_bindings(args, fn_depth == 0) {
+                            Some(names) => {
+                                for bound in names {
+                                    table.note_bound_name(&bound);
+                                    table.known_vars.insert(bound);
+                                }
+                            }
+                            None => {
+                                table
+                                    .known_vars
+                                    .insert(ry_core::SERIALIZED_BINDINGS_UNENUMERABLE.to_string());
                             }
                         }
                     }
@@ -853,9 +1010,10 @@ impl Checker {
                     type_: t,
                     required,
                     defaulted: p.default.is_some(),
-                    defused: parameter_is_defused(&body, &p.name),
-                    quoting: parameter_is_quoted(&body, params, &p.name),
+                    defused: parameter_is_defused(&body, &p.name, &[], &self.user_stubs),
+                    quoting: parameter_is_quoted(&body, params, &p.name, &self.user_stubs),
                     unforced: parameter_is_unforced(&body, params, &p.name),
+                    missing_only: parameter_only_probed(&body, params, &p.name, &self.user_stubs),
                     injection: None,
                 }
             })
@@ -931,7 +1089,9 @@ impl Checker {
         }
         // The function's own name stays unbound here, so recursive calls
         // resolve through the function table and read its return slot.
-        insert_s3_dispatch_context(name, &mut scope, &self.typeshed.globals);
+        if self.runs_as_s3_method(name, &function.source_path, function.definition_span) {
+            insert_s3_dispatch_context(&mut scope);
+        }
 
         // Keep deferred expressions (notably `on.exit(expr)`) in the same
         // exit-time lexical context during fixpoint inference as during the
@@ -980,10 +1140,18 @@ fn is_callable_object_constructor(expression: &Expr) -> bool {
     )
 }
 
-fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool {
-    let quotes = |statement: &Stmt| stmt_any(statement, &|e| quotes_parameter(e, parameter));
-    let captures_promise =
-        |statement: &Stmt| stmt_any(statement, &|e| captures_promise_parameter(e, parameter));
+fn parameter_is_quoted(
+    body: &[Stmt],
+    params: &[Param],
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
+    let quotes = |statement: &Stmt| stmt_any(statement, &|e| quotes_parameter(e, parameter, stubs));
+    let captures_promise = |statement: &Stmt| {
+        stmt_any(statement, &|e| {
+            captures_promise_parameter(e, parameter, stubs)
+        })
+    };
     body.iter()
         .any(|statement| stmt_any(statement, &captures_all_arguments))
         || (params.iter().any(|formal| formal.name == parameter)
@@ -994,7 +1162,39 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
             // this function.  This preserves eager diagnostics for mixed
             // bodies such as a capture followed by `print(x)`.
             && !(body.iter().any(captures_promise)
-                && parameter_has_normal_use(body, parameter)))
+                && parameter_has_normal_use(body, parameter, stubs)))
+}
+
+/// Whether the body and defaults use `parameter` only through `missing()`
+/// or promise capture such as `substitute()`, so a call never forces it.
+/// Unlike `parameter_is_unforced`, frame reflection and string mentions do
+/// not count: a validator's `envir = rlang::current_env()` stays quiet.
+/// A formal the function never mentions qualifies too.
+fn parameter_only_probed(
+    body: &[Stmt],
+    params: &[Param],
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
+    // Alternate spellings (backticks, escapes) are not compared reliably.
+    // `UseMethod()` and `standardGeneric()` force the dispatch argument.
+    if parameter == "..."
+        || parameter.contains(['`', '\\'])
+        || body
+            .iter()
+            .any(|statement| stmt_any(statement, &is_dispatch_call))
+    {
+        return false;
+    }
+    let defaults: Vec<Stmt> = params
+        .iter()
+        .filter_map(|formal| formal.default.clone().map(Stmt::Expr))
+        .collect();
+    let mut uses = ParameterUses::default();
+    for statement in body.iter().chain(&defaults) {
+        collect_parameter_uses_in_stmt(statement, parameter, stubs, &mut uses);
+    }
+    !uses.normal
 }
 
 /// Whether no evaluation of the function can force `parameter`'s promise:
@@ -1012,12 +1212,45 @@ fn parameter_is_unforced(body: &[Stmt], params: &[Param], parameter: &str) -> bo
         .iter()
         .filter_map(|formal| formal.default.as_ref())
         .any(|default| expr_mentions(default, parameter))
-        && !body.iter().any(|statement| {
-            walk_stmt(statement, Walk::ALL, |node, _| {
-                mention_step(node, parameter)
-            })
-            .is_break()
+        && !stmts_mention(body, parameter)
+}
+
+/// Formals that `preamble` may force: those it mentions (see
+/// [`parameter_is_unforced`]), plus those a forced formal's default mentions.
+pub(crate) fn formals_read_by<'a>(preamble: &[Stmt], params: &'a [Param]) -> Vec<&'a str> {
+    let mut read: Vec<&str> = params
+        .iter()
+        .map(|formal| formal.name.as_str())
+        .filter(|name| stmts_mention(preamble, name))
+        .collect();
+    let mut next = 0;
+    while let Some(&name) = read.get(next) {
+        next += 1;
+        let Some(default) = params
+            .iter()
+            .find(|formal| formal.name == name)
+            .and_then(|formal| formal.default.as_ref())
+        else {
+            continue;
+        };
+        for formal in params {
+            if !read.contains(&formal.name.as_str()) && expr_mentions(default, &formal.name) {
+                read.push(&formal.name);
+            }
+        }
+    }
+    read
+}
+
+/// Whether `body` may read `parameter`: by name, in a string, or through
+/// frame reflection (see [`parameter_is_unforced`]).
+fn stmts_mention(body: &[Stmt], parameter: &str) -> bool {
+    body.iter().any(|statement| {
+        walk_stmt(statement, Walk::ALL, |node, _| {
+            mention_step(node, parameter)
         })
+        .is_break()
+    })
 }
 
 fn expr_mentions(expression: &Expr, parameter: &str) -> bool {
@@ -1031,7 +1264,11 @@ fn mention_step(node: AstNode<'_>, parameter: &str) -> ControlFlow<(), Descend> 
     let mentions = match node {
         AstNode::Expr(Expr::Ident { name, .. }) => {
             let name = semantic_argument_name(name);
-            name == parameter || FRAME_REFLECTION.contains(&bare_name(name))
+            name == parameter
+                // `...elt(n)` forces a dots element; `..1` lowers to
+                // `Expr::Unknown`, which already counts.
+                || (parameter == "..." && bare_name(name) == "...elt")
+                || FRAME_REFLECTION.contains(&bare_name(name))
         }
         AstNode::Expr(Expr::String(text, _)) => {
             mentions_word(text, parameter) || FRAME_REFLECTION.contains(&text.as_str())
@@ -1121,11 +1358,15 @@ fn captures_all_arguments(expression: &Expr) -> bool {
 /// Leaf predicate for `stmt_any`: the call quotes `parameter` directly
 /// (`substitute(x)`, a promise-capture helper) or unquotes it inside a
 /// `bquote(...)` template.
-fn quotes_parameter(expression: &Expr, parameter: &str) -> bool {
+fn quotes_parameter(
+    expression: &Expr,
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
     let Expr::Call { func, args, .. } = expression else {
         return false;
     };
-    captured_arguments(func, args)
+    captured_arguments(func, args, stubs)
         .iter()
         .zip(args)
         .any(|(capture, arg)| *capture && is_parameter(&arg.value, parameter))
@@ -1137,11 +1378,15 @@ fn quotes_parameter(expression: &Expr, parameter: &str) -> bool {
 
 /// Leaf predicate for `stmt_any`: the call captures `parameter`'s promise
 /// without evaluating it.
-fn captures_promise_parameter(expression: &Expr, parameter: &str) -> bool {
+fn captures_promise_parameter(
+    expression: &Expr,
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
     let Expr::Call { func, args, .. } = expression else {
         return false;
     };
-    captured_arguments(func, args)
+    captured_arguments(func, args, stubs)
         .iter()
         .zip(args)
         .any(|(capture, arg)| *capture && is_parameter(&arg.value, parameter))
@@ -1149,46 +1394,83 @@ fn captures_promise_parameter(expression: &Expr, parameter: &str) -> bool {
 
 /// Whether any use of `parameter` in `body` reads it as an ordinary value,
 /// as opposed to a quoted, defused, or promise-captured use.
-fn parameter_has_normal_use(body: &[Stmt], parameter: &str) -> bool {
+fn parameter_has_normal_use(
+    body: &[Stmt],
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
     let mut uses = ParameterUses::default();
     for statement in body {
-        collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+        collect_parameter_uses_in_stmt(statement, parameter, stubs, &mut uses);
     }
     uses.normal
 }
 
-/// Classify actuals using only the capturing formals of embedded signatures.
-/// Bare names retain the existing inventory union, without lexical resolution.
-/// Neither this index nor qualified lookup reads per-checker user stubs.
-pub(crate) fn captured_arguments(function: &Expr, args: &[Arg]) -> Vec<bool> {
+/// Classify actuals using only the capturing formals of stub signatures.
+/// `stubs` are the checker's user stubs, which replace same-named embedded
+/// packages wholesale as in call checking. Bare names retain the existing
+/// inventory union, without lexical resolution.
+pub(crate) fn captured_arguments(
+    function: &Expr,
+    args: &[Arg],
+    stubs: &BTreeMap<String, Typeshed>,
+) -> Vec<bool> {
     let Some(name) = ident_name(function) else {
         return Vec::new();
     };
+    let captures = |signature: &&FunctionSig| {
+        signature
+            .eval
+            .values()
+            .any(|mode| *mode == EvalMode::CapturesPromise)
+    };
+    let mut signatures = Vec::new();
     if let Some((package, name)) = name.rsplit_once("::") {
         let package = package.trim_end_matches(':');
         let typeshed = if package == "base" {
-            ry_typeshed::load_base_cached().ok()
+            stubs
+                .get("base")
+                .or_else(|| ry_typeshed::load_base_cached().ok())
         } else {
-            ry_typeshed::load_package(package)
+            ry_typeshed::package_stub(stubs, package)
         };
-        if let Some(signature) = typeshed.and_then(|db| db.functions.get(name))
-            && signature
-                .eval
-                .values()
-                .any(|mode| *mode == EvalMode::CapturesPromise)
-        {
-            let mut captured = vec![false; args.len()];
-            capture_signature_arguments(signature, args, &mut captured);
-            return captured;
-        }
-    } else if let Some(signatures) = promise_capture_index().get(name) {
+        signatures.extend(
+            typeshed
+                .and_then(|db| db.functions.get(name))
+                .filter(captures),
+        );
+    } else if stubs.is_empty() {
+        // Without user stubs, the index is the answer; skip the merge buffer.
+        let Some(entries) = promise_capture_index().get(name) else {
+            return Vec::new();
+        };
         let mut captured = vec![false; args.len()];
-        for signature in signatures {
+        for (_, signature) in entries {
             capture_signature_arguments(signature, args, &mut captured);
         }
         return captured;
+    } else {
+        let embedded = promise_capture_index().get(name).into_iter().flatten();
+        signatures.extend(
+            embedded
+                .filter(|(package, _)| !stubs.contains_key(*package))
+                .map(|(_, signature)| *signature),
+        );
+        signatures.extend(
+            stubs
+                .values()
+                .filter_map(|db| db.functions.get(name))
+                .filter(captures),
+        );
     }
-    Vec::new()
+    if signatures.is_empty() {
+        return Vec::new();
+    }
+    let mut captured = vec![false; args.len()];
+    for signature in signatures {
+        capture_signature_arguments(signature, args, &mut captured);
+    }
+    captured
 }
 
 fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: &mut [bool]) {
@@ -1309,28 +1591,28 @@ fn capture_signature_arguments(signature: &FunctionSig, args: &[Arg], captured: 
 }
 
 /// Sparse one-time inventory: only signatures with capture metadata allocate
-/// an entry. Multiple packages with the same bare name retain their union.
-fn promise_capture_index() -> &'static std::collections::HashMap<String, Vec<&'static FunctionSig>>
-{
-    static INDEX: std::sync::OnceLock<
-        std::collections::HashMap<String, Vec<&'static FunctionSig>>,
-    > = std::sync::OnceLock::new();
+/// an entry. Multiple packages with the same bare name retain their union;
+/// each signature keeps its package so a user stub can replace it.
+fn promise_capture_index() -> &'static CaptureIndex {
+    static INDEX: std::sync::OnceLock<CaptureIndex> = std::sync::OnceLock::new();
     INDEX.get_or_init(|| {
-        let mut index: std::collections::HashMap<String, Vec<&'static FunctionSig>> =
-            std::collections::HashMap::new();
-        let mut add = |typeshed: &'static ry_typeshed::Typeshed| {
+        let mut index = CaptureIndex::new();
+        let mut add = |package: &'static str, typeshed: &'static ry_typeshed::Typeshed| {
             for (name, signature) in &typeshed.functions {
                 if signature
                     .eval
                     .values()
                     .any(|mode| *mode == EvalMode::CapturesPromise)
                 {
-                    index.entry(name.clone()).or_default().push(signature);
+                    index
+                        .entry(name.clone())
+                        .or_default()
+                        .push((package, signature));
                 }
             }
         };
         if let Ok(base) = ry_typeshed::load_base_cached() {
-            add(base);
+            add("base", base);
         }
         for package in ry_typeshed::known_packages() {
             // Skip stubs that cannot contribute: the prefilter keeps
@@ -1340,12 +1622,14 @@ fn promise_capture_index() -> &'static std::collections::HashMap<String, Vec<&'s
                 continue;
             }
             if let Some(typeshed) = ry_typeshed::load_package(package) {
-                add(typeshed);
+                add(package, typeshed);
             }
         }
         index
     })
 }
+
+type CaptureIndex = std::collections::HashMap<String, Vec<(&'static str, &'static FunctionSig)>>;
 
 /// Whether a `.(parameter)` unquote anywhere inside the expression —
 /// including inside braced statement blocks — references `parameter`.
@@ -1370,22 +1654,36 @@ fn is_parameter(expression: &Expr, parameter: &str) -> bool {
     matches!(expression, Expr::Ident { name, .. } if name == parameter)
 }
 
+/// Whether `func` is `missing`, which inspects whether a promise was
+/// supplied without forcing it: its direct symbol argument is no use.
+fn probes_promise(func: &Expr) -> bool {
+    matches!(ident_name(func).map(bare_name), Some("missing"))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FirstParameterUse {
     Defused,
     Normal,
 }
 
-fn parameter_is_defused(body: &[Stmt], parameter: &str) -> bool {
+/// Whether `parameter`'s first use is defused. `skipped` holds the start
+/// offsets of calls that only probe it like `missing()` does, so its direct
+/// symbol argument there is no use.
+pub(crate) fn parameter_is_defused(
+    body: &[Stmt],
+    parameter: &str,
+    skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
+) -> bool {
     if parameter == "..." {
         let mut uses = ParameterUses::default();
         for statement in body {
-            collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+            collect_parameter_uses_in_stmt(statement, parameter, stubs, &mut uses);
         }
         return uses.defused && !uses.normal;
     }
     body.iter()
-        .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+        .find_map(|statement| first_parameter_use_in_stmt(statement, parameter, skipped, stubs))
         == Some(FirstParameterUse::Defused)
 }
 
@@ -1410,7 +1708,12 @@ struct ParameterUses {
 ///   promise-capture helpers, `match.call`) records a defused use;
 /// - `missing(p)` inspects whether a promise was supplied without
 ///   forcing it, so it records neither kind.
-fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut ParameterUses) {
+fn collect_parameter_uses_in_stmt(
+    statement: &Stmt,
+    parameter: &str,
+    stubs: &BTreeMap<String, Typeshed>,
+    uses: &mut ParameterUses,
+) {
     // Leaf identifier nodes their enclosing construct already classified.
     // Each AST node is visited at most once per walk and the entries are
     // node identities, so an entry can never suppress a different node.
@@ -1446,8 +1749,8 @@ fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut 
                 }
                 AstNode::Expr(Expr::Call { func, args, .. }) => {
                     let bare = ident_name(func).map(bare_name);
-                    let probes_promise = matches!(bare, Some("missing"));
-                    let captured = captured_arguments(func, args);
+                    let probes_promise = probes_promise(func);
+                    let captured = captured_arguments(func, args, stubs);
                     for (index, argument) in args.iter().enumerate() {
                         let defused = captured.get(index).copied().unwrap_or(false)
                             || matches!(bare, Some("match.call"));
@@ -1483,74 +1786,101 @@ fn collect_parameter_uses_in_stmt(statement: &Stmt, parameter: &str, uses: &mut 
 // first payload; and a `for` loop's variable re-binding is checked
 // strictly between the iterator walk and the body walk, where the walker
 // provides no hook. Same judgment as the force family in `infer/quoting.rs`.
-fn first_parameter_use_in_stmt(statement: &Stmt, parameter: &str) -> Option<FirstParameterUse> {
-    ry_core::stack::grow(|| first_parameter_use_in_stmt_inner(statement, parameter))
+fn first_parameter_use_in_stmt(
+    statement: &Stmt,
+    parameter: &str,
+    skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
+) -> Option<FirstParameterUse> {
+    ry_core::stack::grow(|| first_parameter_use_in_stmt_inner(statement, parameter, skipped, stubs))
 }
 
 fn first_parameter_use_in_stmt_inner(
     statement: &Stmt,
     parameter: &str,
+    skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
     match statement {
-        Stmt::Assign { target, value, .. } => first_parameter_use_in_expr(value, parameter)
-            .or_else(|| match target {
+        Stmt::Assign { target, value, .. } => {
+            first_parameter_use_in_expr(value, parameter, skipped, stubs).or_else(|| match target {
                 Expr::Ident { .. } => None,
-                target => first_parameter_use_in_expr(target, parameter),
-            }),
-        Stmt::Expr(expression) => first_parameter_use_in_expr(expression, parameter),
+                target => first_parameter_use_in_expr(target, parameter, skipped, stubs),
+            })
+        }
+        Stmt::Expr(expression) => {
+            first_parameter_use_in_expr(expression, parameter, skipped, stubs)
+        }
         Stmt::If {
             cond, then, else_, ..
-        } => first_parameter_use_in_expr(cond, parameter).or_else(|| {
+        } => first_parameter_use_in_expr(cond, parameter, skipped, stubs).or_else(|| {
             conservative_branch_use([
-                then.iter()
-                    .find_map(|statement| first_parameter_use_in_stmt(statement, parameter)),
+                then.iter().find_map(|statement| {
+                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
+                }),
                 else_.as_ref().and_then(|statements| {
-                    statements
-                        .iter()
-                        .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+                    statements.iter().find_map(|statement| {
+                        first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
+                    })
                 }),
             ])
         }),
         Stmt::For {
             name, iter, body, ..
-        } => first_parameter_use_in_expr(iter, parameter).or_else(|| {
+        } => first_parameter_use_in_expr(iter, parameter, skipped, stubs).or_else(|| {
             if name == parameter {
                 Some(FirstParameterUse::Normal)
             } else {
-                body.iter()
-                    .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+                body.iter().find_map(|statement| {
+                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
+                })
             }
         }),
         Stmt::While { cond, body, .. } => {
-            first_parameter_use_in_expr(cond, parameter).or_else(|| {
-                body.iter()
-                    .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+            first_parameter_use_in_expr(cond, parameter, skipped, stubs).or_else(|| {
+                body.iter().find_map(|statement| {
+                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
+                })
             })
         }
         Stmt::FunctionDef { .. } => None,
-        Stmt::Return { value, .. } => value
-            .as_ref()
-            .and_then(|expression| first_parameter_use_in_expr(expression, parameter)),
+        Stmt::Return { value, .. } => value.as_ref().and_then(|expression| {
+            first_parameter_use_in_expr(expression, parameter, skipped, stubs)
+        }),
     }
 }
 
-fn first_parameter_use_in_expr(expression: &Expr, parameter: &str) -> Option<FirstParameterUse> {
-    ry_core::stack::grow(|| first_parameter_use_in_expr_inner(expression, parameter))
+fn first_parameter_use_in_expr(
+    expression: &Expr,
+    parameter: &str,
+    skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
+) -> Option<FirstParameterUse> {
+    ry_core::stack::grow(|| {
+        first_parameter_use_in_expr_inner(expression, parameter, skipped, stubs)
+    })
 }
 
 fn first_parameter_use_in_expr_inner(
     expression: &Expr,
     parameter: &str,
+    skipped: &[usize],
+    stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
     match expression {
         Expr::Ident { name, .. } => (name == parameter).then_some(FirstParameterUse::Normal),
-        Expr::Call { func, args, .. } => {
-            let captured = captured_arguments(func, args);
-            first_parameter_use_in_expr(func, parameter).or_else(|| {
+        Expr::Call { func, args, span } => {
+            let captured = captured_arguments(func, args, stubs);
+            // `check(col)(col)` shares its start with the inner call.
+            let probes = probes_promise(func)
+                || (matches!(func.as_ref(), Expr::Ident { .. }) && skipped.contains(&span.start));
+            first_parameter_use_in_expr(func, parameter, skipped, stubs).or_else(|| {
                 // Actual order is not promise force order. A normal use in
                 // another actual must dominate a captured occurrence.
                 conservative_branch_use(args.iter().enumerate().map(|(index, argument)| {
-                    if is_parameter(&argument.value, parameter)
+                    if is_parameter(&argument.value, parameter) && probes {
+                        None
+                    } else if is_parameter(&argument.value, parameter)
                         && (captured.get(index).copied().unwrap_or(false)
                             || matches!(
                                 ident_name(func).map(bare_name),
@@ -1559,18 +1889,19 @@ fn first_parameter_use_in_expr_inner(
                     {
                         Some(FirstParameterUse::Defused)
                     } else {
-                        first_parameter_use_in_expr(&argument.value, parameter)
+                        first_parameter_use_in_expr(&argument.value, parameter, skipped, stubs)
                     }
                 }))
             })
         }
-        Expr::BinOp { lhs, rhs, .. } => first_parameter_use_in_expr(lhs, parameter)
-            .or_else(|| first_parameter_use_in_expr(rhs, parameter)),
-        Expr::UnaryOp { expr, .. } => first_parameter_use_in_expr(expr, parameter),
+        Expr::BinOp { lhs, rhs, .. } => first_parameter_use_in_expr(lhs, parameter, skipped, stubs)
+            .or_else(|| first_parameter_use_in_expr(rhs, parameter, skipped, stubs)),
+        Expr::UnaryOp { expr, .. } => first_parameter_use_in_expr(expr, parameter, skipped, stubs),
         Expr::Index { base, args, .. } => {
-            first_parameter_use_in_expr(base, parameter).or_else(|| {
-                args.iter()
-                    .find_map(|argument| first_parameter_use_in_expr(&argument.value, parameter))
+            first_parameter_use_in_expr(base, parameter, skipped, stubs).or_else(|| {
+                args.iter().find_map(|argument| {
+                    first_parameter_use_in_expr(&argument.value, parameter, skipped, stubs)
+                })
             })
         }
         Expr::Function { .. } => None,
@@ -1578,18 +1909,19 @@ fn first_parameter_use_in_expr_inner(
             if embraced_symbol(body).is_some_and(|(name, _)| name == parameter) {
                 Some(FirstParameterUse::Defused)
             } else {
-                body.iter()
-                    .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+                body.iter().find_map(|statement| {
+                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
+                })
             }
         }
         Expr::If {
             cond, then, else_, ..
-        } => first_parameter_use_in_expr(cond, parameter).or_else(|| {
+        } => first_parameter_use_in_expr(cond, parameter, skipped, stubs).or_else(|| {
             conservative_branch_use([
-                first_parameter_use_in_expr(then, parameter),
-                else_
-                    .as_ref()
-                    .and_then(|expression| first_parameter_use_in_expr(expression, parameter)),
+                first_parameter_use_in_expr(then, parameter, skipped, stubs),
+                else_.as_ref().and_then(|expression| {
+                    first_parameter_use_in_expr(expression, parameter, skipped, stubs)
+                }),
             ])
         }),
         Expr::Logical(_, _)
@@ -1623,10 +1955,143 @@ fn string_literal(expr: &Expr) -> Option<&str> {
     }
 }
 
-/// Whether `node` binds a name S4 registration collection reads by
-/// spelling (`signature <- function(...) ...`), so a registering call may
-/// not reach the methods function it is read as.
-fn masks_s4_registration(node: AstNode<'_>) -> bool {
+/// Names a top-level `evalqOnLoad()` block registers with
+/// `registerS3method(generic, class, name)` or
+/// `.S3method(generic, class, name)` (#348). R runs the block in the
+/// namespace after sourcing every file, so `name` then has its final
+/// global binding. Only calls the block always runs count: directly, in
+/// braces, or in a `for` over nonempty string literals without `break` or
+/// `next`. Calls under `if`, `local()`, `quote()`, or a function body, and
+/// plain top-level calls, which may run before the definition, prove
+/// nothing.
+fn s3_registrations(stmts: &[Stmt], names: &mut FxSet<String>) {
+    for stmt in stmts {
+        if let Stmt::Expr(Expr::Call { func, args, .. }) = stmt
+            && matches!(func.as_ref(), Expr::Ident { name, .. } if name == "evalqOnLoad")
+            // A `where` argument evaluates the block in another environment.
+            && let [block] = args.as_slice()
+            && block.name.is_none()
+        {
+            expr_s3_registrations(&block.value, names);
+        }
+    }
+}
+
+fn block_s3_registrations(stmts: &[Stmt], names: &mut FxSet<String>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Expr(expr) => expr_s3_registrations(expr, names),
+            Stmt::For {
+                name, iter, body, ..
+            } if nonempty_strings(iter) && !exits_loop_early(body) => {
+                let mut registered = FxSet::default();
+                block_s3_registrations(body, &mut registered);
+                // Inside the loop, its variable names a string.
+                registered.remove(semantic_argument_name(name));
+                names.extend(registered);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn expr_s3_registrations(expr: &Expr, names: &mut FxSet<String>) {
+    match expr {
+        Expr::Block { body, .. } => block_s3_registrations(body, names),
+        Expr::Call { func, args, .. }
+            if matches!(
+                func.as_ref(),
+                Expr::Ident { name, .. } if name == "registerS3method" || name == ".S3method"
+            ) =>
+        {
+            if let [generic, class, method, ..] = args.as_slice()
+                && [generic, class, method]
+                    .iter()
+                    .all(|arg| arg.name.is_none())
+                && let Expr::Ident { name, .. } = &method.value
+                && let Some(name) = identifier_name(name)
+            {
+                names.insert(name.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether a loop body contains `break` or `next` anywhere.
+fn exits_loop_early(body: &[Stmt]) -> bool {
+    walk_stmts(body, Walk::ALL, |node, _| match node {
+        AstNode::Expr(Expr::Ident { name, .. }) if name == "break" || name == "next" => {
+            ControlFlow::Break(())
+        }
+        _ => ControlFlow::Continue(Descend::Into),
+    })
+    .is_break()
+}
+
+/// `"a"` or `c("a", ...)`: a `for` over it runs its body at least once.
+fn nonempty_strings(expr: &Expr) -> bool {
+    match expr {
+        Expr::String(..) => true,
+        Expr::Call { func, args, .. } => {
+            matches!(func.as_ref(), Expr::Ident { name, .. } if name == "c")
+                && !args.is_empty()
+                && args.iter().all(|arg| string_literal(&arg.value).is_some())
+        }
+        _ => false,
+    }
+}
+
+/// Whether `s` binds a name S4 registration collection reads by spelling
+/// (`signature <- function(...) ...`), so a registering call may not reach
+/// the methods function it is read as. A formal or a plain local of a
+/// function lives in that function's frame, so it masks only registrations
+/// the function itself makes (#780); `<<-` and `assign()` may reach any
+/// frame, and so may any binding in a function that may install bindings
+/// elsewhere (`evalq(c <- f, globalenv())`).
+fn masks_s4_registration(s: &Stmt) -> bool {
+    walk_stmt(s, Walk::ALL, |node, _| match node {
+        AstNode::Expr(function @ Expr::Function { .. })
+            if !registers_s4(function) && !contains(function, node_installs_bindings) =>
+        {
+            if contains(function, |inner| binds_s4_helper(inner, false)) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(Descend::Skip)
+            }
+        }
+        node if binds_s4_helper(node, true) => ControlFlow::Break(()),
+        _ => ControlFlow::Continue(Descend::Into),
+    })
+    .is_break()
+}
+
+/// Whether `function` makes an S4 registration call anywhere inside it, or
+/// is a generic body whose `standardGeneric()` call a formal may mask.
+/// `bare_name` also admits a qualified `methods::setMethod(...)`.
+fn registers_s4(function: &Expr) -> bool {
+    contains(function, |node| {
+        matches!(node, AstNode::Expr(Expr::Call { func, .. })
+            if matches!(func.as_ref(), Expr::Ident { name, .. }
+                if matches!(bare_name(name), "setMethod" | "setGeneric" | "standardGeneric")))
+    })
+}
+
+/// Whether any node of `expr` satisfies `found`.
+fn contains(expr: &Expr, found: impl Fn(AstNode<'_>) -> bool) -> bool {
+    walk_expr(expr, Walk::ALL, |node, _| {
+        if found(node) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(Descend::Into)
+        }
+    })
+    .is_break()
+}
+
+/// Whether `node` binds a name S4 registration reads by spelling. With
+/// `frame_local` false, only writes that may leave the current frame count.
+fn binds_s4_helper(node: AstNode<'_>, frame_local: bool) -> bool {
     let masks = |name: &str| {
         matches!(
             semantic_argument_name(name),
@@ -1640,16 +2105,11 @@ fn masks_s4_registration(node: AstNode<'_>) -> bool {
         }
     }
     match node {
-        AstNode::Stmt(Stmt::Assign { target, .. }) => root(target).is_some_and(masks),
-        AstNode::Stmt(Stmt::For { name, .. }) => masks(name),
         AstNode::Expr(Expr::BinOp {
-            op: BinOpKind::Assign | BinOpKind::SuperAssign,
+            op: BinOpKind::SuperAssign,
             lhs,
             ..
         }) => root(lhs).is_some_and(masks),
-        AstNode::Expr(Expr::Function { params, .. }) => {
-            params.iter().any(|param| masks(&param.name))
-        }
         AstNode::Expr(Expr::Call { func, args, .. }) => {
             matches!(func.as_ref(), Expr::Ident { name, .. }
                 if matches!(bare_name(name), "assign" | "delayedAssign" | "makeActiveBinding"))
@@ -1657,6 +2117,17 @@ fn masks_s4_registration(node: AstNode<'_>) -> bool {
                     .first()
                     .and_then(|argument| string_literal(&argument.value))
                     .is_some_and(masks)
+        }
+        _ if !frame_local => false,
+        AstNode::Stmt(Stmt::Assign { target, .. }) => root(target).is_some_and(masks),
+        AstNode::Stmt(Stmt::For { name, .. }) => masks(name),
+        AstNode::Expr(Expr::BinOp {
+            op: BinOpKind::Assign,
+            lhs,
+            ..
+        }) => root(lhs).is_some_and(masks),
+        AstNode::Expr(Expr::Function { params, .. }) => {
+            params.iter().any(|param| masks(&param.name))
         }
         _ => false,
     }
@@ -1999,15 +2470,15 @@ mod collect_walker_tests {
     fn parameter_uses(src: &str, parameter: &str) -> ParameterUses {
         let mut uses = ParameterUses::default();
         for statement in &parse_stmts(src) {
-            collect_parameter_uses_in_stmt(statement, parameter, &mut uses);
+            collect_parameter_uses_in_stmt(statement, parameter, &BTreeMap::new(), &mut uses);
         }
         uses
     }
 
     fn first_use(src: &str, parameter: &str) -> Option<FirstParameterUse> {
-        parse_stmts(src)
-            .iter()
-            .find_map(|statement| first_parameter_use_in_stmt(statement, parameter))
+        parse_stmts(src).iter().find_map(|statement| {
+            first_parameter_use_in_stmt(statement, parameter, &[], &BTreeMap::new())
+        })
     }
 
     fn collect(src: &str) -> Checker {
@@ -2118,7 +2589,7 @@ mod collect_walker_tests {
         let index = promise_capture_index();
         assert!(index.contains_key("substitute"));
         assert!(!index.contains_key("mean"));
-        assert!(index.values().flatten().all(|sig| {
+        assert!(index.values().flatten().all(|(_, sig)| {
             sig.eval
                 .values()
                 .any(|mode| *mode == EvalMode::CapturesPromise)
@@ -2238,6 +2709,23 @@ mod collect_walker_tests {
                 defused: false,
                 normal: true
             }
+        );
+    }
+
+    #[test]
+    fn first_parameter_use_skips_missing_probes() {
+        assert_eq!(first_use("missing(p)", "p"), None);
+        assert_eq!(
+            first_use("if (missing(p)) stop(); substitute(p)", "p"),
+            Some(FirstParameterUse::Defused)
+        );
+        assert_eq!(
+            first_use("if (missing(p)) stop(); print(p)", "p"),
+            Some(FirstParameterUse::Normal)
+        );
+        assert_eq!(
+            first_use("missing(p + 1)", "p"),
+            Some(FirstParameterUse::Normal)
         );
     }
 

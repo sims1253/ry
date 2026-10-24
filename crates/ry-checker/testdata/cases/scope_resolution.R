@@ -591,6 +591,36 @@ helper_a <- function(x) x
 }, environment())
 }
 
+## case: closures in a braced call argument read later bindings of the block
+# no-diag
+# From ape `ace.R` (issue #690). A closure's free names are looked up when it
+# runs, so a block passed to `suppressWarnings()` or a `switch()` arm may bind
+# them after the definition, as a function body may.
+fit_in_block <- function(x) {
+  suppressWarnings({
+    loss <- function(s) sum((x - mu)^2) / s
+    mu <- mean(x)
+    loss(2)
+  })
+}
+fit_in_switch <- function(method, x) {
+  switch(method, reml = {
+    loss <- function(s) sum((x - mu)^2) / s
+    mu <- mean(x)
+    loss(2)
+  })
+}
+
+## case: closures in a braced call argument still flag names the block never binds
+# expect: RY010
+f <- function(x) {
+  suppressWarnings({
+    loss <- function(s) sum((x - not_bound)^2) / s
+    mu <- mean(x)
+    loss(2)
+  })
+}
+
 ## case: bindings made in both arms of an if value are visible afterwards
 # no-diag
 # From xfun `cache.R` (issue #694). R binds an assignment in an `if` arm
@@ -723,3 +753,32 @@ m <- function() {
   c <- 1
   c(2, 3)$x
 }
+
+## case: `$` on a base data frame partially matches a unique prefix
+# no-diag
+# A base data.frame uses list `$`, so `df$nv` is `df$nvalid` (#753).
+df <- data.frame(nvalid = 1:3, total = c(2, 4, 6))
+df$total / df$nv
+
+## case: `$` on a base data frame with an ambiguous prefix is an undefined column
+# expect: RY060
+df <- data.frame(nvalid = 1:3, nvx = 1:3)
+df$nv
+
+## case: `$` prefix on a tibble is an undefined column
+# expect: RY060, RY060
+# `$.tbl_df` never partial-matches: it warns and returns NULL. A join
+# keeps its left input's tibble class.
+tb <- dplyr::group_by(data.frame(nvalid = 1:3, k = 1:3))
+tb$nv
+dplyr::left_join(tb, data.frame(k = 1:3, z = 4:6), by = "k")$nv
+
+## case: a closure formal named c does not void a stopifnot scalar fact
+# no-diag
+# Only a binding a registration can see masks S4 collection (#780).
+asserted <- function(kind = "warning") {
+  stopifnot(is.null(kind) || length(kind) == 1L)
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+on_error <- function(x) tryCatch(x, error = function(c) FALSE)

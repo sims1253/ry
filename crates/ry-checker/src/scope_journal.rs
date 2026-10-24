@@ -18,6 +18,29 @@ fn put<V, S: std::hash::BuildHasher>(
     }
 }
 
+/// [`put`] for the persistent binding tables.
+fn put_persistent<V: Clone>(map: &mut PersistentMap<String, V>, key: String, value: Option<V>) {
+    match value {
+        Some(value) => {
+            map.insert(key, value);
+        }
+        None => {
+            map.remove(&key);
+        }
+    }
+}
+
+fn put_binding(bindings: &mut Bindings, name: String, ty: Option<RType>) {
+    match ty {
+        Some(ty) => {
+            bindings.insert(name, ty);
+        }
+        None => {
+            bindings.remove(&name);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct BindingState {
     pub ty: Option<RType>,
@@ -92,7 +115,7 @@ impl BindingState {
             self.default_parameter,
         );
         marker(&mut scope.lexical_functions, &name, self.lexical);
-        put(
+        put_persistent(
             &mut scope.lexical_definitions,
             name.clone(),
             self.lexical_definition,
@@ -102,7 +125,7 @@ impl BindingState {
         if let Some(p) = scope.reference_provenance.as_mut() {
             put(&mut p.bindings, name.clone(), self.provenance);
         }
-        put(&mut scope.bindings, name, self.ty);
+        put_binding(&mut scope.bindings, name, self.ty);
     }
 }
 
@@ -126,7 +149,7 @@ impl AssignmentUndo {
                 set.insert(name.clone());
             }
         }
-        put(
+        put_persistent(
             &mut scope.lexical_definitions,
             name.clone(),
             self.lexical_definition,
@@ -144,7 +167,7 @@ impl AssignmentUndo {
             debug_assert!(!table.bindings.contains_key(&name));
             table.bindings.insert(name.clone(), provenance);
         }
-        put(&mut scope.bindings, name, self.ty);
+        put_binding(&mut scope.bindings, name, self.ty);
     }
 }
 
@@ -161,6 +184,8 @@ pub(crate) enum MarkerKind {
 pub(crate) enum Undo {
     KnownString(String, Option<Arc<str>>),
     KnownStrings(FxMap<String, Arc<str>>),
+    ConditionAlias(String, Option<Arc<crate::literal_values::ConditionAlias>>),
+    ConditionAliases(FxMap<String, Arc<crate::literal_values::ConditionAlias>>),
     Assignment(String, AssignmentUndo),
     Binding(String, BindingState),
     Marker(MarkerKind, String, bool),
@@ -540,7 +565,9 @@ impl Scope {
                 | Undo::OpsBinding(..)
                 | Undo::OpsTables(..)
                 | Undo::KnownString(..)
-                | Undo::KnownStrings(..) => {}
+                | Undo::KnownStrings(..)
+                | Undo::ConditionAlias(..)
+                | Undo::ConditionAliases(..) => {}
             }
         }
         let delta = BranchDelta {
@@ -555,6 +582,10 @@ impl Scope {
                     put(&mut self.known_strings, name, previous);
                 }
                 Undo::KnownStrings(previous) => self.known_strings = previous,
+                Undo::ConditionAlias(name, previous) => {
+                    put(&mut self.condition_aliases, name, previous);
+                }
+                Undo::ConditionAliases(previous) => self.condition_aliases = previous,
                 Undo::Assignment(name, state) => state.restore(self, name),
                 Undo::Binding(name, state) => state.restore(self, name),
                 Undo::Marker(kind, name, present) => {
@@ -572,7 +603,7 @@ impl Scope {
                     }
                 }
                 Undo::LexicalDefinition(name, previous) => {
-                    put(&mut self.lexical_definitions, name, previous);
+                    put_persistent(&mut self.lexical_definitions, name, previous);
                 }
                 Undo::Alias(name, previous) => {
                     put(&mut self.function_aliases, name, previous);
@@ -643,6 +674,23 @@ impl Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bindings_count_each_escaped_name_once() {
+        let mut bindings = Bindings::default();
+        bindings.insert(r"a\b".to_string(), RType::unknown());
+        // Overwriting an escaped name must not count it twice.
+        bindings.insert(r"a\b".to_string(), RType::unknown());
+        bindings.insert("plain".to_string(), RType::unknown());
+        assert!(bindings.has_escaped_names());
+        assert!(bindings.remove(r"a\b").is_some());
+        assert!(!bindings.has_escaped_names());
+        assert!(bindings.remove(r"a\b").is_none());
+        bindings.insert(r"c\d".to_string(), RType::unknown());
+        assert!(bindings.has_escaped_names());
+        bindings.clear();
+        assert!(!bindings.has_escaped_names());
+    }
 
     #[test]
     fn assignment_undo_restores_interleaved_metadata_and_skips_only_full_noops() {
@@ -812,6 +860,16 @@ mod tests {
         assert_eq!(left.box_objects, right.box_objects);
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);
+        assert_eq!(
+            format!(
+                "{:?}",
+                left.condition_aliases.iter().collect::<BTreeMap<_, _>>()
+            ),
+            format!(
+                "{:?}",
+                right.condition_aliases.iter().collect::<BTreeMap<_, _>>()
+            )
+        );
         assert_eq!(
             left.uncertainty.literal_values,
             right.uncertainty.literal_values

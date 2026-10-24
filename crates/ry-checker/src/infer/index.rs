@@ -33,6 +33,60 @@ fn light_table_mask(scope: &Scope) -> bool {
     !scope.data_mask_unknown && scope.data_mask_columns_first()
 }
 
+/// Base `[` is a primitive that evaluates its subscripts in the calling
+/// frame, so `x[iu <- upper.tri(x)]` binds `iu` there (#713). The table
+/// mask is a scratch scope, so copy those writes back as opaque bindings:
+/// an opaque receiver may be a matrix or a data.table, and data.table's
+/// `[` keeps the write in its own frame. A proven data.table keeps every
+/// write local. `<<-` writes an enclosing frame, never this one.
+fn merge_subscript_assignments(scope: &mut Scope, mask: &Scope, args: &[Arg], receiver: &RType) {
+    if receiver.class.contains("data.table") {
+        return;
+    }
+    let mut names = HashSet::new();
+    for argument in args {
+        let _ = walk_expr(
+            &argument.value,
+            Walk {
+                assign_targets: false,
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                let target = match node {
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::Assign,
+                        lhs,
+                        ..
+                    }) => lhs.as_ref(),
+                    // The statement form `x <<- v` keeps its marker on the value.
+                    AstNode::Stmt(Stmt::Assign { target, value, .. })
+                        if !matches!(
+                            value,
+                            Expr::BinOp {
+                                op: BinOpKind::SuperAssign,
+                                ..
+                            }
+                        ) =>
+                    {
+                        target
+                    }
+                    _ => return ControlFlow::Continue(Descend::Into),
+                };
+                if let Expr::Ident { name, .. } = target {
+                    names.insert(name.clone());
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+    }
+    for name in names {
+        if mask.get(&name).is_some() {
+            scope.insert(name, RType::unknown());
+        }
+    }
+}
+
 /// The conservative `$`/`[[` fallback when no schema resolves the access:
 /// for list-like bases return opaque since the element type is unknowable;
 /// for other types return a length-1 value of the base mode. A union base
@@ -44,6 +98,19 @@ fn conservative_element_type(bt: &RType) -> RType {
         RType::unknown()
     } else {
         RType::new(bt.mode, Length::One)
+    }
+}
+
+/// The type a schema proves for a `[[` element it does not record: the
+/// common element type, when the schema lists every element or summarizes
+/// them by position (an `lapply()` result of unknown length). Named fields
+/// written to an opaque value or environment say nothing about the other
+/// elements (#689).
+fn unrecorded_element_type(schema: &ColumnSchema) -> Option<RType> {
+    if schema.complete || schema.is_positional() {
+        schema.homogeneous_element_type()
+    } else {
+        None
     }
 }
 
@@ -168,6 +235,15 @@ impl Checker {
                         // error); only data frames make a missing `$`
                         // name a hard error worth flagging. Mirror the `[[`-with-string guard below.
                         if bt.class.contains("data.frame") && schema.complete {
+                            // A base data.frame uses list `$`, which
+                            // partially matches a unique prefix (#753). A
+                            // tibble's `$.tbl_df` returns NULL instead, and
+                            // any other class may bring its own `$`.
+                            if bt.class == ClassVector::single("data.frame")
+                                && let Some(t) = schema.unique_prefix_match(name)
+                            {
+                                return t;
+                            }
                             self.emit_undefined_column(name, schema, span);
                             // Fall through to the conservative default so
                             // downstream code still has *a* type to work
@@ -175,13 +251,17 @@ impl Checker {
                         } else if matches!(bt.mode, Mode::List) && bt.class == ClassVector::empty()
                         {
                             // Plain list `$` partially matches a unique
-                            // prefix. An unlisted field could still match
-                            // exactly or make the prefix ambiguous.
+                            // prefix and yields NULL on a miss. Only a
+                            // complete local `list(...)` record lists every
+                            // name: elsewhere an unlisted field could match
+                            // exactly or make the prefix ambiguous (#689).
+                            let closed = schema.complete && schema.locally_constructed;
                             if let Some(t) = schema.unique_prefix_match(name) {
-                                return if schema.complete { t } else { RType::unknown() };
+                                return if closed { t } else { RType::unknown() };
                             }
-                            // Plain list `$` miss yields NULL in R.
-                            return RType::new(Mode::Null, Length::Zero);
+                            if closed {
+                                return RType::new(Mode::Null, Length::Zero);
+                            }
                         }
                     }
                 }
@@ -220,14 +300,32 @@ impl Checker {
                 };
                 if let Some(idx) = int_idx {
                     if let Some(schema) = &bt.columns {
-                        let key = format!("[[{}]]", idx as i64);
-                        if let Some(t) = schema.get(&key) {
+                        // `list()` keys only unnamed elements as `[[N]]`, so
+                        // the key is the position only when no element is
+                        // named. A partly named local list reads position N,
+                        // unless an earlier element may be NULL: `x$a <- NULL`
+                        // drops `a` and shifts the rest.
+                        let element = if schema.is_positional() {
+                            schema.get(&format!("[[{}]]", idx as i64))
+                        } else if schema.locally_constructed
+                            && schema.complete
+                            && idx >= 1.0
+                            && idx.fract() == 0.0
+                            && schema.columns.iter().take(idx as usize).all(|(_, t)| {
+                                !t.mode.is_unknown() && !matches!(t.mode, Mode::Null | Mode::Union)
+                            })
+                        {
+                            schema.columns.get(idx as usize - 1).map(|(_, t)| t.clone())
+                        } else {
+                            None
+                        };
+                        if let Some(t) = element {
                             return t;
                         }
                         // Index not in schema: if all elements have the
                         // same type (homogeneous list from lapply etc.),
                         // return that common type. Otherwise opaque.
-                        if let Some(common) = schema.homogeneous_element_type() {
+                        if let Some(common) = unrecorded_element_type(schema) {
                             return common;
                         }
                     }
@@ -242,7 +340,7 @@ impl Checker {
                     self.infer(&a.value, scope);
                 }
                 if let Some(schema) = &bt.columns {
-                    if let Some(common) = schema.homogeneous_element_type() {
+                    if let Some(common) = unrecorded_element_type(schema) {
                         if !bt.class.contains("data.frame") || schema.complete {
                             return common;
                         }
@@ -261,120 +359,139 @@ impl Checker {
                 // than borrowing a scope function's type. Base data.frame
                 // receivers, plain lists, and atomic receivers keep eager
                 // index evaluation — base R does not data-mask `[`.
-                let mut table_mask =
-                    table_index_receiver(&bt).then(|| self.table_index_mask_scope(scope, &bt));
-                let index_scope: &mut Scope = match table_mask.as_mut() {
-                    Some(mask) => mask,
-                    None => scope,
-                };
-                // A row index may select only part of each column.
-                let rows_selected = args.len() >= 2 && !matches!(args[0].value, Expr::Missing(_));
-                let subset = |ty: RType| if rows_selected { subset_facts(ty) } else { ty };
-                // `df[i, j]` selects a column when `j` is scalar and the
-                // default `drop = TRUE` is in effect.  A data frame's own
-                // length is its number of columns, not its row count, so
-                // returning `bt` here would make `df[, 1]` look like a
-                // length-ncol vector.  Prefer the schema's column type,
-                // which `infer_data_frame` has already widened to the frame
-                // row count.
-                if bt.class.contains("data.frame") && args.len() >= 2 {
-                    let column_arg = &args[1];
-                    let drop_false = args.iter().any(|arg| {
-                        arg.name.as_deref() == Some("drop")
-                            && matches!(arg.value, Expr::Logical(false, _))
-                    });
-                    let column = match &column_arg.value {
-                        Expr::String(name, _) => {
-                            bt.columns.as_ref().and_then(|schema| schema.get(name))
-                        }
-                        Expr::Integer(index, _) if *index >= 1 => bt
-                            .columns
-                            .as_ref()
-                            .and_then(|schema| schema.columns.get(*index as usize - 1))
-                            .map(|(_, ty)| ty.clone()),
-                        Expr::Double(index, _) if *index >= 1.0 && index.fract() == 0.0 => bt
-                            .columns
-                            .as_ref()
-                            .and_then(|schema| schema.columns.get(*index as usize - 1))
-                            .map(|(_, ty)| ty.clone()),
-                        _ => None,
-                    };
-                    let _ = self.infer_table_index_args(args, &bt, index_scope);
-                    let column = column.map(subset);
-                    if let Some(column) = column {
-                        if !drop_false {
-                            return column;
-                        }
-                        let name = match &column_arg.value {
-                            Expr::String(name, _) => name.clone(),
-                            _ => "[[1]]".to_string(),
-                        };
-                        return RType::new(Mode::List, Length::One)
-                            .with_class(ClassVector::single("data.frame"))
-                            .with_columns(Arc::new(ColumnSchema {
-                                columns: vec![(name, column)],
-                                complete: true,
-                                locally_constructed: false,
-                            }));
-                    }
-                    // A scalar but dynamic column index still drops to a
-                    // vector. Its mode and row count are not knowable.
-                    if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
-                        return RType::unknown();
-                    }
-                    return subset(bt);
+                if !table_index_receiver(&bt) {
+                    return self.infer_single_index(bt, args, scope);
                 }
-                if matches!(bt.mode, Mode::List) && args.len() >= 2 {
-                    if let Some(column) = args.iter().find_map(|arg| match &arg.value {
-                        Expr::String(column, _) => Some(column),
-                        _ => None,
-                    }) {
-                        let _ = self.infer_table_index_args(args, &bt, index_scope);
-                        if let Some(schema) = &bt.columns {
-                            if let Some(column_type) = schema.get(column) {
-                                return subset(column_type);
-                            }
-                            if !schema.complete {
-                                return RType::unknown();
-                            }
-                        }
-                        return RType::unknown();
-                    }
-                }
-                // For one-dimensional vector subsetting, result length is
-                // controlled by the index rather than the source. Logical
-                // masks select by their TRUE count, and numeric indices may
-                // exclude or select nothing, so retain a length only when R's
-                // index mode makes that length provable.
-                let index_types = self.infer_table_index_args(args, &bt, index_scope);
-                if let Some(members) = &bt.members {
-                    if args.len() != 1
-                        || members
-                            .iter()
-                            .any(|member| !member.class.known || member.class.len > 0)
-                    {
-                        return RType::unknown();
-                    }
-                    return members
-                        .iter()
-                        .map(|member| {
-                            subset_vector(member, &index_types[0], &args[0].value)
-                                .unwrap_or_else(RType::unknown)
-                        })
-                        .reduce(RType::join)
-                        .unwrap_or_else(RType::unknown);
-                }
-                if args.len() == 1
-                    && let Some(result) = subset_vector(&bt, &index_types[0], &args[0].value)
-                {
-                    return result;
-                }
-                if bt.mode.is_unknown_or_non_vector() {
-                    RType::unknown()
-                } else {
-                    bt
-                }
+                let mut mask = self.table_index_mask_scope(scope, &bt);
+                let result = self.infer_single_index(bt.clone(), args, &mut mask);
+                merge_subscript_assignments(scope, &mask, args, &bt);
+                result
             }
+        }
+    }
+
+    /// Infer `x[...]` with the index arguments evaluated in `index_scope`:
+    /// the caller's scope, or a table mask over the receiver.
+    fn infer_single_index(&mut self, bt: RType, args: &[Arg], index_scope: &mut Scope) -> RType {
+        // A row index may select only part of each column.
+        let rows_selected = args.len() >= 2 && !matches!(args[0].value, Expr::Missing(_));
+        let subset = |ty: RType| if rows_selected { subset_facts(ty) } else { ty };
+        // `df[i, j]` selects a column when `j` is scalar and the
+        // default `drop = TRUE` is in effect.  A data frame's own
+        // length is its number of columns, not its row count, so
+        // returning `bt` here would make `df[, 1]` look like a
+        // length-ncol vector.  Prefer the schema's column type,
+        // which `infer_data_frame` has already widened to the frame
+        // row count.
+        if bt.class.contains("data.frame") && args.len() >= 2 {
+            let column_arg = &args[1];
+            // A plain tibble's `[` keeps its class and drops only on an
+            // explicit `drop = TRUE`. Other subclasses are not modelled.
+            let tibble = bt.class == ClassVector::from_slice(&["tbl_df", "tbl", "data.frame"]);
+            // `drop` by name, else positionally as the third unnamed argument.
+            let drop = args
+                .iter()
+                .find(|arg| arg.name.as_deref() == Some("drop"))
+                .or_else(|| args.iter().filter(|arg| arg.name.is_none()).nth(2));
+            let drop_false = match drop {
+                Some(arg) => matches!(arg.value, Expr::Logical(false, _)),
+                None => tibble,
+            };
+            let column = match &column_arg.value {
+                Expr::String(name, _) => bt
+                    .columns
+                    .as_ref()
+                    .and_then(|schema| schema.get(name))
+                    .map(|ty| (name.clone(), ty)),
+                Expr::Integer(index, _) if *index >= 1 => bt
+                    .columns
+                    .as_ref()
+                    .and_then(|schema| schema.columns.get(*index as usize - 1))
+                    .cloned(),
+                Expr::Double(index, _) if *index >= 1.0 && index.fract() == 0.0 => bt
+                    .columns
+                    .as_ref()
+                    .and_then(|schema| schema.columns.get(*index as usize - 1))
+                    .cloned(),
+                _ => None,
+            };
+            let _ = self.infer_table_index_args(args, &bt, index_scope);
+            if let Some((name, column)) = column {
+                let column = subset(column);
+                if !drop_false {
+                    return column;
+                }
+                // A tibble stays a tibble, so its `$` still never
+                // partial-matches.
+                let class = if tibble {
+                    bt.class.clone()
+                } else {
+                    ClassVector::single("data.frame")
+                };
+                return RType::new(Mode::List, Length::One)
+                    .with_class(class)
+                    .with_columns(Arc::new(ColumnSchema {
+                        columns: vec![(name, column)],
+                        complete: true,
+                        locally_constructed: false,
+                    }));
+            }
+            // A scalar but dynamic column index still drops to a
+            // vector. Its mode and row count are not knowable.
+            if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
+                return RType::unknown();
+            }
+            return subset(bt);
+        }
+        if matches!(bt.mode, Mode::List) && args.len() >= 2 {
+            if let Some(column) = args.iter().find_map(|arg| match &arg.value {
+                Expr::String(column, _) => Some(column),
+                _ => None,
+            }) {
+                let _ = self.infer_table_index_args(args, &bt, index_scope);
+                if let Some(schema) = &bt.columns {
+                    if let Some(column_type) = schema.get(column) {
+                        return subset(column_type);
+                    }
+                    if !schema.complete {
+                        return RType::unknown();
+                    }
+                }
+                return RType::unknown();
+            }
+        }
+        // For one-dimensional vector subsetting, result length is
+        // controlled by the index rather than the source. Logical
+        // masks select by their TRUE count, and numeric indices may
+        // exclude or select nothing, so retain a length only when R's
+        // index mode makes that length provable.
+        let index_types = self.infer_table_index_args(args, &bt, index_scope);
+        if let Some(members) = &bt.members {
+            if args.len() != 1
+                || members
+                    .iter()
+                    .any(|member| !member.class.known || member.class.len > 0)
+            {
+                return RType::unknown();
+            }
+            return members
+                .iter()
+                .map(|member| {
+                    subset_vector(member, &index_types[0], &args[0].value)
+                        .unwrap_or_else(RType::unknown)
+                })
+                .reduce(RType::join)
+                .unwrap_or_else(RType::unknown);
+        }
+        if args.len() == 1
+            && let Some(result) = subset_vector(&bt, &index_types[0], &args[0].value)
+        {
+            return result;
+        }
+        if bt.mode.is_unknown_or_non_vector() {
+            RType::unknown()
+        } else {
+            bt
         }
     }
 
@@ -913,28 +1030,13 @@ pub(crate) fn is_operator_generic(name: &str) -> bool {
     crate::semantic_lists::OPERATORS.contains(&name)
 }
 
-pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, globals: &Globals) {
-    let method_name = semantic_argument_name(method_name);
-    let group_method = split_s3_method_name(method_name, globals)
-        .is_some_and(|(generic, _)| crate::semantic_lists::is_group_generic(&generic));
-    // Subset primitives supply the S3 dispatch bindings too, but do not
-    // belong to a group. Require a nonempty class suffix, as for group methods.
-    let subset_method = ["[", "[[", "$", "[<-", "[[<-", "$<-"]
-        .iter()
-        .any(|generic| {
-            method_name
-                .strip_prefix(generic)
-                .and_then(|suffix| suffix.strip_prefix('.'))
-                .is_some_and(|class| !class.is_empty())
-        });
-    if group_method || subset_method {
-        scope.insert(".Generic", RType::scalar(Mode::Character));
-        scope.insert(".Method", RType::new(Mode::Character, Length::Unknown));
-        scope.insert(".Class", RType::new(Mode::Character, Length::Unknown));
-    }
-    if group_method {
-        scope.insert(".Group", RType::scalar(Mode::Character));
-    }
+/// Bind what R's dispatcher puts in every S3 method frame: `.Generic`,
+/// `.Method`, `.Class`, and `.Group` (`""` outside group dispatch).
+pub(crate) fn insert_s3_dispatch_context(scope: &mut Scope) {
+    scope.insert(".Generic", RType::scalar(Mode::Character));
+    scope.insert(".Method", RType::new(Mode::Character, Length::Unknown));
+    scope.insert(".Class", RType::new(Mode::Character, Length::Unknown));
+    scope.insert(".Group", RType::scalar(Mode::Character));
 }
 
 /// Names assigned anywhere in a body, for closure-capture candidates.
@@ -1248,6 +1350,51 @@ pub(crate) fn superassignment_writes_in_expr(expr: &Expr) -> SuperassignmentWrit
         },
     );
     writes
+}
+
+/// The `<<-` targets of closures nested in a function `body` that can
+/// land in the frame the body runs in, or further out (issue #706). The
+/// body's own direct writes are left out: they skip its frame, so a
+/// closure reading the body's local keeps seeing the unchanged binding.
+/// Code passed to `local()` or a testthat verb runs in a child of the
+/// body's frame, so its direct writes do land there and are kept. A
+/// direct complex write (`a$b <<- v`) also skips the frame: R fetches its
+/// root from the enclosing frames, not the body's own `a`.
+pub(crate) fn nested_superassignment_writes(body: &[Stmt]) -> HashSet<String> {
+    let mut writes = SuperassignmentWrites::default();
+    let mut formals = InterveningFormals::default();
+    let _ = walk_stmts(
+        body,
+        Walk::ALL,
+        |node: AstNode<'_>, depth: usize| -> ControlFlow<(), Descend> {
+            if depth == 0
+                && let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                && ident_name(func).is_some_and(|name| {
+                    let name = crate::semantic_lists::bare_name(name);
+                    name == "local" || crate::semantic_lists::is_testthat_block_verb(name)
+                })
+            {
+                for argument in args {
+                    writes
+                        .names
+                        .extend(superassignment_writes_in_expr(&argument.value).names);
+                }
+            }
+            let direct_write = depth == 0
+                && matches!(
+                    node,
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::SuperAssign,
+                        ..
+                    })
+                );
+            if direct_write {
+                return ControlFlow::Continue(Descend::Into);
+            }
+            ControlFlow::Continue(formals.visit(node, depth, &mut writes))
+        },
+    );
+    writes.names
 }
 
 /// Pins the traversal shape of [`superassignment_writes`]: statement and

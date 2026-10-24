@@ -13,8 +13,8 @@ batch, such as `manual-audit` or `P2`.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 84 | 37 / 29 / 0 (+18 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 373 | 88 / 285 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 82 | 37 / 29 / 0 (+16 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 311 | 87 / 224 / 0 | hermetic (strict CI gate) |
 
 The `0.7.1` in the tidyverse ledger's filename is historical. The `ry` column
 gives the version that produced its diagnostics. The
@@ -79,7 +79,7 @@ The tidyverse ledger's `source_sha256` uses the same recipe over every
 non-`posit` `*.root.txt` report, one for each of the 32 entries in
 `ecosystem/packages.txt`. The table's 24 packages count only the ledger's
 `packages` entries. Eight manifest packages have no entry: the reports for
-cli, rlang, and testthat hold 23 unowned findings, and those for curl, fs,
+cli, rlang, and testthat hold 15 unowned findings, and those for curl, fs,
 jsonlite, scales, and withr are empty.
 
 ## Running the corpora

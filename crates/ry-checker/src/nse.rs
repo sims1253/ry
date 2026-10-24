@@ -750,8 +750,13 @@ fn shared_join_key(args: &[Arg]) -> impl Fn(&str) -> bool {
 fn infer_dplyr_join(arg_types: &[RType], args: &[Arg]) -> RType {
     let x_type = arg_types.first().cloned().unwrap_or_else(RType::unknown);
     let y_type = arg_types.get(1).cloned().unwrap_or_else(RType::unknown);
-    let mut result =
-        RType::new(Mode::List, Length::Unknown).with_class(ClassVector::single("data.frame"));
+    // A join keeps its left input's tibble class.
+    let class = if x_type.class.contains("tbl_df") {
+        x_type.class.clone()
+    } else {
+        ClassVector::single("data.frame")
+    };
+    let mut result = RType::new(Mode::List, Length::Unknown).with_class(class);
 
     let mut columns = Vec::new();
     let mut complete = true;

@@ -398,6 +398,12 @@ impl ColumnSchema {
         self.columns.iter().map(|(n, _)| n.as_str()).collect()
     }
 
+    /// Whether every column is a by-position `[[N]]` key, as for unnamed
+    /// `list()` elements and `lapply()` result summaries.
+    pub fn is_positional(&self) -> bool {
+        self.columns.iter().all(|(n, _)| n.starts_with("[["))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.columns.is_empty()
     }

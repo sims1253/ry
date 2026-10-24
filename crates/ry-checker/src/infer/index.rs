@@ -101,6 +101,19 @@ fn conservative_element_type(bt: &RType) -> RType {
     }
 }
 
+/// The type a schema proves for a `[[` element it does not record: the
+/// common element type, when the schema lists every element or summarizes
+/// them by position (an `lapply()` result of unknown length). Named fields
+/// written to an opaque value or environment say nothing about the other
+/// elements (#689).
+fn unrecorded_element_type(schema: &ColumnSchema) -> Option<RType> {
+    if schema.complete || schema.is_positional() {
+        schema.homogeneous_element_type()
+    } else {
+        None
+    }
+}
+
 pub(super) fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
     match receiver.mode {
         Mode::Union => receiver
@@ -238,13 +251,17 @@ impl Checker {
                         } else if matches!(bt.mode, Mode::List) && bt.class == ClassVector::empty()
                         {
                             // Plain list `$` partially matches a unique
-                            // prefix. An unlisted field could still match
-                            // exactly or make the prefix ambiguous.
+                            // prefix and yields NULL on a miss. Only a
+                            // complete local `list(...)` record lists every
+                            // name: elsewhere an unlisted field could match
+                            // exactly or make the prefix ambiguous (#689).
+                            let closed = schema.complete && schema.locally_constructed;
                             if let Some(t) = schema.unique_prefix_match(name) {
-                                return if schema.complete { t } else { RType::unknown() };
+                                return if closed { t } else { RType::unknown() };
                             }
-                            // Plain list `$` miss yields NULL in R.
-                            return RType::new(Mode::Null, Length::Zero);
+                            if closed {
+                                return RType::new(Mode::Null, Length::Zero);
+                            }
                         }
                     }
                 }
@@ -288,8 +305,7 @@ impl Checker {
                         // named. A partly named local list reads position N,
                         // unless an earlier element may be NULL: `x$a <- NULL`
                         // drops `a` and shifts the rest.
-                        let positional = schema.names().iter().all(|n| n.starts_with("[["));
-                        let element = if positional {
+                        let element = if schema.is_positional() {
                             schema.get(&format!("[[{}]]", idx as i64))
                         } else if schema.locally_constructed
                             && schema.complete
@@ -309,7 +325,7 @@ impl Checker {
                         // Index not in schema: if all elements have the
                         // same type (homogeneous list from lapply etc.),
                         // return that common type. Otherwise opaque.
-                        if let Some(common) = schema.homogeneous_element_type() {
+                        if let Some(common) = unrecorded_element_type(schema) {
                             return common;
                         }
                     }
@@ -324,7 +340,7 @@ impl Checker {
                     self.infer(&a.value, scope);
                 }
                 if let Some(schema) = &bt.columns {
-                    if let Some(common) = schema.homogeneous_element_type() {
+                    if let Some(common) = unrecorded_element_type(schema) {
                         if !bt.class.contains("data.frame") || schema.complete {
                             return common;
                         }

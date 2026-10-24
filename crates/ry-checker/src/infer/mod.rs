@@ -3041,10 +3041,10 @@ impl Checker {
             if let Some(key) = key.filter(|key| {
                 !vt.mode.is_unknown()
                     && !matches!(vt.mode, Mode::Null | Mode::Union)
-                    && base_t.columns.as_ref().is_some_and(|schema| {
-                        schema.get(key).is_some()
-                            && schema.names().iter().all(|name| name.starts_with("[["))
-                    })
+                    && base_t
+                        .columns
+                        .as_ref()
+                        .is_some_and(|schema| schema.get(key).is_some() && schema.is_positional())
             }) {
                 scope.insert(
                     base_name.clone(),

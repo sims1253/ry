@@ -233,6 +233,10 @@ All notable changes to ry are documented in this file.
 - Narrow through a local bound to a guard predicate, so
   `has_size <- !is.null(size); if (has_size) ...` drops the omitted `NULL`
   default like `if (!is.null(size))` does, until either name is rebound (#692).
+- Type a `$` or `[[` name missing from a list whose names ry only partly
+  knows (`list(...)`, an `lapply()` result, fields written to an argument
+  or environment) as unknown instead of NULL, removing RY001 false
+  positives in metafor, R.oo, terra, and gridGraphics (#689).
 
 ## [0.11.0] - 2026-09-22
 

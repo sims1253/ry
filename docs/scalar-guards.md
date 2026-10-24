@@ -77,17 +77,17 @@ A passed `if` condition records the same fact
 ([#702](https://github.com/sims1253/ry/issues/702)). R errors unless the
 condition is TRUE or FALSE, so `if (x == "")`, `if (!is.null(x) && x == "")`,
 and `if (is.null(x) || x == "none")` prove `x` NULL or scalar after the
-statement, under the boundary above. Only a base comparison of the subject
-with a scalar literal, or a base `x %in% table` membership test, counts,
-possibly negated, as the condition itself or as
-the tail of `||` behind `is.null(x)` or of `&&` behind `!is.null(x)`. An earlier operand
-proves nothing: an empty value is NA there, and `character(0) == "" && FALSE`
-is FALSE. Nor does `if (any(x == ""))`. The membership table must be a
-literal, a local value, or a `c()` of scalar literals, so evaluating it cannot
-replace the subject. Base `match` compares a classed subject through
-`mtfrm()`, and a project `mtfrm` method can return fewer elements than the
-subject has, so such a method disables the membership proof for a subject of
-unknown class.
+statement, under the boundary above. Two tests count: a base comparison of
+the subject with a scalar literal, and a base `x %in% table` membership test.
+Either may be negated, and may be the whole condition, the tail of `||`
+behind `is.null(x)`, or the tail of `&&` behind `!is.null(x)`. An earlier
+operand proves nothing: an empty value is NA there, and
+`character(0) == "" && FALSE` is FALSE. Nor does `if (any(x == ""))`. The
+membership table must be a literal, a local value, or a `c()` of scalar
+literals, so evaluating it cannot replace the subject. Base `match` compares
+a classed subject through `mtfrm()`, and a project `mtfrm` method can return
+fewer elements than the subject has, so such a method disables the
+membership proof for a subject of unknown class.
 
 Scalar facts and adopted declaration identities
 ([declarations](declarations.md#shared-checking-boundary)) share one call

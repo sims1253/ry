@@ -1148,3 +1148,11 @@ live_numeric <- function() {
   s <- 1L
   if (is.numeric(s)) s$x
 }
+
+## case: a union with a Date member in the else of is.numeric still reports
+# expect: RY040
+# The Date member makes is.numeric() FALSE when `flag` is TRUE, so the arm is live.
+union_date_else <- function(flag) {
+  s <- if (flag) structure(1, class = "Date") else 1L
+  if (is.numeric(s)) 0 else s + "a"
+}

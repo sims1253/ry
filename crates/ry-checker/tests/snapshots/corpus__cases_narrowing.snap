@@ -503,3 +503,9 @@ expression: rows
       line: 1149
       message: "$ operator is invalid for atomic vectors of mode `integer`"
       severity: error
+- case: a union with a Date member in the else of is.numeric still reports
+  diagnostics:
+    - code: RY040
+      line: 1157
+      message: "cannot apply arithmetic op to `union` and `character`"
+      severity: error

@@ -729,14 +729,17 @@ fn apply_single_narrowing_branch<'a>(
             // parameter that type is only the omitted-argument call shape
             // (`diagnostic_parameter_type`); for any other binding R never
             // enters the branch, so code there cannot be proven to fail, the
-            // mirror of `disjoint_mode_guard`. A known class keeps its type:
-            // `is.numeric()` is FALSE for a Date or factor. A class
-            // predicate's false path rejects the class claim, not the mode,
-            // so it never degrades, and mixed unions keep any surviving
-            // member.
+            // mirror of `disjoint_mode_guard`. A known class on the value or
+            // any union member keeps its type: `is.numeric()` is FALSE for a
+            // Date or factor. A class predicate's false path rejects the
+            // class claim, not the mode, so it never degrades, and mixed
+            // unions keep any surviving member.
             if is_mode_predicate(target)
                 && let Some(existing) = scope.get(var)
                 && !existing.class.has_known_class()
+                && existing.members.as_ref().is_none_or(|members| {
+                    members.iter().all(|member| !member.class.has_known_class())
+                })
                 && type_is_exactly_tested_family(existing, target)
             {
                 scope.insert_narrowed(var.clone(), RType::unknown());

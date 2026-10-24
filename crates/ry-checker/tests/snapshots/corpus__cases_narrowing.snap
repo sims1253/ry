@@ -467,3 +467,31 @@ expression: rows
       line: 1057
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
+- case: a passed if() membership test proves its parameter scalar for a later guard
+  diagnostics: []
+- case: a literal-only c() keeps an earlier stopifnot scalar fact
+  diagnostics: []
+- case: a c() call with a non-literal argument still ends the scalar fact
+  diagnostics:
+    - code: RY032
+      line: 1083
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a membership test against a table that runs a call proves nothing
+  diagnostics:
+    - code: RY032
+      line: 1091
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a project mtfrm method can make membership shorter than its subject
+  diagnostics:
+    - code: RY032
+      line: 1100
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a project S4 method for %in% may return TRUE for a vector subject
+  diagnostics:
+    - code: RY032
+      line: 1110
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning

@@ -1057,3 +1057,56 @@ numel_verbose <- function(dims = 2, verbose = TRUE) {
   if (verbose) dims$numel()
 }
 numel_verbose()
+
+## case: a passed if() membership test proves its parameter scalar for a later guard
+# no-diag
+check_kind_in <- function(kind = "warning") {
+  if (!kind %in% c("ignore", "warning", "stop")) stop("bad kind")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: a literal-only c() keeps an earlier stopifnot scalar fact
+# no-diag
+check_kind_kept <- function(kind = "warning") {
+  stopifnot(is.null(kind) || length(kind) == 1L)
+  kinds <- c("ignore", "warning", "stop")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kinds
+}
+
+## case: a c() call with a non-literal argument still ends the scalar fact
+# expect: RY032
+check_kind_spread <- function(kind = "warning", extra = "stop") {
+  stopifnot(is.null(kind) || length(kind) == 1L)
+  kinds <- c("ignore", extra)
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kinds
+}
+
+## case: a membership test against a table that runs a call proves nothing
+# expect: RY032
+check_kind_table <- function(kind = "warning") {
+  if (!kind %in% kind_table()) stop("bad kind")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: a project mtfrm method can make membership shorter than its subject
+# expect: RY032
+mtfrm.kind_label <- function(x) "warning"
+check_kind_label <- function(kind = "warning") {
+  if (!kind %in% c("ignore", "warning", "stop")) stop("bad kind")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}
+
+## case: a project S4 method for %in% may return TRUE for a vector subject
+# expect: RY032
+setGeneric("%in%")
+setMethod("%in%", "character", function(x, table) TRUE)
+check_kind_s4 <- function(kind = "warning") {
+  if (!kind %in% c("ignore", "warning", "stop")) stop("bad kind")
+  if (is.null(kind) || kind == "ignore") return(NULL)
+  kind
+}

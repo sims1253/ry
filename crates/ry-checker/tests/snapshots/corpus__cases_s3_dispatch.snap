@@ -130,3 +130,47 @@ expression: rows
   diagnostics: []
 - case: a storage-length method keeps the length(x) == 1L guard
   diagnostics: []
+- case: $ on Sys.Date() is invalid for its atomic Date value
+  diagnostics:
+    - code: RY061
+      line: 235
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: $ on Sys.time() is invalid for its atomic POSIXct value
+  diagnostics:
+    - code: RY061
+      line: 239
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: $ on a difftime is invalid
+  diagnostics:
+    - code: RY061
+      line: 244
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: arithmetic of a Date or POSIXct with a string is still an error
+  diagnostics:
+    - code: RY040
+      line: 249
+      message: "cannot apply arithmetic op to `double` and `character`"
+      severity: error
+    - code: RY040
+      line: 250
+      message: "cannot apply arithmetic op to `double` and `character`"
+      severity: error
+- case: $ under a dead class test on Sys.Date() is not flagged
+  diagnostics: []
+- case: "a project $ method for the receiver's class keeps $ quiet"
+  diagnostics: []
+- case: a classed atomic without any $ method is invalid
+  diagnostics:
+    - code: RY061
+      line: 278
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a project $.Date method keeps $ on Sys.Date() quiet
+  diagnostics: []
+- case: an unknown attached package may define the $ method
+  diagnostics: []
+- case: a project that may install bindings may define the $ method
+  diagnostics: []

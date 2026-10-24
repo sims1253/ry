@@ -150,6 +150,49 @@ pub(super) fn dollar_receiver_mode_description(receiver: &RType) -> String {
 }
 
 impl Checker {
+    /// Whether `$` on a classed atomic `receiver` may reach an S3 method.
+    /// R tries `$.<class>` for each class and otherwise uses the primitive,
+    /// which errors on an atomic vector. Only a fully known class vector
+    /// with no method in the stub inventory, the project, its registrations,
+    /// or its imports is proof of the error; an unknown package on the
+    /// search path or a project that may install bindings could supply one.
+    fn dollar_method_may_apply(&self, receiver: &RType, scope: &Scope) -> bool {
+        if self.fn_table.may_install_bindings
+            || scope.search_path_unknown
+            || self
+                .loaded
+                .iter()
+                .any(|package| !self.package_is_known(package))
+        {
+            return true;
+        }
+        let members = receiver.members.iter().flat_map(|members| members.iter());
+        std::iter::once(receiver)
+            .chain(members)
+            .any(|ty| self.class_may_have_dollar_method(&ty.class))
+    }
+
+    fn class_may_have_dollar_method(&self, cv: &ClassVector) -> bool {
+        if cv.is_unknown() || cv.guarded || usize::from(cv.len) >= cv.names.len() {
+            return true;
+        }
+        cv.names
+            .iter()
+            .take(cv.len as usize)
+            .flatten()
+            .any(|class| {
+                let method = format!("$.{class}");
+                let named = |name: &String| semantic_argument_name(name) == method;
+                self.s3_lookup_method("$", class).is_some()
+                    || self.fn_table.functions.names().any(named)
+                    || self.fn_table.known_vars.iter().any(named)
+                    || self.fn_table.registered_s3_methods.iter().any(named)
+                    || self.known_vars.iter().any(named)
+                    || self.imported_from.keys().any(named)
+                    || self.external_bindings.iter().any(named)
+            })
+    }
+
     /// Resolve the type of a subset/extract expression given the base
     /// type, the kind of index (`[`, `[[`, `$`), and the (already
     /// lowered) argument list.
@@ -194,8 +237,11 @@ impl Checker {
             IndexKind::Dollar => {
                 // `$` dispatches on classed atomic values. The pooled method
                 // table cannot prove which method applies here, its return
-                // type, or its writes to the caller.
-                if dollar_atomic_receiver_may_dispatch(&bt) {
+                // type, or its writes to the caller. Without any method a
+                // classed atomic errors like a plain one (`Sys.Date()$x`).
+                if dollar_atomic_receiver_may_dispatch(&bt)
+                    && self.dollar_method_may_apply(&bt, scope)
+                {
                     scope.invalidate_unknown_effects();
                     return RType::unknown();
                 }

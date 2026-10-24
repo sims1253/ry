@@ -723,6 +723,12 @@ fn apply_single_narrowing_branch<'a>(
             if target.mode == Mode::Null && narrow_away_from_null_in(scope, var) {
                 return Some(var.as_str());
             }
+            if let Some(existing) = scope.get(var)
+                && proven_class_guard(scope, var, existing, target)
+            {
+                scope.insert_narrowed(var.clone(), RType::unknown());
+                return Some(var.as_str());
+            }
             // When a mode predicate's false path proves the runtime value
             // is not any tested mode, the recorded type cannot describe it
             // here; degrade to unknown in this branch only. For a defaulted
@@ -831,11 +837,46 @@ fn is_mode_predicate(target: &RType) -> bool {
 /// under `is.character(dof)`), so the branch sees an unknown value instead
 /// (#741, #752).
 fn disjoint_mode_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
-    is_mode_predicate(target)
+    let disjoint = is_mode_predicate(target)
         && !existing.mode.is_unknown_or_non_vector()
         && existing.mode != Mode::Null
         && !scope.is_default_parameter(var)
-        && !types_intersect(existing, target)
+        && !types_intersect(existing, target);
+    disjoint || classed_numeric_guard(existing, target)
+}
+
+/// `is.numeric` is the one mode predicate that dispatches: base methods make
+/// it FALSE for a Date, POSIXt or difftime value, and a factor is not numeric
+/// either. On a classed value its passing branch is dead, or reached through
+/// a method ry does not see, so that branch sees an unknown value too.
+fn classed_numeric_guard(existing: &RType, target: &RType) -> bool {
+    let numeric_test = is_mode_predicate(target)
+        && target.members.as_ref().is_some_and(|members| {
+            members.len() == 2
+                && members.iter().any(|member| member.mode == Mode::Integer)
+                && members.iter().any(|member| member.mode == Mode::Double)
+        });
+    numeric_test
+        && (existing.class.has_known_class()
+            || existing
+                .members
+                .as_ref()
+                .is_some_and(|members| members.iter().any(|member| member.class.has_known_class())))
+}
+
+/// A failing class test (`!inherits(x, "Date")`) on a value whose known
+/// classes include every tested class: R never enters that branch.
+fn proven_class_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
+    target.class.has_known_class()
+        && existing.class.has_known_class()
+        && !scope.is_default_parameter(var)
+        && target
+            .class
+            .names
+            .iter()
+            .take(target.class.len as usize)
+            .flatten()
+            .all(|class| existing.class.contains(class))
 }
 
 fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> bool {

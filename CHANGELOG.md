@@ -260,6 +260,12 @@ All notable changes to ry are documented in this file.
 - Vendor r-typeshed d3514747: rlang's `lhs %<~% rhs` binds `lhs` and defers
   `rhs`, so pkgload's `desc_desc %<~% desc::desc` lazy imports no longer read
   the bound name as an unbound variable (#706).
+- Vendor r-typeshed a7838670: `Sys.Date()` returns a `Date` and `Sys.time()`
+  a `POSIXct`. RY061 still reports `$` on them, and on any classed atomic
+  value, when no `$.<class>` method exists in the stubs, the project, its
+  registrations or its imports. A passing `is.numeric()` or failing
+  `inherits()` test on a value of a known class no longer reports code R
+  never runs.
 
 ## [0.11.0] - 2026-09-22
 

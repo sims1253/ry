@@ -228,3 +228,66 @@ summ_counted(mtcars, col = mpg)
 # `length(unclass(x))` cannot report 1 for a longer object (#701).
 length.cell <- function(x) length(unclass(x))
 f <- function(x) length(x) == 1L && is.na(x)
+
+## case: $ on Sys.Date() is invalid for its atomic Date value
+# expect: RY061
+# Base defines no `$.Date`, so R falls back to the primitive and errors.
+x <- Sys.Date()$x
+
+## case: $ on Sys.time() is invalid for its atomic POSIXct value
+# expect: RY061
+x <- Sys.time()$x
+
+## case: $ on a difftime is invalid
+# expect: RY061
+t0 <- Sys.time()
+x <- (Sys.time() - t0)$units
+
+## case: arithmetic of a Date or POSIXct with a string is still an error
+# expect: RY040, RY040
+# `+.Date` and `+.POSIXt` reject a character operand.
+x <- Sys.Date() + "a"
+y <- Sys.time() + "a"
+
+## case: $ under a dead class test on Sys.Date() is not flagged
+# no-diag
+# From r-typeshed's date-time-clean.R: is.numeric() is FALSE for a Date or
+# a POSIXct, so R never runs these `$` accesses.
+f <- function() {
+  x <- Sys.Date()
+  if (is.numeric(x)) x$y else format(x, "%Y")
+}
+g <- function() {
+  t <- Sys.time()
+  if (is.numeric(t)) t$y
+}
+h <- function() {
+  x <- Sys.Date()
+  if (!inherits(x, "Date")) x$y
+}
+
+## case: a project $ method for the receiver's class keeps $ quiet
+# no-diag
+`$.myclass` <- function(x, name) name
+x <- structure(1, class = "myclass")
+y <- x$field
+
+## case: a classed atomic without any $ method is invalid
+# expect: RY061
+x <- structure(1, class = "myclass")
+y <- x$field
+
+## case: a project $.Date method keeps $ on Sys.Date() quiet
+# no-diag
+`$.Date` <- function(x, name) format(x, name)
+y <- Sys.Date()$year
+
+## case: an unknown attached package may define the $ method
+# no-diag
+library(someunknownpkg)
+y <- Sys.Date()$year
+
+## case: a project that may install bindings may define the $ method
+# no-diag
+eval(parse(text = "`$.Date` <- function(x, name) 1"))
+y <- Sys.Date()$year

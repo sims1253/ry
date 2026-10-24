@@ -919,12 +919,12 @@ expression: rows
 - case: "a `$` miss on a closed local list is still NULL"
   diagnostics:
     - code: RY001
-      line: 1395
+      line: 1480
       message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
 - case: "a `[[` on an lapply result keeps the callback's type"
   diagnostics:
     - code: RY040
-      line: 1402
+      line: 1487
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error

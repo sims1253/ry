@@ -2452,3 +2452,37 @@ fn user_stub_captures_reach_collected_wrappers() {
     );
     assert_eq!(unbound(&none), embedded);
 }
+
+#[test]
+fn destructuring_operator_from_another_file_binds_pattern_names() {
+    // rlang's `%<-%` lives in R/standalone-zeallot.R, which sorts after
+    // R/cnd-abort.R where it is used (#706).
+    let user = "f <- function() {\n  found <- NULL\n  c(found, other) %<-% list(TRUE, 2)\n  if (found) other\n}\n";
+    let operator = "`%<-%` <- function(lhs, value) {\n  vars <- as.character(substitute(lhs)[-1])\n  for (i in seq_along(vars)) assign(vars[[i]], value[[i]], envir = parent.frame())\n}\n";
+    let mut project = Project::new();
+    project.add_file("R/cnd-abort.R".to_string(), parse("R/cnd-abort.R", user));
+    project.add_file(
+        "R/standalone-zeallot.R".to_string(),
+        parse("R/standalone-zeallot.R", operator),
+    );
+    let user_codes = |diagnostics: Vec<(String, Vec<ry_checker::Diagnostic>)>| {
+        diagnostics
+            .into_iter()
+            .filter(|(path, _)| path == "R/cnd-abort.R")
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>()
+    };
+    let before = user_codes(project.check_incremental());
+    assert!(before.is_empty(), "{before:?}");
+
+    project.update_file(
+        "R/standalone-zeallot.R".to_string(),
+        Arc::new(parse(
+            "R/standalone-zeallot.R",
+            "unrelated <- function() NULL\n",
+        )),
+    );
+    let after = user_codes(project.check_incremental());
+    assert!(after.contains(&"RY001"), "{after:?}");
+}

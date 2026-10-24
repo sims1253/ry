@@ -356,3 +356,11 @@ expression: rows
       severity: error
 - case: a closure formal named c does not void a stopifnot scalar fact
   diagnostics: []
+- case: a project-defined destructuring operator binds its pattern names
+  diagnostics: []
+- case: a project-defined destructuring operator leaves other names alone
+  diagnostics:
+    - code: RY001
+      line: 813
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning

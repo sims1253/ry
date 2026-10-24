@@ -13,7 +13,7 @@ batch, such as `manual-audit` or `P2`.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 82 | 37 / 29 / 0 (+13 unowned) | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 82 | 37 / 29 / 0 (+16 unowned) | hermetic (strict CI gate) |
 | [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 310 | 87 / 223 / 0 | hermetic (strict CI gate) |
 
 The `0.7.1` in the tidyverse ledger's filename is historical. The `ry` column

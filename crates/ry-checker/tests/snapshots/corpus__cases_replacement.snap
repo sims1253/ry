@@ -1,0 +1,26 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: a nested replacement through a positional element keeps the element
+  diagnostics: []
+- case: a nested replacement of a computed element keeps its container a list
+  diagnostics: []
+- case: a named nested replacement still records the field type
+  diagnostics:
+    - code: RY061
+      line: 32
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a nested replacement through an atomic element still reports RY061
+  diagnostics:
+    - code: RY061
+      line: 40
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a nested replacement through a data frame column still reports RY061
+  diagnostics:
+    - code: RY061
+      line: 47
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error

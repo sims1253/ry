@@ -240,6 +240,10 @@ All notable changes to ry are documented in this file.
   knows (`list(...)`, an `lapply()` result, fields written to an argument
   or environment) as unknown instead of NULL, removing RY001 false
   positives in metafor, R.oo, terra, and gridGraphics (#689).
+- Keep every step of a nested replacement such as `x$f[[i]]$g <- v`: an
+  index step ry does not model makes `x$f` forget its element types instead
+  of recording `x$f$g`, removing RY061 false positives in forecast and rgl
+  (#708).
 
 ## [0.11.0] - 2026-09-22
 

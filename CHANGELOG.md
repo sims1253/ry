@@ -220,7 +220,8 @@ All notable changes to ry are documented in this file.
 - Treat plain assignments in a top-level rlang-style `on_load({...})` block
   as package bindings, so reads from other files no longer get RY010 (#691).
 - Count rlang's lazy `name %<~% expr` in such a block as a package binding
-  too, removing pkgload's RY010 reads of its lazy imports (#691).
+  too, and a name both arms of a direct `if`/`else` there bind, removing
+  pkgload's RY010 reads of its lazy imports (#691).
 - Skip a `missing(col)` check when deciding whether a function defuses `col`,
   so `if (missing(col)) stop(); dplyr::select(data, {{ col }})` no longer
   makes callers' bare column names RY010 (#688).

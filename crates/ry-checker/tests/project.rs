@@ -2286,15 +2286,23 @@ fn on_load_block_assignments_are_package_bindings() {
 #[test]
 fn on_load_block_lazy_assignments_are_package_bindings() {
     // rlang's `name %<~% expr` in an `on_load()` block binds `name` in the
-    // namespace to a promise (pkgload's lazy imports). A nested one still
-    // proves nothing.
+    // namespace to a promise (pkgload's lazy imports). A direct `if`/`else`
+    // binds a name both arms bind; one arm, or a nested block, proves nothing.
     let unbound = unbound_beside_module(
-        "on_load({\n  desc_desc %<~% desc::desc\n  rlang::`%<~%`(QUALIFIED, 1)\n})\n\
+        "on_load({\n  desc_desc %<~% desc::desc\n  rlang::`%<~%`(QUALIFIED, 1)\n\
+           if (a) {\n    BOTH %<~% 1\n    THEN_ONLY <- 1\n  } else {\n    BOTH <- 2\n  }\n\
+           if (a) CHAIN <- 1 else if (b) CHAIN <- 2 else CHAIN %<~% 3\n\
+           if (a) NO_ELSE <- 1\n})\n\
          on_load(SINGLE %<~% 1)\n\
          on_load(local({\n  NESTED %<~% 1\n}))\n",
-        "force_deps <- function() list(desc_desc, QUALIFIED, SINGLE, NESTED)\n",
+        "force_deps <- function() {\n\
+           list(desc_desc, QUALIFIED, SINGLE, BOTH, CHAIN, THEN_ONLY, NO_ELSE, NESTED)\n}\n",
     );
-    assert_eq!(unbound, ["variable `NESTED` is not bound in this scope"]);
+    assert_eq!(
+        unbound,
+        ["THEN_ONLY", "NO_ELSE", "NESTED"]
+            .map(|name| format!("variable `{name}` is not bound in this scope")),
+    );
 }
 
 // RY010 messages for `use.R` after checking `module.R` beside it.

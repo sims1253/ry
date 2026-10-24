@@ -88,7 +88,8 @@ fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
 /// namespace (#691). rlang's `on_load()`, and the package-local copies of
 /// it, store `expr` for `.onLoad()` to evaluate there, so these bindings
 /// become package bindings. Only an assignment that is the hook expression
-/// itself or a statement of its braced block counts; `<<-`, `assign()`,
+/// itself, a statement of its braced block, or made by both arms of an
+/// `if`/`else` statement there counts; `<<-`, `assign()`,
 /// loop binders (as at top level), and anything nested deeper prove
 /// nothing. `evalqOnLoad()` does not count: an installed package evaluates
 /// its block in a child of the namespace. rlang's lazy `name %<~% expr`
@@ -114,26 +115,7 @@ fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, Option<
             _ => None,
         })
         .flat_map(|hook| match hook {
-            Expr::Block { body, .. } => body
-                .iter()
-                .filter_map(|stmt| match stmt {
-                    // Statement `<<-` repeats itself as the value.
-                    Stmt::Assign {
-                        target,
-                        value,
-                        span,
-                    } if !matches!(
-                        value,
-                        Expr::BinOp { op: BinOpKind::SuperAssign, span: operation, .. }
-                            if operation == span
-                    ) =>
-                    {
-                        Some((target, Some(value)))
-                    }
-                    Stmt::Expr(expr) => lazy_assignment_target(expr).map(|target| (target, None)),
-                    _ => None,
-                })
-                .collect(),
+            Expr::Block { body, .. } => hook_block_bindings(body),
             Expr::BinOp {
                 op: BinOpKind::Assign,
                 lhs,
@@ -145,6 +127,50 @@ fn load_hook_assignments(stmts: &[Stmt]) -> impl Iterator<Item = (&Expr, Option<
                 .into_iter()
                 .collect(),
         })
+}
+
+/// The bindings the statements of an `on_load({...})` block make. An
+/// `if`/`else` statement binds a name only when both arms bind it, and then
+/// with no single value; an `if` without `else` binds nothing.
+fn hook_block_bindings(body: &[Stmt]) -> Vec<(&Expr, Option<&Expr>)> {
+    body.iter()
+        .flat_map(|stmt| match stmt {
+            // Statement `<<-` repeats itself as the value.
+            Stmt::Assign {
+                target,
+                value,
+                span,
+            } if !matches!(
+                value,
+                Expr::BinOp { op: BinOpKind::SuperAssign, span: operation, .. }
+                    if operation == span
+            ) =>
+            {
+                vec![(target, Some(value))]
+            }
+            Stmt::Expr(expr) => lazy_assignment_target(expr)
+                .map(|target| (target, None))
+                .into_iter()
+                .collect(),
+            Stmt::If {
+                then,
+                else_: Some(else_),
+                ..
+            } => {
+                let otherwise = hook_block_bindings(else_);
+                hook_block_bindings(then)
+                    .into_iter()
+                    .filter(|(target, _)| {
+                        otherwise
+                            .iter()
+                            .any(|(other, _)| binding_name(other) == binding_name(target))
+                    })
+                    .map(|(target, _)| (target, None))
+                    .collect()
+            }
+            _ => Vec::new(),
+        })
+        .collect()
 }
 
 /// The `name` in rlang's `name %<~% expr` (or `` rlang::`%<~%`(name, expr) ``).

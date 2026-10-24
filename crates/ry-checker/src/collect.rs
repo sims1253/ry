@@ -1005,12 +1005,18 @@ impl Checker {
                     && p.default.is_none()
                     && !default_writes.may_write(semantic_argument_name(&p.name))
                     && block_force_flow(&body, &p.name).0;
+                let defused = parameter_is_defused(&body, &p.name, &[], &self.user_stubs);
                 UserParam {
                     name: p.name.clone(),
                     type_: t,
                     required,
                     defaulted: p.default.is_some(),
-                    defused: parameter_is_defused(&body, &p.name, &[], &self.user_stubs),
+                    defused,
+                    forcing_defaults: if defused {
+                        self.defaults_forcing_parameter(&body, params, &p.name)
+                    } else {
+                        Vec::new()
+                    },
                     quoting: parameter_is_quoted(&body, params, &p.name, &self.user_stubs),
                     unforced: parameter_is_unforced(&body, params, &p.name),
                     missing_only: parameter_only_probed(&body, params, &p.name, &self.user_stubs),
@@ -1682,9 +1688,110 @@ pub(crate) fn parameter_is_defused(
         }
         return uses.defused && !uses.normal;
     }
-    body.iter()
-        .find_map(|statement| first_parameter_use_in_stmt(statement, parameter, skipped, stubs))
-        == Some(FirstParameterUse::Defused)
+    body.iter().find_map(|statement| {
+        first_parameter_use_in_stmt(statement, parameter, None, skipped, stubs)
+    }) == Some(FirstParameterUse::Defused)
+}
+
+impl Checker {
+    /// Sibling formals whose default reads the defused `parameter` (`label =
+    /// col`) and which the body uses before `parameter`'s defused first use
+    /// (#790). A call that omits one runs that default, which forces
+    /// `parameter` first. A formal the body or a default may rebind is left
+    /// out, since its default might never run, and so is every formal when
+    /// `parameter` itself may be rebound, since a default may then read the
+    /// local value instead.
+    fn defaults_forcing_parameter(
+        &self,
+        body: &[Stmt],
+        params: &[Param],
+        parameter: &str,
+    ) -> Vec<String> {
+        let default_writes = default_local_writes(params);
+        let may_rebind = |name: &str| {
+            default_writes.may_write(semantic_argument_name(name))
+                || body
+                    .iter()
+                    .any(|statement| statement_binds(statement, name))
+        };
+        if may_rebind(parameter) {
+            return Vec::new();
+        }
+        let first_use = |alias: &str| {
+            body.iter().find_map(|statement| {
+                first_parameter_use_in_stmt(
+                    statement,
+                    parameter,
+                    Some(alias),
+                    &[],
+                    &self.user_stubs,
+                )
+            })
+        };
+        params
+            .iter()
+            .filter(|formal| {
+                formal.name != parameter
+                    && formal.name != "..."
+                    && formal
+                        .default
+                        .as_ref()
+                        .is_some_and(|default| self.evaluates_name(default, parameter))
+                    && !may_rebind(&formal.name)
+                    && first_use(&formal.name) == Some(FirstParameterUse::Normal)
+            })
+            .map(|formal| formal.name.clone())
+            .collect()
+    }
+
+    /// Whether evaluating `expr` may read `name` anywhere. As in
+    /// `evaluated_names` (infer/narrow.rs), field names, assignment targets,
+    /// closures, formulas, and arguments a stub quotes, captures, or
+    /// evaluates in a data mask are no read, and neither is `missing(name)`.
+    /// Unlike there, a call no stub resolves is opaque, erring toward
+    /// silence.
+    fn evaluates_name(&self, expr: &Expr, name: &str) -> bool {
+        let walk = Walk {
+            assign_targets: false,
+            assign_operands: false,
+            dollar_args: false,
+            fn_bodies: false,
+            ..Walk::ALL
+        };
+        walk_expr(expr, walk, |node, _| match node {
+            AstNode::Expr(Expr::Ident { name: read, .. }) if read == name => ControlFlow::Break(()),
+            AstNode::Expr(Expr::Call { func, args, .. }) => {
+                let Some(signature) = ident_name(func)
+                    .filter(|callee| {
+                        !crate::semantic_lists::is_quoting_form(callee) && !probes_promise(func)
+                    })
+                    .and_then(|callee| self.resolve_typeshed_sig_ref(callee))
+                else {
+                    return ControlFlow::Continue(Descend::Skip);
+                };
+                let bindings = match_params(&signature.params, args);
+                let reads = args.iter().enumerate().any(|(index, argument)| {
+                    !matches!(
+                        eval_mode_for_arg(signature, &bindings, index),
+                        Some(
+                            EvalMode::QuotedSymbol
+                                | EvalMode::QuotedExpression
+                                | EvalMode::CapturesPromise
+                                | EvalMode::DataMask
+                                | EvalMode::TidySelect
+                        )
+                    ) && self.evaluates_name(&argument.value, name)
+                });
+                if reads {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(Descend::Skip)
+                }
+            }
+            _ => ControlFlow::Continue(Descend::Into),
+        })
+        .is_break()
+    }
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -1786,66 +1893,74 @@ fn collect_parameter_uses_in_stmt(
 // first payload; and a `for` loop's variable re-binding is checked
 // strictly between the iterator walk and the body walk, where the walker
 // provides no hook. Same judgment as the force family in `infer/quoting.rs`.
+// `alias` names a sibling formal whose default reads `parameter`: forcing
+// it counts as a normal use of `parameter` (#790).
 fn first_parameter_use_in_stmt(
     statement: &Stmt,
     parameter: &str,
+    alias: Option<&str>,
     skipped: &[usize],
     stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
-    ry_core::stack::grow(|| first_parameter_use_in_stmt_inner(statement, parameter, skipped, stubs))
+    ry_core::stack::grow(|| {
+        first_parameter_use_in_stmt_inner(statement, parameter, alias, skipped, stubs)
+    })
 }
 
 fn first_parameter_use_in_stmt_inner(
     statement: &Stmt,
     parameter: &str,
+    alias: Option<&str>,
     skipped: &[usize],
     stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
     match statement {
         Stmt::Assign { target, value, .. } => {
-            first_parameter_use_in_expr(value, parameter, skipped, stubs).or_else(|| match target {
-                Expr::Ident { .. } => None,
-                target => first_parameter_use_in_expr(target, parameter, skipped, stubs),
+            first_parameter_use_in_expr(value, parameter, alias, skipped, stubs).or_else(|| {
+                match target {
+                    Expr::Ident { .. } => None,
+                    target => first_parameter_use_in_expr(target, parameter, alias, skipped, stubs),
+                }
             })
         }
         Stmt::Expr(expression) => {
-            first_parameter_use_in_expr(expression, parameter, skipped, stubs)
+            first_parameter_use_in_expr(expression, parameter, alias, skipped, stubs)
         }
         Stmt::If {
             cond, then, else_, ..
-        } => first_parameter_use_in_expr(cond, parameter, skipped, stubs).or_else(|| {
+        } => first_parameter_use_in_expr(cond, parameter, alias, skipped, stubs).or_else(|| {
             conservative_branch_use([
                 then.iter().find_map(|statement| {
-                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
+                    first_parameter_use_in_stmt(statement, parameter, alias, skipped, stubs)
                 }),
                 else_.as_ref().and_then(|statements| {
                     statements.iter().find_map(|statement| {
-                        first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
+                        first_parameter_use_in_stmt(statement, parameter, alias, skipped, stubs)
                     })
                 }),
             ])
         }),
         Stmt::For {
             name, iter, body, ..
-        } => first_parameter_use_in_expr(iter, parameter, skipped, stubs).or_else(|| {
+        } => first_parameter_use_in_expr(iter, parameter, alias, skipped, stubs).or_else(|| {
             if name == parameter {
                 Some(FirstParameterUse::Normal)
             } else {
                 body.iter().find_map(|statement| {
-                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
+                    first_parameter_use_in_stmt(statement, parameter, alias, skipped, stubs)
                 })
             }
         }),
         Stmt::While { cond, body, .. } => {
-            first_parameter_use_in_expr(cond, parameter, skipped, stubs).or_else(|| {
+            first_parameter_use_in_expr(cond, parameter, alias, skipped, stubs).or_else(|| {
                 body.iter().find_map(|statement| {
-                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
+                    first_parameter_use_in_stmt(statement, parameter, alias, skipped, stubs)
                 })
             })
         }
         Stmt::FunctionDef { .. } => None,
         Stmt::Return { value, .. } => value.as_ref().and_then(|expression| {
-            first_parameter_use_in_expr(expression, parameter, skipped, stubs)
+            first_parameter_use_in_expr(expression, parameter, alias, skipped, stubs)
         }),
     }
 }
@@ -1853,74 +1968,93 @@ fn first_parameter_use_in_stmt_inner(
 fn first_parameter_use_in_expr(
     expression: &Expr,
     parameter: &str,
+    alias: Option<&str>,
     skipped: &[usize],
     stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
     ry_core::stack::grow(|| {
-        first_parameter_use_in_expr_inner(expression, parameter, skipped, stubs)
+        first_parameter_use_in_expr_inner(expression, parameter, alias, skipped, stubs)
     })
 }
 
 fn first_parameter_use_in_expr_inner(
     expression: &Expr,
     parameter: &str,
+    alias: Option<&str>,
     skipped: &[usize],
     stubs: &BTreeMap<String, Typeshed>,
 ) -> Option<FirstParameterUse> {
     match expression {
-        Expr::Ident { name, .. } => (name == parameter).then_some(FirstParameterUse::Normal),
+        Expr::Ident { name, .. } => {
+            (name == parameter || alias == Some(name.as_str())).then_some(FirstParameterUse::Normal)
+        }
         Expr::Call { func, args, span } => {
             let captured = captured_arguments(func, args, stubs);
             // `check(col)(col)` shares its start with the inner call.
             let probes = probes_promise(func)
                 || (matches!(func.as_ref(), Expr::Ident { .. }) && skipped.contains(&span.start));
-            first_parameter_use_in_expr(func, parameter, skipped, stubs).or_else(|| {
+            first_parameter_use_in_expr(func, parameter, alias, skipped, stubs).or_else(|| {
                 // Actual order is not promise force order. A normal use in
                 // another actual must dominate a captured occurrence.
                 conservative_branch_use(args.iter().enumerate().map(|(index, argument)| {
+                    let captures = captured.get(index).copied().unwrap_or(false)
+                        || matches!(
+                            ident_name(func).map(bare_name),
+                            Some("match.call" | "bquote")
+                        );
                     if is_parameter(&argument.value, parameter) && probes {
                         None
-                    } else if is_parameter(&argument.value, parameter)
-                        && (captured.get(index).copied().unwrap_or(false)
-                            || matches!(
-                                ident_name(func).map(bare_name),
-                                Some("match.call" | "bquote")
-                            ))
-                    {
+                    } else if is_parameter(&argument.value, parameter) && captures {
                         Some(FirstParameterUse::Defused)
+                    } else if alias.is_some_and(|alias| is_parameter(&argument.value, alias))
+                        && (probes || captures)
+                    {
+                        // Probing or capturing the alias does not run its default.
+                        None
                     } else {
-                        first_parameter_use_in_expr(&argument.value, parameter, skipped, stubs)
+                        first_parameter_use_in_expr(
+                            &argument.value,
+                            parameter,
+                            alias,
+                            skipped,
+                            stubs,
+                        )
                     }
                 }))
             })
         }
-        Expr::BinOp { lhs, rhs, .. } => first_parameter_use_in_expr(lhs, parameter, skipped, stubs)
-            .or_else(|| first_parameter_use_in_expr(rhs, parameter, skipped, stubs)),
-        Expr::UnaryOp { expr, .. } => first_parameter_use_in_expr(expr, parameter, skipped, stubs),
+        Expr::BinOp { lhs, rhs, .. } => {
+            first_parameter_use_in_expr(lhs, parameter, alias, skipped, stubs)
+                .or_else(|| first_parameter_use_in_expr(rhs, parameter, alias, skipped, stubs))
+        }
+        Expr::UnaryOp { expr, .. } => {
+            first_parameter_use_in_expr(expr, parameter, alias, skipped, stubs)
+        }
         Expr::Index { base, args, .. } => {
-            first_parameter_use_in_expr(base, parameter, skipped, stubs).or_else(|| {
+            first_parameter_use_in_expr(base, parameter, alias, skipped, stubs).or_else(|| {
                 args.iter().find_map(|argument| {
-                    first_parameter_use_in_expr(&argument.value, parameter, skipped, stubs)
+                    first_parameter_use_in_expr(&argument.value, parameter, alias, skipped, stubs)
                 })
             })
         }
         Expr::Function { .. } => None,
         Expr::Block { body, .. } => {
-            if embraced_symbol(body).is_some_and(|(name, _)| name == parameter) {
-                Some(FirstParameterUse::Defused)
-            } else {
-                body.iter().find_map(|statement| {
-                    first_parameter_use_in_stmt(statement, parameter, skipped, stubs)
-                })
+            match embraced_symbol(body) {
+                Some((name, _)) if name == parameter => Some(FirstParameterUse::Defused),
+                // An embraced alias is captured, not forced, here.
+                Some((name, _)) if alias == Some(name) => None,
+                _ => body.iter().find_map(|statement| {
+                    first_parameter_use_in_stmt(statement, parameter, alias, skipped, stubs)
+                }),
             }
         }
         Expr::If {
             cond, then, else_, ..
-        } => first_parameter_use_in_expr(cond, parameter, skipped, stubs).or_else(|| {
+        } => first_parameter_use_in_expr(cond, parameter, alias, skipped, stubs).or_else(|| {
             conservative_branch_use([
-                first_parameter_use_in_expr(then, parameter, skipped, stubs),
+                first_parameter_use_in_expr(then, parameter, alias, skipped, stubs),
                 else_.as_ref().and_then(|expression| {
-                    first_parameter_use_in_expr(expression, parameter, skipped, stubs)
+                    first_parameter_use_in_expr(expression, parameter, alias, skipped, stubs)
                 }),
             ])
         }),
@@ -2477,7 +2611,7 @@ mod collect_walker_tests {
 
     fn first_use(src: &str, parameter: &str) -> Option<FirstParameterUse> {
         parse_stmts(src).iter().find_map(|statement| {
-            first_parameter_use_in_stmt(statement, parameter, &[], &BTreeMap::new())
+            first_parameter_use_in_stmt(statement, parameter, None, &[], &BTreeMap::new())
         })
     }
 

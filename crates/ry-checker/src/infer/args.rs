@@ -406,12 +406,37 @@ pub(crate) fn match_args_to_params(
     matched
 }
 
+/// Whether a call with these bindings omits a formal whose default forces
+/// the defused `parameter` first (#790), so R evaluates its actual. A
+/// forwarded `...` may supply any formal, so then none counts as omitted.
+/// An empty actual (`f(x, label = )`) still runs the default.
+pub(crate) fn omits_forcing_default(
+    params: &[UserParam],
+    bindings: &ArgumentMatch,
+    args: &[Arg],
+    parameter: &UserParam,
+) -> bool {
+    !parameter.forcing_defaults.is_empty()
+        && !args
+            .iter()
+            .any(|argument| matches!(&argument.value, Expr::Ident { name, .. } if name == "..."))
+        && params.iter().enumerate().any(|(index, formal)| {
+            parameter.forcing_defaults.contains(&formal.name)
+                && bindings
+                    .arg_for_param(index)
+                    .is_none_or(|actual| matches!(args[actual].value, Expr::Missing(_)))
+        })
+}
+
 impl Checker {
     /// Infer an actual bound to a user formal that quotes or defuses it.
+    /// `forced_by_default` marks a call that forces a defused formal
+    /// through an omitted sibling's default (see [`omits_forcing_default`]).
     /// `None` leaves an ordinarily evaluated actual to the caller.
     pub(crate) fn infer_user_param_arg(
         &mut self,
         parameter: &UserParam,
+        forced_by_default: bool,
         value: &Expr,
         scope: &Scope,
     ) -> Option<RType> {
@@ -424,7 +449,7 @@ impl Checker {
             self.infer_discarding(value, &mut quoted);
             return Some(RType::unknown());
         }
-        if parameter.defused {
+        if parameter.defused && !forced_by_default {
             let mut local = self.dplyr_data_mask_scope(scope, &RType::unknown());
             return Some(self.infer_with_injection(value, &mut local, Some(InjectionMode::Full)));
         }

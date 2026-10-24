@@ -94,6 +94,9 @@ All notable changes to ry are documented in this file.
   once the buffer parses again (#785).
 - The RY000 for a file ry cannot parse gives a character column, like every
   other finding, instead of a byte column after multibyte characters (#784).
+- RY010 reports a bare unbound name passed to a defused formal when the
+  call omits a sibling formal whose default reads it (`label = col`) and the
+  body uses that sibling before the embrace, since R then forces it (#790).
 - Stop selections from claiming their input's length. `return: "arg0"`
   combined with a `return_length` rule now keeps the first argument's mode
   and class but re-counts its elements, dropping whole-value facts; a data
@@ -243,6 +246,10 @@ All notable changes to ry are documented in this file.
   knows (`list(...)`, an `lapply()` result, fields written to an argument
   or environment) as unknown instead of NULL, removing RY001 false
   positives in metafor, R.oo, terra, and gridGraphics (#689).
+- Keep every step of a nested replacement such as `x$f[[i]]$g <- v`: an
+  index step ry does not model makes `x$f` forget its element types instead
+  of recording `x$f$g`, removing RY061 false positives in forecast and rgl
+  (#708).
 
 ## [0.11.0] - 2026-09-22
 

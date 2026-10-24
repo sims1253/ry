@@ -1081,6 +1081,9 @@ pub(crate) struct UserParam {
     pub(crate) required: bool,
     pub(crate) defaulted: bool,
     pub(crate) defused: bool,
+    /// Sibling formals whose default forces this defused argument first: a
+    /// call that omits one evaluates the actual (#790).
+    pub(crate) forcing_defaults: Vec<String>,
     /// Whether the function captures this argument as an unevaluated
     /// expression (for example through `substitute(x)`).
     pub(crate) quoting: bool,

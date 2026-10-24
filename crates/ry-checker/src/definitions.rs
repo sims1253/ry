@@ -297,6 +297,7 @@ mod tests {
                     required: true,
                     defaulted: false,
                     defused: false,
+                    forcing_defaults: Vec::new(),
                     quoting: false,
                     unforced: false,
                     missing_only: false,

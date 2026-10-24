@@ -1,4 +1,4 @@
 repository: https://github.com/sims1253/r-typeshed
-commit: 7d87435963b0e978ae66da554a7ea8d61409a793
+commit: d35147471754fa41d486619c65a8ac0c0ac63e13
 tree-state: clean
-stubs-sha256: 6163af1cf2a2923c1a4cb47b439fc20c6c03278d99467b7c28a2fc5c4027da6d
+stubs-sha256: 9570a6b3adfa45f31aa4b5ac52d141f33721a834b6619d491e77c5a57eba61ed

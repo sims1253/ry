@@ -84,3 +84,13 @@ expression: rows
       line: 245
       message: "variable `not_a_column` is not bound in this scope"
       severity: warning
+- case: a formal the body reads by name is evaluated despite the capturing default
+  diagnostics:
+    - code: RY010
+      line: 254
+      message: "variable `not_a_column` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 260
+      message: "variable `not_a_column` is not bound in this scope"
+      severity: warning

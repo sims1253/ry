@@ -1212,7 +1212,9 @@ fn parameter_only_probed(
 /// Whether the default of a sibling the body uses captures `parameter` (`q
 /// = rlang::enquo(col)`) and nothing else forces it (#793). A call that
 /// omits the sibling captures the actual, and one that supplies it never
-/// touches the actual, so either way it is never evaluated.
+/// touches the actual, so either way it is never evaluated. The body may
+/// not mention `parameter` at all, which also rules out reads through a
+/// string or frame reflection (`get("col")`, see [`parameter_is_unforced`]).
 fn parameter_only_captured_by_defaults(
     body: &[Stmt],
     params: &[Param],
@@ -1227,7 +1229,9 @@ fn parameter_only_captured_by_defaults(
     {
         collect_parameter_uses_in_stmt(&Stmt::Expr(default), parameter, stubs, &mut uses);
     }
-    uses.defused && parameter_only_probed(body, params, parameter, stubs)
+    uses.defused
+        && !stmts_mention(body, parameter)
+        && parameter_only_probed(body, params, parameter, stubs)
 }
 
 /// Whether no evaluation of the function can force `parameter`'s promise:

@@ -243,3 +243,18 @@ select_enquoted_forced <- function(data, col, q = rlang::enquo(col)) {
 }
 select_enquoted_forced(mtcars, not_a_column)
 select_enquoted_forced(mtcars, not_a_column, q = rlang::quo(mpg))
+
+## case: a formal the body reads by name is evaluated despite the capturing default
+# expect: RY010, RY010
+select_enquoted_get <- function(data, col, q = rlang::enquo(col)) {
+  print(q)
+  print(get("col"))
+  dplyr::select(data, !!q)
+}
+select_enquoted_get(mtcars, not_a_column)
+select_enquoted_eval <- function(data, col, q = rlang::enquo(col)) {
+  print(q)
+  print(eval(as.name("col")))
+  dplyr::select(data, !!q)
+}
+select_enquoted_eval(mtcars, not_a_column)

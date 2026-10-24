@@ -36,3 +36,19 @@ expression: rows
       severity: warning
 - case: a vendored-style validator with caller_arg() and current_env() defaults
   diagnostics: []
+- case: using a sibling formal whose default reads the parameter forces it
+  diagnostics:
+    - code: RY010
+      line: 109
+      message: "variable `not_a_column` is not bound in this scope"
+      severity: warning
+- case: a call that supplies the sibling formal never runs its default
+  diagnostics: []
+- case: a sibling formal rebound before its use never runs its default
+  diagnostics: []
+- case: a sibling default read after the parameter is captured sees the capture
+  diagnostics: []
+- case: a sibling default that captures the parameter does not force it
+  diagnostics: []
+- case: missing() on the sibling formal does not run its default
+  diagnostics: []

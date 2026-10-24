@@ -1077,7 +1077,11 @@ impl Checker {
                 .or(matches.dots)
                 .and_then(|index| function.params.get(index));
             if parameter
-                .and_then(|parameter| self.infer_user_param_arg(parameter, &argument.value, scope))
+                .and_then(|parameter| {
+                    let forced =
+                        infer::omits_forcing_default(&function.params, &matches, args, parameter);
+                    self.infer_user_param_arg(parameter, forced, &argument.value, scope)
+                })
                 .is_none()
             {
                 self.infer(&argument.value, scope);

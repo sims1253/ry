@@ -1573,7 +1573,13 @@ impl Checker {
             if let Some(parameter) = user_param
                 && (parameter.quoting
                     || declared_mode.is_none_or(|mode| matches!(mode, EvalMode::Normal)))
-                && let Some(captured) = self.infer_user_param_arg(parameter, &a.value, scope)
+                && let forced = user_function
+                    .zip(user_argument_matches.as_ref())
+                    .is_some_and(|(function, matches)| {
+                        omits_forcing_default(&function.params, matches, args, parameter)
+                    })
+                && let Some(captured) =
+                    self.infer_user_param_arg(parameter, forced, &a.value, scope)
             {
                 arg_types.push(captured);
                 continue;

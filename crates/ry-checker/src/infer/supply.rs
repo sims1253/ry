@@ -393,7 +393,8 @@ impl FormalSupplyWalk<'_, '_> {
                     return;
                 }
                 self.walk_expr(func, point);
-                let captured = crate::collect::captured_arguments(func, args);
+                let captured =
+                    crate::collect::captured_arguments(func, args, &self.checker.user_stubs);
                 for (index, argument) in args.iter().enumerate() {
                     if captured.get(index).copied().unwrap_or(false) {
                         // A promise-capture helper (`substitute(p)`, ...)

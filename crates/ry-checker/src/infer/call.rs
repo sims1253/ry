@@ -653,13 +653,7 @@ impl Checker {
             return None;
         }
         let expression = bindings.arg_for_param(0)?;
-        // Closures defined in the block may read helpers the block assigns
-        // later, as in a function body, whichever frame the block runs in.
         let block = &args[expression].value;
-        let mut captures = self.deferred_captures.last().cloned().unwrap_or_default();
-        if let Expr::Block { body, .. } = block {
-            captures.extend(index::assigned_names_in_body(body));
-        }
         let mut child = scope.function_execution_scope();
         if let Some(environment) = bindings.arg_for_param(1) {
             let value = &args[environment].value;
@@ -669,18 +663,13 @@ impl Checker {
                     && self.resolves_to_base(&name, scope)));
             self.infer(value, scope);
             if caller_environment {
-                self.deferred_captures.push(captures);
-                let result = self.infer(block, scope);
-                self.deferred_captures.pop();
-                return Some(result);
+                return Some(self.infer(block, scope));
             }
             // An explicit environment can have unrelated bindings and parents.
             child.invalidate_unknown_effects();
         }
         let effects_were_unknown = child.uncertainty.effects;
-        self.deferred_captures.push(captures);
         let result = self.infer(block, &mut child);
-        self.deferred_captures.pop();
         if child.uncertainty.effects && !effects_were_unknown {
             // Eager nonlocal writes can reach the caller from this child.
             scope.invalidate_unknown_effects();
@@ -715,7 +704,7 @@ impl Checker {
         args: &[Arg],
         scope: &mut Scope,
     ) -> Option<RType> {
-        if !matches!(lookup_name, "test_that" | "describe" | "it") {
+        if !crate::semantic_lists::is_testthat_block_verb(lookup_name) {
             return None;
         }
         use crate::resolve::SpecialCallProvenance;
@@ -1811,7 +1800,7 @@ impl Checker {
                 for later in &args[index + 1..] {
                     binop::collect_condition_assignment_names(&later.value, &mut later_assigned);
                 }
-                let narrowing = self.extract_type_narrowing(&argument.value, scope);
+                let narrowing = self.extract_branch_narrowing(&argument.value, scope);
                 if !narrowing.mentions_any(&later_assigned) {
                     apply_narrowing_branch(scope, &narrowing, NarrowingBranch::Then);
                 }

@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "f6bc43a0ea63fac434a7c5b1bd32b56803abbbc692da3615cc1d2e8c3893c3cc",
-  "ry_commit": "bd71ee78ffe4a8c2c32f8e348487e7c3500d2758",
+  "source_sha256": "653865ca493ac7c153127b1cd9637d5d227cc6a070caccc248f37f48b986fb7c",
+  "ry_commit": "f54362dfbf9c022b48bfe17bc7d824e9faea010e",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -19,7 +19,7 @@
       "repo": "rstudio/shiny",
       "stars": 5673,
       "commit": "ca1800475ac5a1e6037fea1020260a868d8798ee",
-      "diagnostics": 52
+      "diagnostics": 11
     },
     {
       "name": "dplyr",
@@ -33,7 +33,7 @@
       "repo": "rstudio/gt",
       "stars": 2161,
       "commit": "caa074012b9825ddd71996f40e309c00f7b9e180",
-      "diagnostics": 15
+      "diagnostics": 12
     },
     {
       "name": "blogdown",
@@ -47,7 +47,7 @@
       "repo": "rstudio/reticulate",
       "stars": 1759,
       "commit": "afe2221ded74a7f18ab3d5e89bb0a49b1f9d3114",
-      "diagnostics": 11
+      "diagnostics": 10
     },
     {
       "name": "broom",
@@ -138,7 +138,7 @@
       "repo": "rstudio/flexdashboard",
       "stars": 846,
       "commit": "8ae8623f2d9cdadb2316b953908bed0ba7bc3f87",
-      "diagnostics": 2
+      "diagnostics": 1
     },
     {
       "name": "pak",
@@ -166,7 +166,7 @@
       "repo": "r-lib/pkgdown",
       "stars": 772,
       "commit": "179cfaee3d4e17eaa9e7d7c700b1269dc62e4d46",
-      "diagnostics": 7
+      "diagnostics": 5
     },
     {
       "name": "styler",
@@ -229,14 +229,14 @@
       "repo": "r-lib/rlang",
       "stars": 581,
       "commit": "1d0e00659b628c07c93c362687550727597ef09f",
-      "diagnostics": 14
+      "diagnostics": 7
     },
     {
       "name": "torch",
       "repo": "mlverse/torch",
       "stars": 567,
       "commit": "c67c2fb2909fc77e8fc127ec2867e1a551ee1bf3",
-      "diagnostics": 9
+      "diagnostics": 7
     },
     {
       "name": "bigrquery",
@@ -1452,15 +1452,6 @@
       "audit_group": "manual-audit"
     },
     {
-      "package": "flexdashboard",
-      "code": "RY001",
-      "path": "R/flex_dashboard.R",
-      "line": 401,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "ggplot2",
       "code": "RY010",
       "path": "R/facet-.R",
@@ -1633,15 +1624,6 @@
     },
     {
       "package": "gt",
-      "code": "RY001",
-      "path": "R/fmt.R",
-      "line": 166,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "gt",
       "code": "RY106",
       "path": "R/format_data.R",
       "line": 4057,
@@ -1675,24 +1657,6 @@
       "column": 3,
       "label": "true_positive",
       "audit_group": "ifelse-mode"
-    },
-    {
-      "package": "gt",
-      "code": "RY061",
-      "path": "R/utils_render_latex.R",
-      "line": 2149,
-      "column": 47,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "gt",
-      "code": "RY061",
-      "path": "R/utils_render_latex.R",
-      "line": 2149,
-      "column": 57,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
     },
     {
       "package": "gt",
@@ -2026,24 +1990,6 @@
       "column": 7,
       "label": "false_positive",
       "audit_group": "manual-audit"
-    },
-    {
-      "package": "pkgdown",
-      "code": "RY061",
-      "path": "R/package.R",
-      "line": 18,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "pkgdown",
-      "code": "RY061",
-      "path": "R/package.R",
-      "line": 18,
-      "column": 29,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
     },
     {
       "package": "pkgdown",
@@ -2551,15 +2497,6 @@
     },
     {
       "package": "reticulate",
-      "code": "RY001",
-      "path": "R/py_require.R",
-      "line": 579,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "reticulate",
       "code": "RY032",
       "path": "R/py_require.R",
       "line": 591,
@@ -2602,69 +2539,6 @@
       "column": 7,
       "label": "false_positive",
       "audit_group": "type-narrowing"
-    },
-    {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/cnd-abort.R",
-      "line": 855,
-      "column": 10,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/env-special.R",
-      "line": 220,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "rlang",
-      "code": "RY001",
-      "path": "R/trace.R",
-      "line": 531,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "numeric-if-idiom"
-    },
-    {
-      "package": "rlang",
-      "code": "RY001",
-      "path": "R/trace.R",
-      "line": 540,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "numeric-if-idiom"
-    },
-    {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/trace.R",
-      "line": 1125,
-      "column": 8,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/trace.R",
-      "line": 1137,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/trace.R",
-      "line": 1139,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
     },
     {
       "package": "rlang",
@@ -2776,381 +2650,12 @@
     },
     {
       "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/graph.R",
-      "line": 61,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/graph.R",
-      "line": 77,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/graph.R",
-      "line": 98,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/middleware-shiny.R",
-      "line": 5,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/middleware-shiny.R",
-      "line": 35,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/otel-collect.R",
-      "line": 24,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/react.R",
-      "line": 106,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/react.R",
-      "line": 108,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/react.R",
-      "line": 123,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/react.R",
-      "line": 124,
-      "column": 23,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/react.R",
-      "line": 143,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/react.R",
-      "line": 144,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/react.R",
-      "line": 243,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/react.R",
-      "line": 284,
-      "column": 29,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 24,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 44,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 46,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 124,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 155,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 162,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 169,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 438,
-      "column": 47,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 439,
-      "column": 51,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 440,
-      "column": 48,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 458,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 460,
-      "column": 23,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 536,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 542,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 548,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 556,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 574,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 606,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 617,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 633,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 642,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 1062,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 1419,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 2016,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/reactives.R",
-      "line": 2372,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
       "code": "RY032",
       "path": "R/runapp.R",
       "line": 375,
       "column": 7,
       "label": "false_positive",
       "audit_group": "manual-audit"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/shiny.R",
-      "line": 2512,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "shiny-r",
-      "code": "RY010",
-      "path": "R/shiny.R",
-      "line": 2522,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "namespace-on-load"
     },
     {
       "package": "shiny-r",
@@ -3460,24 +2965,6 @@
     },
     {
       "package": "torch",
-      "code": "RY061",
-      "path": "R/wrapers.R",
-      "line": 174,
-      "column": 39,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "torch",
-      "code": "RY061",
-      "path": "R/wrapers.R",
-      "line": 179,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "torch",
       "code": "RY001",
       "path": "tools/torchgen/R/cpp.R",
       "line": 747,
@@ -3757,12 +3244,12 @@
     }
   ],
   "classification": {
-    "false_positive": 281,
+    "false_positive": 224,
     "true_positive": 87
   },
   "audit_group_counts": {
     "reassign-scope": 2,
-    "type-narrowing": 25,
+    "type-narrowing": 16,
     "manual-audit": 136,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 1,
@@ -3772,8 +3259,8 @@
     "function-shadowing": 0,
     "upstream-package": 24,
     "ifelse-mode": 3,
-    "numeric-if-idiom": 3,
-    "namespace-on-load": 46,
+    "numeric-if-idiom": 1,
+    "namespace-on-load": 0,
     "ry109-self-defaults": 25,
     "ry111-constant-shadowing": 17,
     "ry001-null-union": 3
@@ -3821,6 +3308,9 @@
     "If-arm bindings merge wherever the if sits (#694): an `if` used as a value and an `if` ending a `{}` block or braced call argument now merge their arm bindings into the enclosing frame like a statement `if`, so later reads no longer report RY010. Four reviewed false positives disappear: blogdown R/serve.R:164:22 (reassign-scope) and R/serve.R:166:38 (type-narrowing), `proc` bound in the processx arm of `pid = if (is_psx <- ...) {...}` and read only under `if (is_psx && ...)`; dplyr R/summarise.R:342:34 (reassign-scope, the #350 site), `group_sizes` bound in both arms of the `if` ending withCallingHandlers({...}); and tinytex R/install.R:335:31 (type-narrowing), `tmp` bound in the `add` arm of `cmd = if (add) {...}` and read only under `if (add && ret == 0)`. No identity is added and every true positive remains; the tidyverse ledger drops the same dplyr identity.",
     "An opaque call head is not the same-named stub (#722): a parameter or unknown call result bound to a call head's name may be a function, and R's call lookup stops at it, so ry no longer applies the base/stats signature or return type there. Two reviewed false positives disappear: torch tests/testthat/test-save.R:415:30 and :416:30 (type-narrowing), `d$x` and `d$y` on `d <- dt()` where `dt <- dataset(...)` was typed as `stats::dt`. One reviewed true positive is dropped: pkgdown R/topics.R:271:16 RY091 (upstream-package), which read the default `error_call = error_call()` as rlang's error_call() missing `call`. R never reaches rlang::error_call there: the call head resolves to the formal itself, and forcing it errors with 'promise already under evaluation'. The real bug stays reported by RY109 at the same location, which this ledger keeps as a true positive. No identity is added; the tidyverse ledger is unchanged.",
     "S3 dispatcher bindings (#348): a helper registered with registerS3method()/.S3method() inside a top-level evalqOnLoad() block, when it is the name's only global literal, now binds .Generic, .Class, .Method, and .Group like any S3 method. Two reviewed false positives disappear (manual-audit): lubridate R/ops-compare.r:20:64 and :55:14, RY010 on `.Generic` in comp_posix_date, which evalqOnLoad registers as the Date/POSIXt comparison method. No identity is added and every true positive remains.",
-    "A `$`/`[[` miss on a partly known list is unknown (#689): a `$` name missing from a list whose names ry only partly knows (`list(...)`, an `lapply()` result, fields written to an opaque value or environment) is no longer NULL, and a `[[` miss on such a schema no longer takes the recorded fields' common type. Seven reviewed false positives disappear, all type-narrowing: httr R/callback.R:100:5 (RY070, `callback_env[[name]]` typed as the seeded `callback_env$request <- NULL`), testthat R/parallel-taskq.R:205:13 (RY001, `private$tasks$idle[i]` after `$<-` writes to other fields of the opaque `private$tasks`), and torch tests/testthat/test-ignite.R:196:16, :248:16, :251:16, :265:16 and :266:16 (RY061, `o$param_groups[[1]]$...` where `$<-` writes had recorded one field of the opaque optimizer). One reviewed true positive is dropped: sparklyr R/config.R:375:9 (RY001, upstream-package), `additional_configs$method %in% ...` with `additional_configs <- list(...)`. ry claimed `$method` is NULL only because it treated the fields of `list(...)` as known; the package's own caller (R/connection.R:264) always passes `method = method`, and only a direct call to the exported spark_config_packages() with rapids and no `method` reaches the empty condition. No identity is added; the tidyverse ledger is unchanged."
+    "Guards that exclude an omitted NULL default drop its type (#692): `if (is.null(x)) return(...)`, `!missing(x)`, every `!is.null()` conjunct of `&&`, `length(x) == 1` / `length(x) > 0`, and a `for` body over `x`. Five reviewed false positives disappear, all RY001 on a condition past `if (is.null(x)) return(...)` that read the omitted NULL default: flexdashboard R/flex_dashboard.R:401:13, gt R/fmt.R:166:7 and reticulate R/py_require.R:579:7 (type-narrowing), and rlang R/trace.R:531:7 and :540:7 (numeric-if-idiom). No identity is added and every true positive remains.",
+    "Top-level on_load() blocks bind package names (#691): plain assignments in a top-level rlang-style on_load({...}) block (bare, rlang::on_load, or a package-local helper of that name whose body .onLoad() evaluates in the namespace) are now package bindings. The whole namespace-on-load group disappears, 46 reviewed false positives, all RY010: rlang R/cnd-abort.R:855:10, R/env-special.R:220:16, R/trace.R:1125:8, :1137:16 and :1139:16 (has_cli_format, base_pkg_env, has_cli_start_app, theme_error_highlight and theme_error_arg_highlight, bound in on_load() blocks in R/utils.R, R/env-special.R and R/trace.R), and 41 shiny-r reads of rLog (39) and IS_SHINY_LOCAL_PKG (2), which shiny's own on_load() helper (R/globals.R) binds in R/graph.R and R/globals.R. No identity is added and every true positive remains. evalqOnLoad() blocks stay out: an installed package evaluates them in a child of the namespace (oracle load_hook_namespace_bindings.R).",
+    "Undecided tests of an omitted default drop its type in the arm they select (#710): a passing test that reads a defaulted formal but proves nothing about it (a user predicate, a compound inherits(), a names()/colnames() membership) leaves the formal unknown in the arm it selects and on the right of &&/||; the failing arm keeps the default's type. Six reviewed false positives disappear, all RY061 type-narrowing: gt R/utils_render_latex.R:2149:47 and :2149:57 (`width$pt`/`width$lw` under `sum(c(\"pt\", \"lw\") %in% colnames(width)) > 0`, width = \"\\\\linewidth\"), pkgdown R/package.R:18:5 and :18:29 (`pkg$meta` under `is_pkgdown(pkg)`, pkg = \".\"), and torch R/wrapers.R:174:39 and :179:15 (`dims$numel()` / `dims$item()` under `is_torch_tensor(dims)`, dims = 2). No identity is added and every true positive remains.",
+    "A `$`/`[[` miss on a partly known list is unknown (#689): a `$` name missing from a list whose names ry only partly knows (`list(...)`, an `lapply()` result, fields written to an opaque value or environment) is no longer NULL, and a `[[` miss on such a schema no longer takes the recorded fields' common type. Seven reviewed false positives disappear, all type-narrowing: httr R/callback.R:100:5 (RY070, `callback_env[[name]]` typed as the seeded `callback_env$request <- NULL`), testthat R/parallel-taskq.R:205:13 (RY001, `private$tasks$idle[i]` after `$<-` writes to other fields of the opaque `private$tasks`), and torch tests/testthat/test-ignite.R:196:16, :248:16, :251:16, :265:16 and :266:16 (RY061, `o$param_groups[[1]]$...` where `$<-` writes had recorded one field of the opaque optimizer). One reviewed true positive is dropped, as approved by the maintainer: sparklyr R/config.R:375:9 (RY001, upstream-package), `additional_configs$method %in% ...` with `additional_configs <- list(...)`. ry claimed `$method` is NULL only because it treated the fields of `list(...)` as known; the package's own caller (R/connection.R:264) always passes `method = method`, and only a direct call to the exported spark_config_packages() with rapids and no `method` reaches the empty condition. No identity is added; the tidyverse ledger is unchanged."
   ]
 }

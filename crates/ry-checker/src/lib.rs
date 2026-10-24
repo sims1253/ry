@@ -237,10 +237,11 @@ fn split_s3_method_name(name: &str, globals: &Globals) -> Option<(String, String
     best
 }
 
-/// Return the dispatch name for the deliberately small S3-generic shape we
-/// can reason about without executing arbitrary setup code.
+/// Return the dispatch name of a generic whose last statement is
+/// `UseMethod("<generic>")`. Statements before it, such as argument
+/// validation, leave the method the caller's argument promises (#774).
 fn usemethod_generic_name(body: &[Stmt]) -> Option<String> {
-    let [Stmt::Expr(Expr::Call { func, args, .. })] = body else {
+    let Some(Stmt::Expr(Expr::Call { func, args, .. })) = body.last() else {
         return None;
     };
     let Expr::Ident { name, .. } = func.as_ref() else {
@@ -476,6 +477,9 @@ pub struct Scope {
     /// Closed class-only vector construction, lost on writes and control-flow merges.
     pub(crate) plain_ops_vectors: FxSet<String>,
     pub(crate) known_strings: FxMap<String, Arc<str>>,
+    /// Locals bound to a guard predicate (`has_x <- !is.null(x)`), keyed by
+    /// the local. See `Scope::set_condition_alias`.
+    pub(crate) condition_aliases: FxMap<String, Arc<literal_values::ConditionAlias>>,
     pub(crate) literal_functions: FxMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: Bindings,
@@ -544,6 +548,7 @@ impl Scope {
         scope.scalar_asserted_bindings.clear();
         scope.loop_vector_bindings.clear();
         scope.known_strings.clear();
+        scope.condition_aliases.clear();
         scope.unreachable = false;
         // The new frame's code is never the syntactic operand of the
         // caller's in-flight `[` argument, so data.table select forms
@@ -608,6 +613,7 @@ impl Scope {
     /// but make value uncertainty persist across writes.
     pub(crate) fn invalidate_unknown_effects(&mut self) {
         self.clear_known_strings();
+        self.clear_condition_aliases();
         if self.journal.depth > 0 {
             let names: HashSet<_> = self
                 .bindings
@@ -722,6 +728,8 @@ impl Scope {
 
     fn insert_value(&mut self, name: String, t: RType) {
         self.clear_known_string(&name);
+        let written = semantic_argument_name(&name);
+        self.retain_condition_aliases(|read| read != written);
         if !self.uncertainty.escaped_slot_names {
             self.uncertainty.escaped_slot_names =
                 infer::custom_operator::escaped_name_may_mask_slot(&name);
@@ -1079,6 +1087,10 @@ pub(crate) struct UserParam {
     /// Whether no evaluation of the body can force this argument, so a
     /// call to this exact definition never evaluates the actual.
     pub(crate) unforced: bool,
+    /// Whether the body and defaults use this argument only through
+    /// `missing()` or promise capture, as a `check_not_missing(x)` validator
+    /// does, so a call never forces the actual.
+    pub(crate) missing_only: bool,
     pub(crate) injection: Option<InjectionMode>,
 }
 
@@ -1211,6 +1223,10 @@ pub(crate) struct FnTable {
     // set, we know it's defined in another file (or later in this
     // same file) and return opaque instead of flagging it as unbound.
     pub(crate) known_vars: std::collections::HashSet<String>,
+    // Names any project file's code may `<<-` into the shared top-level
+    // frame (issue #706). Function bodies run after the whole namespace
+    // has loaded, so they read these as unknown whatever the file order.
+    pub(crate) superassigned: std::collections::HashSet<String>,
     // Names bound to callable objects that are not ordinary R functions.
     // S7 class and generic objects implement `()` themselves, so call-position
     // lookup must treat them as candidates even though their inferred value is
@@ -1327,6 +1343,8 @@ impl FnTable {
         self.unrecorded_global_literals
             .extend(collected.unrecorded_global_literals.iter().cloned());
         self.known_vars.extend(collected.known_vars.iter().cloned());
+        self.superassigned
+            .extend(collected.superassigned.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());
         for (name, sites) in &collected.call_sites {
@@ -1481,6 +1499,12 @@ pub struct Checker {
     // capture without making a direct read-before-assignment valid. The
     // current body's set also models expressions deferred by `on.exit()`.
     deferred_captures: Vec<HashSet<String>>,
+    // Per enclosing body (the file, then each function body): the `<<-`
+    // targets its code may write, collected before the body is walked
+    // (issue #706). A closure body runs when called, possibly after a
+    // writer defined later in the source, so it starts with the innermost
+    // set unknown-typed.
+    superassigned_captures: Vec<HashSet<String>>,
     // Lexical function context used by call-site rules such as RY096.
     // A stack is required because nested functions replace, rather than
     // inherit, the set of formals relevant to `hasArg()`.
@@ -1712,6 +1736,7 @@ impl Checker {
             method_screens: std::sync::OnceLock::new(),
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
+            superassigned_captures: Vec::new(),
             enclosing_formals: Vec::new(),
             frame_writes: Vec::new(),
             loop_frames: Vec::new(),
@@ -1914,7 +1939,10 @@ impl Checker {
             self.reference_capture = Some(Box::new(reference_facts::ReferenceCapture::new(file)));
             self.start_reference_scope(&mut scope, whole_file_span(&file.source));
         }
+        self.superassigned_captures
+            .push(self.fn_table.superassigned.clone());
         self.walk_block(&file.stmts, &mut scope, None);
+        self.superassigned_captures.pop();
         if encoding_flagged || !file.parse_errors.is_empty() {
             self.diagnostics.truncate(semantic_start);
             // Declarations are semantic claims too. A repaired AST cannot

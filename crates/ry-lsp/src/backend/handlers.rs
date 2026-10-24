@@ -278,7 +278,7 @@ impl LanguageServer for Backend {
                 return Ok(None);
             }
         }
-        let Some((file, _)) = parsed_file(&self.state, &path).await else {
+        let Ok((file, _)) = parsed_file(&self.state, &path).await else {
             return Ok(None);
         };
         let (versioned_edits, required_origin) = {

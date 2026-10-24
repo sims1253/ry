@@ -1307,6 +1307,91 @@ fit <- function(x, grad = NULL) {
 z <- if (runif(1) > 0.5) NULL else 1
 z()
 
+## case: a literal positional replacement replaces the element type
+# no-diag
+# ade4's shape: `list(0)` records a double, then `[[1]] <-` stores a list.
+mk <- function(a) list(dg2 = a, Ng = a)
+f <- function(a) {
+  util <- list(0)
+  util[[1]] <- mk(a)
+  util[[1]]$dg2
+}
+
+## case: a computed positional replacement forgets the element types
+# no-diag
+mk <- function(a) list(dg2 = a, Ng = a)
+f <- function(a, i) {
+  util <- list(0)
+  util[[i]] <- mk(a)
+  util[[1]]$dg2
+}
+
+## case: a positional NULL replacement shifts the later elements
+# no-diag
+f <- function() {
+  x <- list(0, list(f = 1))
+  x[[1]] <- NULL
+  x[[1]]$f
+}
+
+## case: a single-bracket positional replacement forgets the element types
+# no-diag
+f <- function(i) {
+  x <- list(0)
+  x[1] <- list(list(a = 1))
+  y <- list(0)
+  y[i] <- list(list(a = 1))
+  x[[1]]$a + y[[1]]$a
+}
+
+## case: a positional replacement in a partly named list forgets the elements
+# no-diag
+# `list()` keys only the unnamed element as `[[1]]`, but `x[[1]]` is `a`.
+f <- function() {
+  x <- list(a = 1, list(b = 2))
+  x[[1]] <- list(c = 3)
+  x[[2]]$b + x$a$c
+}
+
+## case: a literal positional replacement records the new element type
+# expect: RY040
+# Only the replacement knows `x[[1]]` is now character; forgetting is silent.
+f <- function() {
+  x <- list(0, 1)
+  x[[1]] <- "a"
+  x[[1]] + 1
+}
+
+## case: a classed list keeps its own positional replacement
+# no-diag
+# `[[<-.foo` decides what is stored, so ry does not record `"a"` here.
+`[[<-.foo` <- function(x, i, value) {
+  x <- unclass(x)
+  x[[i]] <- nchar(value)
+  structure(x, class = "foo")
+}
+f <- function() {
+  x <- structure(list(0), class = "foo")
+  x[[1]] <- "a"
+  x[[1]] + 1
+}
+
+## case: a local [[<- keeps its own positional replacement
+# no-diag
+f <- function() {
+  `[[<-` <- function(x, i, value) x
+  x <- list(1)
+  x[[1]] <- "a"
+  x[[1]] + 1
+}
+
+## case: dollar on a recorded double element still reports RY061
+# expect: RY061
+f <- function() {
+  util <- list(0)
+  util[[1]]$dg2
+}
+
 ## case: a value formal does not hide a package S4 generic of its name
 # no-diag
 # R's call lookup skips the logical `res` and finds the generic.

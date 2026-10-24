@@ -51,18 +51,10 @@ expression: rows
       line: 119
       message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
-- case: a NULL return guard alone does not prove the value non-empty
-  diagnostics:
-    - code: RY001
-      line: 127
-      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: warning
-- case: a missing() guard does not narrow the NULL default
-  diagnostics:
-    - code: RY070
-      line: 135
-      message: "could not find function `fun` (bound here as `NULL`)"
-      severity: error
+- case: a NULL return guard excludes the omitted NULL default
+  diagnostics: []
+- case: a missing() stop guard excludes the omitted NULL default
+  diagnostics: []
 - case: a helper that always stops narrows the continuation
   diagnostics: []
 - case: a break guard narrows the rest of the loop body
@@ -329,12 +321,8 @@ expression: rows
   diagnostics: []
 - case: an if else NULL check narrows the else arm
   diagnostics: []
-- case: a NULL return guard on a NULL default may still leave a zero-length value
-  diagnostics:
-    - code: RY001
-      line: 659
-      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: warning
+- case: a braced NULL return guard excludes the omitted NULL default
+  diagnostics: []
 - case: a NULL return guard followed by is.character stays silent
   diagnostics: []
 - case: a same-type rebind in a NULL guard keeps the NULL member
@@ -351,12 +339,8 @@ expression: rows
   diagnostics: []
 - case: a mirrored replacement guard on a local NULL removes the stale NULL
   diagnostics: []
-- case: a NULL return guard without replacement may leave a zero-length default
-  diagnostics:
-    - code: RY001
-      line: 750
-      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: warning
+- case: a NULL return guard without replacement excludes the omitted default
+  diagnostics: []
 - case: a positive mode predicate on an omitted NULL default does not keep length 0
   diagnostics: []
 - case: class and compound predicates on an omitted NULL default do not keep length 0
@@ -400,4 +384,86 @@ expression: rows
     - code: RY061
       line: 915
       message: "$ operator is invalid for atomic vectors of mode `integer` or `character`"
+      severity: error
+- case: a passed if() comparison proves its parameter scalar for a later guard
+  diagnostics: []
+- case: a not-null if() comparison proves its parameter NULL or scalar for a later guard
+  diagnostics: []
+- case: an if() guard proves its parameter for the same guard repeated later
+  diagnostics:
+    - code: RY032
+      line: 937
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: an if() test of any(x) proves nothing about the length of x
+  diagnostics:
+    - code: RY032
+      line: 946
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: an if() test in one branch proves nothing after the branches join
+  diagnostics:
+    - code: RY032
+      line: 956
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: an if() tail that a FALSE head skips proves nothing about its subject
+  diagnostics:
+    - code: RY032
+      line: 964
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a user predicate on a specialised default leaves its arm unknown
+  diagnostics: []
+- case: a compound inherits guard narrows a specialised default
+  diagnostics: []
+- case: a names membership guard on a specialised default leaves its arm unknown
+  diagnostics: []
+- case: "the right of `&&` after a user predicate on a specialised default is unknown"
+  diagnostics: []
+- case: a negated user predicate stop guard leaves the continuation unknown
+  diagnostics: []
+- case: a user predicate assertion leaves the continuation unknown
+  diagnostics: []
+- case: the arm a failing user predicate selects keeps the specialised default
+  diagnostics:
+    - code: RY061
+      line: 1021
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a data-masked name in a guard is not a test of the specialised default
+  diagnostics:
+    - code: RY061
+      line: 1029
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a quoted name in a guard is not a test of the specialised default
+  diagnostics:
+    - code: RY061
+      line: 1036
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+    - code: RY061
+      line: 1037
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+    - code: RY061
+      line: 1038
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a missing() or is.null() operand that may pass keeps the specialised default
+  diagnostics:
+    - code: RY061
+      line: 1046
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+    - code: RY061
+      line: 1049
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a guard that does not read the specialised default keeps its type
+  diagnostics:
+    - code: RY061
+      line: 1057
+      message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error

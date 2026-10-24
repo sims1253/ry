@@ -95,13 +95,10 @@ impl ConditionContext {
 /// recognize it:
 ///
 /// * the journal's continuation facts: doing so would flow the
-///   else-branch narrowing of pre-existing guards into continuations
-///   (`if (is.null(x)) return(NULL)` keeps the stale default type and
-///   lets RY001 fire on a following condition, the pinned
-///   `null_return_guard_alone_does_not_prove_non_empty` behavior). The
-///   one exception is the exact union-minus-NULL refinement
-///   (`walk_journal_if`'s `return_guard_facts`, issue #362), which is
-///   representable without losing an emptiness fact; and
+///   else-branch narrowing of pre-existing guards into continuations.
+///   The one exception is the exact null-guard refinement
+///   ([`union_guard_continuation_refinement`], issues #362 and #692);
+///   and
 /// * callee bodies reached through the collected-helper recursion:
 ///   `return` exits the *callee*, and its caller continues past the
 ///   call site.
@@ -152,9 +149,8 @@ impl<'a> BranchGuardView<'a> {
 /// remainder (`narrow_away_from_null`), the true path the NULL member.
 /// The branch merges deliberately skip guard-narrowed views — for
 /// open-world bindings the refinement degrades (`NULL` to opaque) and
-/// joining it would destroy the maybe-empty fact behind the pinned
-/// `null_return_guard_alone_does_not_prove_non_empty` behavior — so
-/// this runs after them and installs only what is exact:
+/// joining it would erase a NULL member that still reaches the
+/// continuation — so this runs after them and installs only what is exact:
 ///
 /// * one arm exits through `return(...)` (invisible to the return-blind
 ///   continuation view): the surviving arm's view is the continuation;
@@ -165,9 +161,11 @@ impl<'a> BranchGuardView<'a> {
 /// A union original (the find-or-NULL call-site shape) has an exact
 /// remainder, so all three shapes apply; default parameters are
 /// excluded there (omitted-shape semantics). A pure-`NULL` original
-/// admits only the replacement shape, and there the remainder degrades
-/// to opaque: the null arm's rebind and the degraded remainder join to
-/// `unknown` for a defaulted parameter (`if (is.null(detail))
+/// admits the return shapes, whose remainder is opaque (the omitted-call
+/// `NULL` cannot pass `if (is.null(x)) return()`, issue #692), and the
+/// replacement shape, where the remainder also degrades to opaque: the
+/// null arm's rebind and the degraded remainder join to `unknown` for a
+/// defaulted parameter (`if (is.null(detail))
 /// detail <- c(1, 5, 10)[i]` over scales' `detail = NULL` — the caller
 /// may have supplied any non-null value, so the honest continuation is
 /// unknown, not the merge's stale `NULL | rebind` union whose NULL
@@ -189,12 +187,16 @@ pub(crate) fn union_guard_continuation_refinement(views: UnionGuardViews<'_>) ->
             }
             union_guard_refinement_shapes(&views, complement)
         }
-        // A pure-NULL binding: only the replacement shape refines (see
-        // the doc comment above), in either guard orientation. The
-        // return-guard shapes keep the pinned stale-type behavior.
+        // A pure-NULL binding: a return guard leaves only the non-NULL
+        // path, whose remainder is unknown (`if (is.null(x)) return()`),
+        // exactly as a `stop()` guard does. Otherwise only the
+        // replacement shape refines (see the doc comment above), in
+        // either guard orientation.
         Mode::Null => {
+            if views.then_return_diverges != views.else_return_diverges {
+                return union_guard_refinement_shapes(&views, complement);
+            }
             if views.then_return_diverges
-                || views.else_return_diverges
                 || !views.then_reaches
                 || (!views.else_reaches && views.has_else)
             {
@@ -710,6 +712,11 @@ impl Checker {
                     .filter(|_| !scope.uncertainty.literal_values && !scope.uncertainty.effects)
                     .filter(|_| ops_chooser::base_assignment(self, target, value, scope))
                     .map(Arc::<str>::from);
+                // `has_x <- !is.null(x)` lets `if (has_x)` narrow like the
+                // predicate until either name is written.
+                let condition_alias = matches!(target, Expr::Ident { .. })
+                    && !matches!(extract_builtin_type_narrowing(value), Narrowing::None)
+                    && ops_chooser::base_assignment(self, target, value, scope);
                 let function_alias = self.function_alias_target(value, scope);
                 // A plain identifier assignment copies the current value,
                 // including a proven vector alternative retained after a
@@ -759,6 +766,9 @@ impl Checker {
                     };
                     if let Some(value) = known_string {
                         scope.set_known_string(name, value);
+                    }
+                    if condition_alias {
+                        scope.set_condition_alias(name, value);
                     }
                     if self.capture_references {
                         self.install_reference_definition(
@@ -902,7 +912,7 @@ impl Checker {
                     vacuous::stmt_span(s),
                     scope,
                 );
-                let narrowing = self.extract_type_narrowing(cond, scope);
+                let narrowing = self.extract_branch_narrowing(cond, scope);
                 let literal_cond = match cond {
                     Expr::Logical(value, _) => Some(*value),
                     _ => None,
@@ -933,7 +943,12 @@ impl Checker {
             } => {
                 let iter_t = self.infer(iter, scope);
                 let mut inner = scope.clone();
-                let element = iter_t.element();
+                // The body never runs over NULL (`for (v in NULL)`), so a
+                // NULL member says nothing about the loop variable.
+                let element = narrow_away_from_null(&iter_t)
+                    .as_ref()
+                    .unwrap_or(&iter_t)
+                    .element();
                 // The loop variable is a real assignment, not the
                 // loop-carried widening below. Its exact old identity is
                 // gone, but an uncertain/function value can shadow a flat
@@ -1100,6 +1115,13 @@ impl Checker {
         // captured from enclosing frames keep their own origin rule.
         fn_scope.uncertainty.unseen_rebinds = false;
         self.start_reference_scope(&mut fn_scope, span);
+        // A `<<-` writer anywhere in the enclosing body may have run
+        // before this body does, whatever the definition order (#706).
+        if let Some(writes) = self.superassigned_captures.last() {
+            for name in writes {
+                fn_scope.insert(name.clone(), RType::unknown());
+            }
+        }
         if let Some(captures) = self.deferred_captures.last() {
             for capture in captures {
                 if fn_scope.get(capture).is_none() {
@@ -1197,11 +1219,16 @@ impl Checker {
             }
         }
         self.deferred_captures.push(assigned);
+        // Names outside this frame were already widened at its entry, and
+        // nested closures inherit them through `fn_scope`.
+        self.superassigned_captures
+            .push(index::nested_superassignment_writes(body));
         self.push_enclosing_formals(params, span);
         self.check_discarded_branch_results(body);
         self.walk_block(body, &mut fn_scope, None);
         self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
+        self.superassigned_captures.pop();
         self.enclosing_formals.pop();
         self.frame_writes.pop();
         self.deferred_captures.pop();
@@ -1273,6 +1300,9 @@ impl Checker {
         let ct = self.infer(cond, scope);
         self.boolean_context_span = previous_boolean_context;
         self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ctx);
+        if matches!(ctx, ConditionContext::If) {
+            self.mark_condition_scalar_fact(cond, scope);
+        }
     }
 
     /// Whether a local binding replaces the named callee, so the stub's
@@ -1773,9 +1803,8 @@ impl Checker {
         // holds the union-minus-NULL remainder, its true path the NULL
         // member. The merges above deliberately skip guard-narrowed
         // branch views — for open-world bindings the refinement is a
-        // degrade (`NULL` -> opaque, the pinned
-        // `null_return_guard_alone_does_not_prove_non_empty` behavior)
-        // and joining it would destroy the maybe-empty fact RY001 needs.
+        // degrade (`NULL` -> opaque) and joining it would erase a NULL
+        // member that still reaches the continuation.
         // For the representable remainder there is no such loss, so the
         // continuation installs it (issue #362): without this,
         // `where <- locate_input(input)` followed by any of the three
@@ -1794,9 +1823,9 @@ impl Checker {
         //     (`if (is.null(where)) where <- "input"`): the rebind
         //     describes the true path, the remainder the false path, so
         //     the continuation is their join without the stale parent.
-        // Default parameters keep their omitted-shape semantics and are
-        // excluded; unions without a NULL member have no remainder to
-        // install.
+        // Defaulted union parameters keep their omitted-shape semantics
+        // and are excluded; unions without a NULL member have no
+        // remainder to install.
         // Short-circuit: the extra full-view divergence walks only run
         // when the guard narrowed at least one binding whose pre-`if`
         // type can yield an exact union-guard refinement at all — a
@@ -1851,6 +1880,7 @@ impl Checker {
         };
         scope.clear_ops_facts();
         scope.clear_known_strings();
+        scope.clear_condition_aliases();
         scope.uncertainty |= then_delta.uncertainty.continuing(then_diverges)
             | else_delta.uncertainty.continuing(else_diverges);
         // Compute definite assignments only when both arms change a type,
@@ -2480,7 +2510,8 @@ impl Checker {
             let source = argument.1.as_deref()?;
             let caller_fn = self.fn_table.functions.live_named(&call.caller);
             if let Some(caller_fn) = caller_fn
-                && may_rebind_source_before(&caller_fn.body, source, call.call_start)
+                && (may_rebind_source_before(&caller_fn.body, source, call.call_start)
+                    || may_guard_source_before(&caller_fn.body, source, call.call_start))
             {
                 return None;
             }
@@ -2992,11 +3023,43 @@ impl Checker {
             scope.insert(base_name.clone(), updated);
             return true;
         }
+        if matches!(kind, IndexKind::Double)
+            && matches!(base_t.mode, Mode::List)
+            && base_t.class.is_classless()
+            && self.resolves_to_base("[[<-", scope)
+            && !ops_chooser::operator_rebound(self, "[[<-", scope)
+        {
+            // On a class-less list base `x[[N]] <- v` replaces a recorded
+            // `[[N]]` element like `$<-` does. `list()` numbers only unnamed
+            // elements, so the key is the position only when no element is
+            // named. A value that may be NULL could drop the element and
+            // shift the rest. Both take the computed-index path below.
+            let key = args
+                .first()
+                .and_then(|arg| extract_literal_int(&arg.value))
+                .map(|index| format!("[[{index}]]"));
+            if let Some(key) = key.filter(|key| {
+                !vt.mode.is_unknown()
+                    && !matches!(vt.mode, Mode::Null | Mode::Union)
+                    && base_t
+                        .columns
+                        .as_ref()
+                        .is_some_and(|schema| schema.get(key).is_some() && schema.is_positional())
+            }) {
+                scope.insert(
+                    base_name.clone(),
+                    type_with_assigned_column(base_t, &key, vt),
+                );
+                return true;
+            }
+        }
         let Some(col) = assigned_column_name(kind, args) else {
             // A dynamic `$`/`[[` write proves that the record may contain
             // additional fields. Preserve known fields but mark the schema
             // incomplete so a later unknown-field read degrades to opaque
-            // instead of emitting RY060.
+            // instead of emitting RY060. A positional `[[` or `[` write on a
+            // class-less list may replace or drop any element, so it forgets
+            // the element types. A classed list may have its own method.
             if matches!(
                 kind,
                 IndexKind::Dollar | IndexKind::Double | IndexKind::Single
@@ -3007,6 +3070,11 @@ impl Checker {
                     .as_ref()
                     .map(|schema| (**schema).clone())
                     .unwrap_or_default();
+                if matches!(kind, IndexKind::Double | IndexKind::Single)
+                    && base_t.class.is_classless()
+                {
+                    schema.columns.clear();
+                }
                 schema.complete = false;
                 scope.insert(base_name.clone(), base_t.with_columns(Arc::new(schema)));
                 return true;
@@ -3054,6 +3122,19 @@ impl Checker {
     }
 
     pub(crate) fn infer_block_expr(&mut self, body: &[Stmt], scope: &mut Scope) -> RType {
+        // A block binds in whichever frame runs it, so closures it defines
+        // may read names it binds later, as in a function body (issue
+        // #690). Bare and `if` blocks are already in the body's set.
+        let enclosing = self.deferred_captures.last();
+        let assigned = assigned_names_in_body(body);
+        let extends = assigned
+            .iter()
+            .any(|name| !enclosing.is_some_and(|captures| captures.contains(name)));
+        if extends {
+            let mut captures = enclosing.cloned().unwrap_or_default();
+            captures.extend(assigned);
+            self.deferred_captures.push(captures);
+        }
         let mut value = RType::new(Mode::Null, Length::Zero);
         self.walk_block_with(body, |checker, statement, last| {
             if last {
@@ -3062,6 +3143,9 @@ impl Checker {
                 checker.walk_stmt(statement, scope, None);
             }
         });
+        if extends {
+            self.deferred_captures.pop();
+        }
         value
     }
 
@@ -3297,7 +3381,20 @@ impl Checker {
                 if name.starts_with('`') || name.contains('%') || is_operator_symbol(name) {
                     return RType::unknown();
                 }
-                if scope.data_mask_unknown || scope.search_path_unknown {
+                // `loadModule(module, TRUE)` binds names ry cannot list
+                // in the namespace (#704). A name an enclosing function
+                // assigns itself is that function's variable, read before
+                // it is bound.
+                if scope.data_mask_unknown
+                    || scope.search_path_unknown
+                    || (self
+                        .known_vars
+                        .contains(ry_core::SERIALIZED_BINDINGS_UNENUMERABLE)
+                        && !self
+                            .frame_writes
+                            .iter()
+                            .any(|writes| writes.names.contains(name)))
+                {
                     return RType::unknown();
                 }
                 unresolved = true;

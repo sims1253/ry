@@ -385,35 +385,51 @@ impl Checker {
         // row count.
         if bt.class.contains("data.frame") && args.len() >= 2 {
             let column_arg = &args[1];
-            let drop_false = args.iter().any(|arg| {
-                arg.name.as_deref() == Some("drop") && matches!(arg.value, Expr::Logical(false, _))
-            });
+            // A plain tibble's `[` keeps its class and drops only on an
+            // explicit `drop = TRUE`. Other subclasses are not modelled.
+            let tibble = bt.class == ClassVector::from_slice(&["tbl_df", "tbl", "data.frame"]);
+            // `drop` by name, else positionally as the third unnamed argument.
+            let drop = args
+                .iter()
+                .find(|arg| arg.name.as_deref() == Some("drop"))
+                .or_else(|| args.iter().filter(|arg| arg.name.is_none()).nth(2));
+            let drop_false = match drop {
+                Some(arg) => matches!(arg.value, Expr::Logical(false, _)),
+                None => tibble,
+            };
             let column = match &column_arg.value {
-                Expr::String(name, _) => bt.columns.as_ref().and_then(|schema| schema.get(name)),
+                Expr::String(name, _) => bt
+                    .columns
+                    .as_ref()
+                    .and_then(|schema| schema.get(name))
+                    .map(|ty| (name.clone(), ty)),
                 Expr::Integer(index, _) if *index >= 1 => bt
                     .columns
                     .as_ref()
                     .and_then(|schema| schema.columns.get(*index as usize - 1))
-                    .map(|(_, ty)| ty.clone()),
+                    .cloned(),
                 Expr::Double(index, _) if *index >= 1.0 && index.fract() == 0.0 => bt
                     .columns
                     .as_ref()
                     .and_then(|schema| schema.columns.get(*index as usize - 1))
-                    .map(|(_, ty)| ty.clone()),
+                    .cloned(),
                 _ => None,
             };
             let _ = self.infer_table_index_args(args, &bt, index_scope);
-            let column = column.map(subset);
-            if let Some(column) = column {
+            if let Some((name, column)) = column {
+                let column = subset(column);
                 if !drop_false {
                     return column;
                 }
-                let name = match &column_arg.value {
-                    Expr::String(name, _) => name.clone(),
-                    _ => "[[1]]".to_string(),
+                // A tibble stays a tibble, so its `$` still never
+                // partial-matches.
+                let class = if tibble {
+                    bt.class.clone()
+                } else {
+                    ClassVector::single("data.frame")
                 };
                 return RType::new(Mode::List, Length::One)
-                    .with_class(ClassVector::single("data.frame"))
+                    .with_class(class)
                     .with_columns(Arc::new(ColumnSchema {
                         columns: vec![(name, column)],
                         complete: true,
@@ -1334,6 +1350,51 @@ pub(crate) fn superassignment_writes_in_expr(expr: &Expr) -> SuperassignmentWrit
         },
     );
     writes
+}
+
+/// The `<<-` targets of closures nested in a function `body` that can
+/// land in the frame the body runs in, or further out (issue #706). The
+/// body's own direct writes are left out: they skip its frame, so a
+/// closure reading the body's local keeps seeing the unchanged binding.
+/// Code passed to `local()` or a testthat verb runs in a child of the
+/// body's frame, so its direct writes do land there and are kept. A
+/// direct complex write (`a$b <<- v`) also skips the frame: R fetches its
+/// root from the enclosing frames, not the body's own `a`.
+pub(crate) fn nested_superassignment_writes(body: &[Stmt]) -> HashSet<String> {
+    let mut writes = SuperassignmentWrites::default();
+    let mut formals = InterveningFormals::default();
+    let _ = walk_stmts(
+        body,
+        Walk::ALL,
+        |node: AstNode<'_>, depth: usize| -> ControlFlow<(), Descend> {
+            if depth == 0
+                && let AstNode::Expr(Expr::Call { func, args, .. }) = node
+                && ident_name(func).is_some_and(|name| {
+                    let name = crate::semantic_lists::bare_name(name);
+                    name == "local" || crate::semantic_lists::is_testthat_block_verb(name)
+                })
+            {
+                for argument in args {
+                    writes
+                        .names
+                        .extend(superassignment_writes_in_expr(&argument.value).names);
+                }
+            }
+            let direct_write = depth == 0
+                && matches!(
+                    node,
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::SuperAssign,
+                        ..
+                    })
+                );
+            if direct_write {
+                return ControlFlow::Continue(Descend::Into);
+            }
+            ControlFlow::Continue(formals.visit(node, depth, &mut writes))
+        },
+    );
+    writes.names
 }
 
 /// Pins the traversal shape of [`superassignment_writes`]: statement and

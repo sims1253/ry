@@ -364,3 +364,25 @@ expression: rows
       severity: error
 - case: an assignment inside an if body of a subscript block binds in the frame
   diagnostics: []
+- case: "`$` prefix on a tibble column subset is an undefined column"
+  diagnostics:
+    - code: RY060
+      line: 398
+      message: "column `nv` not found in data frame schema; available columns: nvalid"
+      severity: error
+    - code: RY060
+      line: 399
+      message: "column `nv` not found in data frame schema; available columns: nvalid"
+      severity: error
+- case: "`$` on a tibble column subset with drop = TRUE is on a vector"
+  diagnostics:
+    - code: RY061
+      line: 405
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error
+    - code: RY061
+      line: 406
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error
+- case: "`$` prefix on a base data frame column subset partially matches"
+  diagnostics: []

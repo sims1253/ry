@@ -184,6 +184,8 @@ pub(crate) enum MarkerKind {
 pub(crate) enum Undo {
     KnownString(String, Option<Arc<str>>),
     KnownStrings(FxMap<String, Arc<str>>),
+    ConditionAlias(String, Option<Arc<crate::literal_values::ConditionAlias>>),
+    ConditionAliases(FxMap<String, Arc<crate::literal_values::ConditionAlias>>),
     Assignment(String, AssignmentUndo),
     Binding(String, BindingState),
     Marker(MarkerKind, String, bool),
@@ -563,7 +565,9 @@ impl Scope {
                 | Undo::OpsBinding(..)
                 | Undo::OpsTables(..)
                 | Undo::KnownString(..)
-                | Undo::KnownStrings(..) => {}
+                | Undo::KnownStrings(..)
+                | Undo::ConditionAlias(..)
+                | Undo::ConditionAliases(..) => {}
             }
         }
         let delta = BranchDelta {
@@ -578,6 +582,10 @@ impl Scope {
                     put(&mut self.known_strings, name, previous);
                 }
                 Undo::KnownStrings(previous) => self.known_strings = previous,
+                Undo::ConditionAlias(name, previous) => {
+                    put(&mut self.condition_aliases, name, previous);
+                }
+                Undo::ConditionAliases(previous) => self.condition_aliases = previous,
                 Undo::Assignment(name, state) => state.restore(self, name),
                 Undo::Binding(name, state) => state.restore(self, name),
                 Undo::Marker(kind, name, present) => {
@@ -852,6 +860,16 @@ mod tests {
         assert_eq!(left.box_objects, right.box_objects);
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);
+        assert_eq!(
+            format!(
+                "{:?}",
+                left.condition_aliases.iter().collect::<BTreeMap<_, _>>()
+            ),
+            format!(
+                "{:?}",
+                right.condition_aliases.iter().collect::<BTreeMap<_, _>>()
+            )
+        );
         assert_eq!(
             left.uncertainty.literal_values,
             right.uncertainty.literal_values

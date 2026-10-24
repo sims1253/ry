@@ -798,18 +798,20 @@ pub(crate) struct CheckContext<'a> {
 
 /// check's parse-failure policy: report every unreadable or unparseable
 /// file on stderr and keep going. Failed files drop out of the pass and
-/// count as parse errors, which fail the run's exit code.
+/// count as parse errors, which fail the run's exit code. Each one also
+/// comes back as a file-level RY000, at the parser's position when it has
+/// one, so machine-readable output names the file too (#743).
 fn report_check_parse_failure(
     path: &std::path::Path,
     error: &pipeline::ParseError,
-) -> pipeline::FailureAction {
+) -> ry_checker::Diagnostic {
     match error {
         pipeline::ParseError::Read(error) => eprintln!("ry: {}: {}", path.display(), error),
-        pipeline::ParseError::Parse(message) => {
-            eprintln!("ry: {}: parse error: {}", path.display(), message)
+        pipeline::ParseError::Parse { error, .. } => {
+            eprintln!("ry: {}: parse error: {}", path.display(), error)
         }
     }
-    pipeline::FailureAction::Skip
+    ry_checker::frontend::parse_failure(&path.to_string_lossy(), error)
 }
 
 /// Core check logic: parse all files, run the project checker, apply
@@ -830,9 +832,29 @@ fn run_check_once(
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Parallel parsing through the shared thread-local parser pool.
-    let all_parsed = pipeline::parse_files(paths, overlay, report_check_parse_failure)
-        .expect("check's parse-failure policy never aborts");
+    let failures = std::sync::Mutex::new(Vec::new());
+    let all_parsed = pipeline::parse_files(paths, overlay, |path, error| {
+        let diagnostic = report_check_parse_failure(path, error);
+        // The rejected text renders the RY000's column like any finding's.
+        let text = match error {
+            pipeline::ParseError::Parse { text, .. } => Some(text.clone()),
+            pipeline::ParseError::Read(_) => None,
+        };
+        failures.lock().expect("parse-failure list lock").push((
+            path.to_path_buf(),
+            diagnostic,
+            text,
+        ));
+        pipeline::FailureAction::Skip
+    })
+    .expect("check's parse-failure policy never aborts");
     parse_errors += paths.len() - all_parsed.len();
+    for (path, diagnostic, text) in failures.into_inner().expect("parse-failure list lock") {
+        if let Some(text) = text {
+            srcs.insert(diagnostic.path.clone(), text);
+        }
+        synthetic_diagnostics.push((path, diagnostic));
+    }
     let mut parsed = Vec::with_capacity(all_parsed.len());
     for parsed_file in all_parsed {
         file_count += 1;

@@ -262,6 +262,46 @@ fn incremental_edit_rechecks_cross_file_dependents() {
     );
 }
 
+/// Issue #706: a `.onLoad` in a later-collated file fills top-level
+/// `NULL` placeholders through `<<-`. Function bodies run after it, so
+/// their reads see unknown types; removing the writer re-emits the reader.
+#[test]
+fn superassignment_from_another_file_reaches_function_bodies() {
+    let api = "helper <- NULL\nstate <- NULL\nrun <- function(x) {\n  if (state) helper(x)\n}\n";
+    let mut project = Project::new();
+    project.add_file("R/api.R".to_string(), parse("R/api.R", api));
+    project.add_file(
+        "R/zzz.R".to_string(),
+        parse(
+            "R/zzz.R",
+            ".onLoad <- function(libname, pkgname) {\n  helper <<- function(x) x * 2\n  state <<- TRUE\n}\n",
+        ),
+    );
+    let api_codes = |diagnostics: Vec<(String, Vec<ry_checker::Diagnostic>)>| {
+        diagnostics
+            .into_iter()
+            .filter(|(path, _)| path == "R/api.R")
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>()
+    };
+    let before = api_codes(project.check_incremental());
+    assert!(before.is_empty(), "{before:?}");
+
+    project.update_file(
+        "R/zzz.R".to_string(),
+        Arc::new(parse(
+            "R/zzz.R",
+            ".onLoad <- function(libname, pkgname) NULL\n",
+        )),
+    );
+    let after = api_codes(project.check_incremental());
+    assert!(
+        after.contains(&"RY001") && after.contains(&"RY070"),
+        "{after:?}"
+    );
+}
+
 #[test]
 fn cross_file_s3_method_dispatches() {
     // methods.R defines print.foo; usage.R creates a "foo"-classed
@@ -2195,4 +2235,220 @@ fn long_else_if_chain_is_checked_on_a_small_stack() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+#[test]
+fn on_load_block_assignments_are_package_bindings() {
+    // rlang's `on_load()` and package-local copies of it evaluate their
+    // argument in the namespace when `.onLoad()` runs (#691). An installed
+    // package runs an `evalqOnLoad()` block in a child of its namespace,
+    // and an `env` argument, a loop binder (possibly never bound), a nested
+    // block, or another call proves nothing, so those reads stay unbound.
+    let mut project = Project::new();
+    project.add_file(
+        "hooks.R".to_string(),
+        parse(
+            "hooks.R",
+            "on_load({\n  IS_LOCAL_PKG <- exists(\".__DEVTOOLS__\")\n  `HOOK NAME` <- 1\n})\n\
+             rlang::on_load(HAS_CLI <- TRUE)\n\
+             on_load(expr = NAMED <- TRUE)\n\
+             evalqOnLoad({\n  LOG <- new.env()\n})\n\
+             on_load(ELSEWHERE <- 1, env = globalenv())\n\
+             on_load({\n  for (LOOPED in seq_len(0)) NULL\n})\n\
+             on_load(local({\n  NESTED <- 1\n}))\n\
+             register({\n  REGISTERED <- 1\n})\n",
+        ),
+    );
+    project.add_file(
+        "use.R".to_string(),
+        parse(
+            "use.R",
+            "is_local <- function() if (IS_LOCAL_PKG) \"local\" else \"installed\"\n\
+             has_cli <- function() list(HAS_CLI, NAMED, `HOOK NAME`)\n\
+             reads <- function() list(LOG, ELSEWHERE, LOOPED, NESTED, REGISTERED)\n",
+        ),
+    );
+    let unbound: Vec<_> = project
+        .check()
+        .into_iter()
+        .filter(|(path, _)| path == "use.R")
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .filter(|diagnostic| diagnostic.code == "RY010")
+        .map(|diagnostic| diagnostic.message)
+        .collect();
+    assert_eq!(
+        unbound,
+        ["LOG", "ELSEWHERE", "LOOPED", "NESTED", "REGISTERED"]
+            .map(|name| format!("variable `{name}` is not bound in this scope")),
+    );
+}
+
+// RY010 messages for `use.R` after checking `module.R` beside it.
+fn unbound_beside_module(module: &str, use_src: &str) -> Vec<String> {
+    let mut project = Project::new();
+    project.add_file("module.R".to_string(), parse("module.R", module));
+    project.add_file("use.R".to_string(), parse("use.R", use_src));
+    project
+        .check()
+        .into_iter()
+        .filter(|(path, _)| path == "use.R")
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .filter(|diagnostic| diagnostic.code == "RY010")
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+#[test]
+fn rcpp_load_module_binds_its_objects_in_the_namespace() {
+    // `Rcpp::loadModule(module, what)` assigns module objects into the
+    // package namespace (#704). `what = TRUE` binds every object the C++
+    // module declares, which ry cannot list; a literal `what` binds exactly
+    // those names, under their `names()` where given.
+    let unbound = |name: &str| format!("variable `{name}` is not bound in this scope");
+    let reads = "new_raster <- function() SpatRaster$new()\n";
+    // A function's own variable read before it is bound stays unbound.
+    let read_early = "g <- function(v) {\n  head <- v[seq_len(n)]\n  n <- 2\n  head\n}\n";
+    for module in [
+        "loadModule(\"spat\", TRUE)\n",
+        "Rcpp::loadModule(\"spat\", what = TRUE)\n",
+        "f <- function(what) loadModule(\"spat\", what = what)\n",
+        "loadModule(\"spat\", TRUE, env = topenv(parent.frame()))\n",
+        "loadModule(\"spat\", TRUE, env = environment())\n",
+        "f <- function() loadModule(\"spat\", TRUE, env = topenv())\n",
+        ".onLoad <- function(libname, pkgname) {\n  loadModule(\"spat\", TRUE, env = asNamespace(pkgname))\n}\n",
+        "loadModule(\"spat\", TRUE, env = base::getNamespace(\"rcpppkg\"))\n",
+        "loadModule(\"spat\", TRUE, env = base::topenv(base::parent.frame()))\n",
+    ] {
+        assert_eq!(unbound_beside_module(module, reads), Vec::<String>::new());
+        assert_eq!(unbound_beside_module(module, read_early), [unbound("n")]);
+    }
+    // Another function's own `SpatRaster` does not hide the module's.
+    assert_eq!(
+        unbound_beside_module(
+            "loadModule(\"spat\", TRUE)\n",
+            "g <- function() {\n  SpatRaster <- 1\n}\nnew_raster <- function() SpatRaster$new()\n",
+        ),
+        Vec::<String>::new(),
+    );
+    assert_eq!(
+        unbound_beside_module(
+            "loadModule(\"spat\", c(\"SpatRaster\", Vec = \"SpatVector\"))\n",
+            "reads <- function() list(SpatRaster, Vec, SpatVector, SpatRastr)\n",
+        ),
+        ["SpatVector", "SpatRastr"].map(unbound),
+    );
+    assert_eq!(
+        unbound_beside_module(
+            "loadModule(\"spat\", \"SpatRaster\")\n",
+            "reads <- function() list(SpatRaster, SpatVector)\n",
+        ),
+        [unbound("SpatVector")],
+    );
+    // Without `what`, only the module itself loads; another `env` gets the
+    // objects instead of the namespace; without loadModule, nothing.
+    for module in [
+        "loadModule(\"spat\")\n",
+        "loadModule(\"spat\", what = NULL)\n",
+        "f <- function() loadModule(\"spat\", TRUE, env = environment())\n",
+        "Rcpp::loadModule(\"spat\", TRUE, env = new.env())\n",
+        "loadModule(\"spat\", c(\"SpatRaster\"), FALSE, other_env)\n",
+        "x <- 1\n",
+    ] {
+        assert_eq!(
+            unbound_beside_module(module, reads),
+            [unbound("SpatRaster")]
+        );
+    }
+}
+
+#[test]
+fn user_stub_captures_reach_collected_wrappers() {
+    // A `--typeshed` stub's `captures_promise` formal must reach collection
+    // (#776): a wrapper forwarding its formal there quotes it, so the
+    // caller's name is not read. A stub that drops an embedded capture makes
+    // the wrapper force its formal again. Swapping the stubs re-collects.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("capturepkg.json"),
+        r#"{
+            "schema_version": "1",
+            "package": "capturepkg",
+            "version": "test",
+            "functions": {
+                "label_of": {
+                    "params": [{"name": "arg", "required": true}],
+                    "eval": {"arg": "captures_promise"},
+                    "return": {"mode": "character", "length": "1"}
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    // A user stub replaces its embedded package wholesale, so this `rlang`
+    // drops the embedded `caller_arg()` capture.
+    std::fs::write(
+        dir.path().join("rlang.json"),
+        r#"{
+            "schema_version": "1",
+            "package": "rlang",
+            "version": "test",
+            "functions": {
+                "caller_arg": {
+                    "params": [{"name": "arg", "required": true}],
+                    "return": {"mode": "character", "length": "1"}
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let stubs = Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap());
+    let overridden = "library(rlang)\n\
+                      qualified_rlang <- function(x) rlang::caller_arg(x)\n\
+                      bare_rlang <- function(x) caller_arg(x)\n\
+                      qualified_rlang(zz_rlang_qualified)\n\
+                      bare_rlang(zz_rlang_bare)\n";
+    let qualified = "label <- function(x) capturepkg::label_of(x)\n\
+                     label(zz_wrapper)\n\
+                     capturepkg::label_of(zz_direct)\n";
+    // Attaching a package without a stub silences the whole file.
+    let attached = "library(capturepkg)\n\
+                    bare <- function(x) label_of(x)\n\
+                    bare(zz_bare)\n\
+                    plain <- function(x) x\n\
+                    plain(zz_plain)\n";
+    let mut project = Project::new();
+    project.add_file("qualified.R".to_string(), parse("qualified.R", qualified));
+    project.add_file("attached.R".to_string(), parse("attached.R", attached));
+    project.add_file("rlang.R".to_string(), parse("rlang.R", overridden));
+    let mut unbound = |stubs: &Arc<BTreeMap<String, Typeshed>>| -> Vec<(String, String)> {
+        project.set_user_stubs(Arc::clone(stubs));
+        project
+            .check_incremental()
+            .into_iter()
+            .flat_map(|(path, diagnostics)| diagnostics.into_iter().map(move |d| (path.clone(), d)))
+            .filter(|(_, diagnostic)| diagnostic.code == "RY010")
+            .map(|(path, diagnostic)| (path, diagnostic.message))
+            .collect()
+    };
+    let finding = |path: &str, name: &str| {
+        (
+            path.to_string(),
+            format!("variable `{name}` is not bound in this scope"),
+        )
+    };
+    let embedded = vec![
+        finding("qualified.R", "zz_wrapper"),
+        finding("qualified.R", "zz_direct"),
+    ];
+    let none = Arc::new(BTreeMap::new());
+    assert_eq!(unbound(&none), embedded);
+    assert_eq!(
+        unbound(&stubs),
+        vec![
+            finding("attached.R", "zz_plain"),
+            finding("rlang.R", "zz_rlang_qualified"),
+            finding("rlang.R", "zz_rlang_bare"),
+        ]
+    );
+    assert_eq!(unbound(&none), embedded);
 }

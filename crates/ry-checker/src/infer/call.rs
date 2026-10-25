@@ -1260,7 +1260,12 @@ impl Checker {
                 op: UnaryOpKind::Neg,
                 expr,
                 ..
-            } => matches!(expr.as_ref(), Expr::Integer(..) | Expr::Double(..)),
+            } => {
+                // A rebound unary `-` can return anything, including a
+                // fresh random value per call.
+                matches!(expr.as_ref(), Expr::Integer(..) | Expr::Double(..))
+                    && !ops_chooser::operator_rebound(self, "-", scope)
+            }
             Expr::Index {
                 base, kind, args, ..
             } => {
@@ -1304,7 +1309,12 @@ impl Checker {
                         | "ceiling"
                         | "round"
                         | "trunc"
-                ) && self.resolves_to_base(name, scope)
+                // Lenient (no search-path guard), like RY100's math-fn
+                // recognition: package test files run under an attached
+                // search path ry cannot prove, and the strict variant
+                // would silence the rule exactly where it applies. A
+                // lexical or project redefinition still stays silent.
+                ) && self.resolves_to_base_lenient(name, scope)
                     && args
                         .iter()
                         .all(|arg| self.deterministic_operand(&arg.value, scope))

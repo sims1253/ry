@@ -175,13 +175,7 @@ fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
             // The tag walker skips values instead of materializing them,
             // so a stream beyond the parser's nesting limit can still
             // enumerate; only if it also fails is this a resource limit.
-            return match enumerate_workspace_tags(payload) {
-                Some(bindings) => SerializedInventory {
-                    bindings,
-                    failure: None,
-                },
-                None => unavailable(InventoryFailure::ParserResourceLimit),
-            };
+            return fallback_to_tag_walk(payload, InventoryFailure::ParserResourceLimit);
         }
         Err(_) => None,
     };
@@ -189,13 +183,7 @@ fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
         // rds2rust 0.3 desynchronizes on an external pointer's payload and
         // can fail outright; the tag walker below reads the format the way
         // R writes it and recovers the full inventory (#714).
-        return match enumerate_workspace_tags(payload) {
-            Some(bindings) => SerializedInventory {
-                bindings,
-                failure: None,
-            },
-            None => unavailable(InventoryFailure::Unreadable),
-        };
+        return fallback_to_tag_walk(payload, InventoryFailure::Unreadable);
     };
     let bindings = match parsed.object.into_concrete() {
         rds2rust::RObject::Pairlist(elements) => elements
@@ -217,14 +205,31 @@ fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
         };
     }
     match enumerate_workspace_tags(payload) {
-        Some(full) => SerializedInventory {
-            bindings: full,
-            failure: None,
-        },
+        Some(full) => {
+            // Union, never replace: the inventory is existence-only, so a
+            // name either reader found must not be lost to the other.
+            let mut merged = bindings;
+            merged.extend(full);
+            SerializedInventory {
+                bindings: merged,
+                failure: None,
+            }
+        }
         None => SerializedInventory {
             bindings,
             failure: Some(InventoryFailure::Unsupported),
         },
+    }
+}
+
+/// Recover an inventory with the tag walker, or report `failure`.
+fn fallback_to_tag_walk(payload: &[u8], failure: InventoryFailure) -> SerializedInventory {
+    match enumerate_workspace_tags(payload) {
+        Some(bindings) => SerializedInventory {
+            bindings,
+            failure: None,
+        },
+        None => unavailable(failure),
     }
 }
 
@@ -302,6 +307,8 @@ struct TagWalker<'a> {
 }
 
 const MAX_WALK_DEPTH: usize = 256;
+const HAS_ATTR: u32 = 1 << 9;
+const HAS_TAG: u32 = 1 << 10;
 
 impl<'a> TagWalker<'a> {
     fn enumerate(&mut self) -> Result<HashSet<String>, ()> {
@@ -392,12 +399,7 @@ impl<'a> TagWalker<'a> {
         }
         Ok(())
     }
-}
 
-const HAS_ATTR: u32 = 1 << 9;
-const HAS_TAG: u32 = 1 << 10;
-
-impl<'a> TagWalker<'a> {
     /// Skip one serialized item. Returns the symbol name for SYMSXP items
     /// and references to earlier symbols, `None` for everything else.
     /// Pairlist-family CDRs (and a closure's body) are tail positions in
@@ -490,6 +492,7 @@ impl<'a> TagWalker<'a> {
     fn skip_payload(&mut self, typ: u32, has_attr: bool, depth: usize) -> Result<(), ()> {
         match typ {
             0 | 25 => {} // NILSXP, S4: nothing but attributes
+            // SPECIALSXP / BUILTINSXP: a length-prefixed primitive name.
             7 | 8 => {
                 let len = usize::try_from(self.i32()?).map_err(|_| ())?;
                 self.take(len)?;

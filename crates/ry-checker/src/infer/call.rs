@@ -181,6 +181,7 @@ impl Checker {
         self.check_comparison_inside_aggregate(&lookup_name, args, scope, span, base_aggregate);
         self.check_comparison_inside_math_fn(&lookup_name, args);
         self.check_identical_list_subset(&lookup_name, args, scope);
+        self.check_testthat_self_comparison(&name, func, &semantic_name, &lookup_name, args, scope);
 
         if matches!(lookup_name.as_str(), "hasArg" | "on.exit") {
             let package = if lookup_name == "hasArg" {
@@ -1186,6 +1187,161 @@ impl Checker {
                 self.emit(Severity::Warning, indexed.span, "RY101", message);
             }
         }
+    }
+
+    /// RY122: a resolved testthat equality assertion whose two compared
+    /// operands are the same conservatively deterministic expression
+    /// cannot check two different values (ggplot2 compared
+    /// `round(breaks$major, 3)` to itself where `breaks$sec.major` was
+    /// meant). The safe set is deliberately narrow: literals, plain
+    /// variable reads, one `$`/`[`/`[[` step from a receiver proven to
+    /// be plain data, and calls to the base numeric math functions
+    /// RY100 already enumerates. Anything else -- RNG/time/I/O and
+    /// unknown calls, operators that may dispatch, receivers whose
+    /// class could carry a `$`/`[[` method, masked assertion
+    /// functions -- stays silent; false negatives beat false positives.
+    fn check_testthat_self_comparison(
+        &mut self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) {
+        if !matches!(lookup_name, "expect_equal" | "expect_identical")
+            || scope.data_mask_unknown
+            || !matches!(
+                self.special_call_provenance(
+                    name,
+                    func,
+                    semantic_name,
+                    lookup_name,
+                    "testthat",
+                    scope,
+                ),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+        {
+            return;
+        }
+        let Some((object, expected)) = testthat_compared_operands(args) else {
+            return;
+        };
+        if self.deterministic_operand(&object.value, scope)
+            && self.deterministic_operand(&expected.value, scope)
+            && exprs_equivalent(&object.value, &expected.value)
+        {
+            self.emit(
+                Severity::Warning,
+                expected.span,
+                "RY122",
+                format!(
+                    "both operands of `{lookup_name}()` are the same deterministic expression; the assertion does not check two different values"
+                ),
+            );
+        }
+    }
+
+    /// Whether repeated evaluation of `expr` is provably free of side
+    /// effects and ambient state, within RY122's narrow set.
+    fn deterministic_operand(&self, expr: &Expr, scope: &Scope) -> bool {
+        match expr {
+            Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..) => true,
+            Expr::Ident { name, .. } => scope.get(name).is_some_and(|ty| {
+                !matches!(ty.mode, Mode::Function | Mode::Environment | Mode::Language)
+            }),
+            Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr,
+                ..
+            } => matches!(expr.as_ref(), Expr::Integer(..) | Expr::Double(..)),
+            Expr::Index {
+                base, kind, args, ..
+            } => {
+                let Expr::Ident { name, .. } = base.as_ref() else {
+                    return false;
+                };
+                match kind {
+                    // The parser records the `$` field as the argument
+                    // name, not as an evaluated expression.
+                    IndexKind::Dollar => {
+                        self.plain_list_receiver(name, scope)
+                            && args.len() == 1
+                            && args[0].name.is_some()
+                    }
+                    IndexKind::Single | IndexKind::Double => {
+                        self.plain_index_receiver(name, scope)
+                            && args.len() == 1
+                            && args[0].name.is_none()
+                            && matches!(
+                                args[0].value,
+                                Expr::String(..) | Expr::Integer(..) | Expr::Double(..)
+                            )
+                    }
+                    IndexKind::Slot => false,
+                }
+            }
+            Expr::Call { func, args, .. } => {
+                let Some(name) = ident_name(func) else {
+                    return false;
+                };
+                matches!(
+                    crate::semantic_lists::bare_name(name),
+                    "abs"
+                        | "sqrt"
+                        | "exp"
+                        | "log"
+                        | "log2"
+                        | "log10"
+                        | "log1p"
+                        | "floor"
+                        | "ceiling"
+                        | "round"
+                        | "trunc"
+                ) && self.resolves_to_base(name, scope)
+                    && args
+                        .iter()
+                        .all(|arg| self.deterministic_operand(&arg.value, scope))
+                    && !args
+                        .iter()
+                        .any(|arg| reads_known_classed_ident(&arg.value, scope))
+            }
+            _ => false,
+        }
+    }
+
+    /// A `$` receiver ry has proven to be a plain (unclassed) list, so
+    /// `$` is base list access rather than a possible `$.foo` method.
+    fn plain_list_receiver(&self, name: &str, scope: &Scope) -> bool {
+        scope.has_list_origin(name)
+            || scope.get(name).is_some_and(|ty| {
+                matches!(ty.mode, Mode::List) && ty.class.known && ty.class.len == 0
+            })
+    }
+
+    /// A `[`/`[[` receiver proven to be plain data: an unclassed list
+    /// or atomic vector, where base subsetting applies.
+    fn plain_index_receiver(&self, name: &str, scope: &Scope) -> bool {
+        self.plain_list_receiver(name, scope)
+            || scope.get(name).is_some_and(|ty| {
+                ty.class.known
+                    && ty.class.len == 0
+                    && matches!(
+                        ty.mode,
+                        Mode::Logical
+                            | Mode::Integer
+                            | Mode::Double
+                            | Mode::Complex
+                            | Mode::Character
+                            | Mode::Raw
+                    )
+            })
     }
 
     /// `hasArg` (captures its argument name) and `on.exit` (evaluates
@@ -2237,6 +2393,121 @@ pub(crate) fn callee_name(func: &Expr) -> Option<String> {
         // the normal user-function, typeshed, S3, and higher-order paths.
         Expr::Ident { name, .. } | Expr::String(name, _) => Some(name.clone()),
         _ => None,
+    }
+}
+
+/// The two operands an `expect_equal`/`expect_identical` call compares:
+/// the first two positional arguments, or the exact `object`/`expected`
+/// named pair with no positional arguments. Partial names and mixed
+/// forms stay unclaimed rather than guessed.
+fn testthat_compared_operands(args: &[Arg]) -> Option<(&Arg, &Arg)> {
+    let named = |target: &str| {
+        let mut found = args
+            .iter()
+            .filter(|arg| arg.name.as_deref() == Some(target));
+        match (found.next(), found.next()) {
+            (Some(arg), None) => Some(arg),
+            _ => None,
+        }
+    };
+    if let (Some(object), Some(expected)) = (named("object"), named("expected")) {
+        return args
+            .iter()
+            .all(|arg| arg.name.is_some())
+            .then_some((object, expected));
+    }
+    match args {
+        [object, expected, ..] if object.name.is_none() && expected.name.is_none() => {
+            Some((object, expected))
+        }
+        _ => None,
+    }
+}
+
+/// Structural equivalence for RY122 operands, ignoring spans. Only the
+/// variants RY122's safe set admits can compare equal.
+fn exprs_equivalent(lhs: &Expr, rhs: &Expr) -> bool {
+    match (lhs, rhs) {
+        (Expr::Logical(a, _), Expr::Logical(b, _)) => a == b,
+        (Expr::Integer(a, _), Expr::Integer(b, _)) => a == b,
+        (Expr::Double(a, _), Expr::Double(b, _)) => a.to_bits() == b.to_bits(),
+        (Expr::String(a, _), Expr::String(b, _)) => a == b,
+        (Expr::Null(_), Expr::Null(_)) => true,
+        (Expr::Na(a, _), Expr::Na(b, _)) => a == b,
+        (Expr::Ident { name: a, .. }, Expr::Ident { name: b, .. }) => a == b,
+        (
+            Expr::UnaryOp {
+                op: a_op,
+                expr: a_expr,
+                ..
+            },
+            Expr::UnaryOp {
+                op: b_op,
+                expr: b_expr,
+                ..
+            },
+        ) => a_op == b_op && exprs_equivalent(a_expr, b_expr),
+        (
+            Expr::Index {
+                base: a_base,
+                kind: a_kind,
+                args: a_args,
+                ..
+            },
+            Expr::Index {
+                base: b_base,
+                kind: b_kind,
+                args: b_args,
+                ..
+            },
+        ) => {
+            a_kind == b_kind && exprs_equivalent(a_base, b_base) && args_equivalent(a_args, b_args)
+        }
+        (
+            Expr::Call {
+                func: a_func,
+                args: a_args,
+                ..
+            },
+            Expr::Call {
+                func: b_func,
+                args: b_args,
+                ..
+            },
+        ) => exprs_equivalent(a_func, b_func) && args_equivalent(a_args, b_args),
+        _ => false,
+    }
+}
+
+fn args_equivalent(lhs: &[Arg], rhs: &[Arg]) -> bool {
+    lhs.len() == rhs.len()
+        && lhs
+            .iter()
+            .zip(rhs)
+            .all(|(a, b)| a.name == b.name && exprs_equivalent(&a.value, &b.value))
+}
+
+/// Whether `expr` reads a variable with a proven class. A base Math
+/// call on such a value can dispatch to a method ry has not audited,
+/// so RY122 treats the call as unknown. The synthesized `$` field
+/// name is not a variable read.
+fn reads_known_classed_ident(expr: &Expr, scope: &Scope) -> bool {
+    match expr {
+        Expr::Ident { name, .. } => scope.get(name).is_some_and(|ty| ty.class.has_known_class()),
+        Expr::Index {
+            base, kind, args, ..
+        } => {
+            reads_known_classed_ident(base, scope)
+                || (*kind != IndexKind::Dollar
+                    && args
+                        .iter()
+                        .any(|arg| reads_known_classed_ident(&arg.value, scope)))
+        }
+        Expr::Call { args, .. } => args
+            .iter()
+            .any(|arg| reads_known_classed_ident(&arg.value, scope)),
+        Expr::UnaryOp { expr, .. } => reads_known_classed_ident(expr, scope),
+        _ => false,
     }
 }
 

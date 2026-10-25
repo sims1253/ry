@@ -60,6 +60,7 @@ explanation for one rule.
 | RY119 | integer-coercion-range-loss | warning | An unshadowed base `as.integer()` receives a plain numeric value with a proven element outside R's integer range. Truncation toward zero permits values through `2147483647.9` and `-2147483647.9`; values at `2147483648`, `-2147483648`, or infinity become a new `NA_integer_` with a warning. Prior `NA`/`NaN`, unknown values, class dispatch, and an immediately repaired `x <- as.integer(...); x[is.na(x)] <- value` stay quiet. The result retains distinct new-NA provenance for condition consumers. |
 | RY120 | report-boundary | warning | An opted-in report has a malformed R fence or exceeds the bounded extraction budget; affected R chunks are not analyzed. |
 | RY121 | report-execution-unknown | warning | A report execution option cannot be determined statically; analysis stops at that chunk rather than guessing which later bindings exist. |
+| RY122 | testthat-self-comparison | warning | A resolved testthat `expect_equal()`/`expect_identical()` compares the same conservatively deterministic expression to itself, so it cannot check two different values. Silent for differing operands, RNG/time/I/O or unknown calls, masked assertion functions, and `$`/`[[` access whose receiver is not proven plain data. |
 
 RY003 and RY113 are registered but default-off: they are omitted from output
 unless a severity override or rule selection names them (for example

@@ -333,6 +333,12 @@ static PROBES: &[Probe] = &[
         positive: "x <- c(0, 1e10)\ny <- as.integer(x)\n",
         negative: "x <- c(0, 2147483647.9)\ny <- as.integer(x)\n",
     },
+    Probe {
+        code: "RY122",
+        note: "testthat equality assertion comparing a deterministic expression to itself; effectful same-text operands stay silent",
+        positive: "f <- function(x) testthat::expect_equal(round(x, 3), round(x, 3))\n",
+        negative: "testthat::expect_equal(rnorm(1), rnorm(1))\n",
+    },
 ];
 
 #[test]

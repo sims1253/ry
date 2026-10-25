@@ -94,6 +94,11 @@ pub(crate) fn rcpp_modules(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
                 _ => {}
             }
         }
+        // An `#if` still open at the end leaves its code unchecked.
+        if depth > 0 {
+            readable = false;
+            return;
+        }
         let tokens = lex(&kept.join("\n"));
         let mut index = 0;
         while index < tokens.len() {

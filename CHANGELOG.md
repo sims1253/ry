@@ -274,9 +274,9 @@ All notable changes to ry are documented in this file.
   `is.numeric()` on a Date, POSIXt, difftime or factor value, or under a
   failing `inherits()` test of a class the value is known to carry, is no
   longer reported: R never runs it.
-- In a package, top-level assignments in tests, `inst/` and other files
-  outside `R/` no longer bind names for `R/` code, which restores RY010s in
-  terra hidden by tinytest variables (#804).
+- In a package, top-level assignments and `<<-` writes in tests, `inst/` and
+  other files outside `R/` no longer bind names for `R/` code, which restores
+  RY010s in terra hidden by tinytest variables (#804).
 
 ## [0.11.0] - 2026-09-22
 

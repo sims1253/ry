@@ -121,14 +121,24 @@ pub(crate) struct CollectedFile {
     pub(crate) loaded: HashSet<String>,
 }
 
+/// A package namespace's share of the project-wide binding pools, built from
+/// its `R/` files only. R builds a namespace from `R/`, while tests and
+/// scripts run in their own environments, so neither their top-level
+/// assignments nor their `<<-` writes bind names for package code.
+#[derive(Default, PartialEq)]
+struct NamespacePool {
+    known_vars: HashSet<String>,
+    superassigned: HashSet<String>,
+}
+
 /// Project-wide table facts that can change any file's diagnostics without
 /// changing a function name or return slot, so a change re-emits every file.
 #[derive(Default, PartialEq)]
 struct TableSnapshot {
     /// Non-function bindings across files (RY010).
     known_vars: HashSet<String>,
-    /// The same, per package, from its `R/` files only.
-    namespace_known_vars: HashMap<String, HashSet<String>>,
+    /// Per package, the bindings of its `R/` files only.
+    namespaces: HashMap<String, NamespacePool>,
     /// Another file's registration, or literal binding, changes whether a
     /// method gets its dispatch bindings.
     registered_s3_methods: FxSet<String>,
@@ -151,10 +161,10 @@ struct TableSnapshot {
 }
 
 impl TableSnapshot {
-    fn of(table: &FnTable, namespace_known_vars: HashMap<String, HashSet<String>>) -> Self {
+    fn of(table: &FnTable, namespaces: HashMap<String, NamespacePool>) -> Self {
         Self {
             known_vars: table.known_vars.clone(),
-            namespace_known_vars,
+            namespaces,
             registered_s3_methods: table.registered_s3_methods.clone(),
             unrecorded_global_literals: table.unrecorded_global_literals.clone(),
             capture_rebounds: table.rebound_after_capture.clone(),
@@ -826,7 +836,7 @@ impl Project {
                 .collect()
         };
 
-        let tables = TableSnapshot::of(&self.fn_table, self.namespace_known_vars());
+        let tables = TableSnapshot::of(&self.fn_table, self.namespaces());
         let must_emit: HashSet<&str> = if !self.has_prev_emit
             || loaded_changed
             || self.prev_tables != tables
@@ -850,10 +860,16 @@ impl Project {
         // Pass 3 never mutates them.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let package_known_vars = Arc::new(fn_table.known_vars.clone());
-        let namespace_known_vars: HashMap<&str, Arc<HashSet<String>>> = tables
-            .namespace_known_vars
+        let namespaces: HashMap<&str, (Arc<HashSet<String>>, Arc<HashSet<String>>)> = tables
+            .namespaces
             .iter()
-            .map(|(package, known_vars)| (package.as_str(), Arc::new(known_vars.clone())))
+            .map(|(package, pool)| {
+                let shared = (
+                    Arc::new(pool.known_vars.clone()),
+                    Arc::new(pool.superassigned.clone()),
+                );
+                (package.as_str(), shared)
+            })
             .collect();
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
         let loaded = Arc::new(std::mem::take(&mut self.loaded));
@@ -888,11 +904,16 @@ impl Project {
                     Arc::clone(&return_slots),
                 );
                 emitter.set_shared_declarations(Arc::clone(&declarations));
-                let known_vars = self
+                match self
                     .source_package(path)
-                    .and_then(|package| namespace_known_vars.get(package))
-                    .unwrap_or(&package_known_vars);
-                emitter.set_shared_known_vars(Arc::clone(known_vars));
+                    .and_then(|package| namespaces.get(package))
+                {
+                    Some((known_vars, superassigned)) => {
+                        emitter.set_shared_known_vars(Arc::clone(known_vars));
+                        emitter.set_namespace_superassigned(Arc::clone(superassigned));
+                    }
+                    None => emitter.set_shared_known_vars(Arc::clone(&package_known_vars)),
+                }
                 emitter.set_shared_loaded(Arc::clone(&loaded));
                 emitter.set_bare_loaded(
                     self.bare_loaded
@@ -1050,20 +1071,16 @@ impl Project {
         self.package_facts.get(path)?.source_package.as_deref()
     }
 
-    /// Each package's namespace pool: the bindings of its `R/` files only.
-    /// R builds a namespace from `R/`, while tests and scripts run in their
-    /// own environments, so their top-level names never reach package code.
-    fn namespace_known_vars(&self) -> HashMap<String, HashSet<String>> {
-        let mut pools: HashMap<String, HashSet<String>> = HashMap::new();
+    /// Each package's [`NamespacePool`].
+    fn namespaces(&self) -> HashMap<String, NamespacePool> {
+        let mut pools: HashMap<String, NamespacePool> = HashMap::new();
         for (path, _) in &self.files {
             if let Some(package) = self.source_package(path) {
-                pools.entry(package.to_string()).or_default().extend(
-                    self.file_known_vars
-                        .get(path)
-                        .into_iter()
-                        .flatten()
-                        .cloned(),
-                );
+                let pool = pools.entry(package.to_string()).or_default();
+                let collected = &self.collected_files[path].fn_table;
+                pool.known_vars.extend(collected.known_vars.iter().cloned());
+                pool.superassigned
+                    .extend(collected.superassigned.iter().cloned());
             }
         }
         pools
@@ -1618,12 +1635,22 @@ mod tests {
         // R builds the namespace from `R/` only; a tinytest file runs in
         // its own environment, so its top-level `leaked` never binds in
         // `f`. The test file still sees the namespace's `in_ns`.
-        let mut project = package_with_tinytest("in_ns <- 1L\n", "leaked <- 1L\nin_ns + leaked\n");
-        let diagnostics = project.check();
-        let use_r = unbound_names(&diagnostics, "R/use.R");
-        assert_eq!(use_r.len(), 1, "{use_r:?}");
-        assert!(use_r[0].contains("`leaked`"), "{use_r:?}");
-        assert!(unbound_names(&diagnostics, "inst/tinytest/test_a.R").is_empty());
+        // A `<<-` there writes outside the namespace too.
+        for test in [
+            "leaked <- 1L\nin_ns + leaked\n",
+            "h <- function() leaked <<- 1L\nin_ns\n",
+        ] {
+            let mut project = package_with_tinytest("in_ns <- 1L\n", test);
+            let diagnostics = project.check();
+            let use_r = unbound_names(&diagnostics, "R/use.R");
+            assert_eq!(use_r.len(), 1, "{test:?}: {use_r:?}");
+            assert!(use_r[0].contains("`leaked`"), "{test:?}: {use_r:?}");
+            assert!(unbound_names(&diagnostics, "inst/tinytest/test_a.R").is_empty());
+        }
+        // Control: a `<<-` in another `R/` file still binds for package code.
+        let mut project =
+            package_with_tinytest("in_ns <- 1L\ng <- function() leaked <<- 1L\n", "in_ns\n");
+        assert!(unbound_names(&project.check(), "R/use.R").is_empty());
     }
 
     #[test]

@@ -183,6 +183,7 @@ fn proven_na_literal_conditions_are_checked() {
         "if (NA_complex_) 1L",
         "if (!NA) 1L",
         "if (-NA_real_) 1L",
+        "if (NA_complex_ == 1) 1L",
         "if (NA_integer_ > 1L) 1L",
         "if (1L < NA_integer_) 1L",
         "if (NA + 1L) 1L",
@@ -233,6 +234,9 @@ fn guarded_and_unproven_na_conditions_stay_silent() {
         "if (NA^0) 1L",
         "any <- function(x, ...) TRUE; if (any(NA)) 1L",
         "if (NA == x) 1L",
+        // Ordering a complex NA errors in the comparison, not as an NA.
+        "if (NA_complex_ > 1) 1L",
+        "if (1 < NA_complex_) 1L",
     ] {
         let diagnostics = check(source);
         assert!(

@@ -1500,6 +1500,14 @@ impl Checker {
                 let left_na = self.proven_na_scalar_mode(lhs, scope);
                 let right_na = self.proven_na_scalar_mode(rhs, scope);
                 if is_comparison(*op) {
+                    // Ordering a complex NA errors in the comparison
+                    // itself ("invalid comparison with complex values");
+                    // it never evaluates to NA. Equality is fine.
+                    if !matches!(op, BinOpKind::Eq | BinOpKind::Ne)
+                        && (left_na == Some(Mode::Complex) || right_na == Some(Mode::Complex))
+                    {
+                        return None;
+                    }
                     let plain = |operand: &Expr| {
                         plain_scalar_literal(operand)
                             || self.proven_na_scalar_mode(operand, scope).is_some()

@@ -252,6 +252,10 @@ All notable changes to ry are documented in this file.
 - Narrow through a local bound to a guard predicate, so
   `has_size <- !is.null(size); if (has_size) ...` drops the omitted `NULL`
   default like `if (!is.null(size))` does, until either name is rebound (#692).
+- Past `if (is.null(x) || x == 1) return(...)`, `x` is non-`NULL` whatever
+  the other operand tests, and past a return guard whose mode test a local
+  always passes (`y <- "a"; if (is.character(y)) return(x)`) the local is
+  unknown, since R never gets there with that value (#692).
 - Type a `$` or `[[` name missing from a list whose names ry only partly
   knows (`list(...)`, an `lapply()` result, fields written to an argument
   or environment) as unknown instead of NULL, removing RY001 false

@@ -116,17 +116,25 @@ impl Checker {
         // full-view divergence walks use the same cheap prefilter the
         // journal walk applies (this walk is test-only, but symmetry
         // keeps its cost profile comparable): they only run when at
-        // least one narrowed binding's pre-`if` original can yield an
-        // exact refinement at all — a union with a NULL member or a
-        // pure-`NULL` binding, the set `narrow_away_from_null` admits.
-        let guard_narrowed_null_member = narrowed_originals.iter().any(|(_, original, _)| {
+        // least one narrowed binding can yield a refinement at all — a
+        // union with a NULL member or a pure-`NULL` binding, the set
+        // `narrow_away_from_null` admits, or a binding an arm narrowed
+        // to an unknown value.
+        let guard_may_refine = narrowed_originals.iter().any(|(name, original, _)| {
             original
                 .as_ref()
                 .is_some_and(|original| narrow_away_from_null(original).is_some())
+                || [&then_scope, &else_scope].into_iter().any(|arm| {
+                    BranchGuardView::new(
+                        arm.get(name.as_str()),
+                        arm.narrowed_bindings.contains(name.as_str()),
+                        false,
+                    )
+                    .is_unknown_narrowing()
+                })
         });
-        let then_return_diverges =
-            guard_narrowed_null_member && !then_diverges && self.block_diverges(then);
-        let else_return_diverges = guard_narrowed_null_member
+        let then_return_diverges = guard_may_refine && !then_diverges && self.block_diverges(then);
+        let else_return_diverges = guard_may_refine
             && !else_diverges
             && else_.is_some_and(|statements| self.block_diverges(statements));
         for (name, original, original_default_parameter) in narrowed_originals {

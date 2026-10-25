@@ -139,6 +139,11 @@ impl<'a> BranchGuardView<'a> {
             default_parameter,
         }
     }
+
+    /// The guard proved the recorded type wrong on this arm's path.
+    pub(crate) fn is_unknown_narrowing(&self) -> bool {
+        self.narrowed && self.ty.is_some_and(|ty| *ty == RType::unknown())
+    }
 }
 
 /// The exact continuation refinement a null-guard proves for one
@@ -173,9 +178,24 @@ impl<'a> BranchGuardView<'a> {
 /// provably-`NULL` binding has no other value to degrade to and the
 /// rebind alone is the continuation. Every narrowed view must equal the
 /// computed remainder — never an unrelated predicate's refinement.
+///
+/// Any other original refines only when one arm exits through
+/// `return(...)` and the guard left the surviving arm an unknown value
+/// (a mode test the recorded type always passes: `y <- "a"; if
+/// (is.character(y)) return(x)`, issue #692). R reaches the continuation
+/// only with a value the recorded type does not describe, so it holds the
+/// same unknown value.
 /// Shared by the journal walk and the test-only cloned-scope reference
 /// so their outcomes cannot drift.
 pub(crate) fn union_guard_continuation_refinement(views: UnionGuardViews<'_>) -> Option<RType> {
+    let surviving = match (views.then_return_diverges, views.else_return_diverges) {
+        (true, false) => Some(&views.else_),
+        (false, true) => Some(&views.then),
+        _ => None,
+    };
+    if surviving.is_some_and(BranchGuardView::is_unknown_narrowing) {
+        return Some(RType::unknown());
+    }
     let defaulted = views.original_default_parameter
         || views.then.default_parameter
         || views.else_.default_parameter;
@@ -1827,24 +1847,25 @@ impl Checker {
         // and are excluded; unions without a NULL member have no
         // remainder to install.
         // Short-circuit: the extra full-view divergence walks only run
-        // when the guard narrowed at least one binding whose pre-`if`
-        // type can yield an exact union-guard refinement at all — a
-        // union with a NULL member or a pure-`NULL` binding, exactly
-        // the originals `union_guard_continuation_refinement` admits
-        // (the `narrow_away_from_null` member scan is that set's cheap
-        // encoding). Guard-free `if`s and guards over NULL-free types
-        // keep their previous cost, and the refinement loop below is
-        // unchanged: for every other original it returns `None`
-        // regardless of the divergence flags.
-        let guard_narrowed_null_member = narrowed
-            .iter()
-            .filter_map(|name| scope.get(name))
-            .any(|original| narrow_away_from_null(original).is_some());
-        let then_return_diverges =
-            guard_narrowed_null_member && !then_diverges && self.arm_diverges(then);
-        let else_return_diverges = guard_narrowed_null_member
-            && !else_diverges
-            && else_.is_some_and(|arm| self.arm_diverges(arm));
+        // when the guard narrowed at least one binding that can yield a
+        // refinement at all — a union with a NULL member or a pure-`NULL`
+        // binding (the `narrow_away_from_null` member scan is that set's
+        // cheap encoding), or a binding an arm narrowed to an unknown
+        // value: exactly what `union_guard_continuation_refinement`
+        // admits. Guard-free `if`s and other guards keep their previous
+        // cost: for them it returns `None` regardless of the divergence
+        // flags.
+        let guard_may_refine = narrowed.iter().any(|name| {
+            let original = scope.get(name);
+            original.is_some_and(|original| narrow_away_from_null(original).is_some())
+                || [&then_delta, &else_delta].into_iter().any(|delta| {
+                    let view = delta.binding(scope, name, original);
+                    BranchGuardView::new(view.ty, view.narrowed, false).is_unknown_narrowing()
+                })
+        });
+        let then_return_diverges = guard_may_refine && !then_diverges && self.arm_diverges(then);
+        let else_return_diverges =
+            guard_may_refine && !else_diverges && else_.is_some_and(|arm| self.arm_diverges(arm));
         let union_guard_facts: Vec<(String, RType)> = if narrowed.is_empty() {
             Vec::new()
         } else {

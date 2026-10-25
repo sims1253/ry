@@ -976,6 +976,26 @@ impl Checker {
         .then_some((var, truth))
     }
 
+    /// Whether every built-in guard callee (`is.null`, `length`, `missing`,
+    /// `inherits`, ...) in the guard shapes of `cond` is base here. A project
+    /// or local redefinition may answer anything, so its guard proves
+    /// nothing. Other callees and qualified heads keep their own rules.
+    fn guard_callees_resolve_to_base(&self, cond: &Expr, scope: &Scope) -> bool {
+        match cond {
+            Expr::UnaryOp { expr, .. } => self.guard_callees_resolve_to_base(expr, scope),
+            Expr::BinOp { lhs, rhs, .. } => {
+                self.guard_callees_resolve_to_base(lhs, scope)
+                    && self.guard_callees_resolve_to_base(rhs, scope)
+            }
+            Expr::Call { func, .. } => ident_name(func).is_none_or(|name| {
+                !(predicate_target(name).is_some()
+                    || matches!(name, "inherits" | "length" | "missing"))
+                    || self.guard_callee_resolves_to_base(name, scope)
+            }),
+            _ => true,
+        }
+    }
+
     /// Restrict compound facts to predicates without intervening writes or calls.
     fn compound_guard_is_pure(&self, cond: &Expr, scope: &Scope) -> bool {
         match cond {
@@ -1040,6 +1060,9 @@ impl Checker {
     /// Signature-declared predicates extend the built-in predicate vocabulary
     /// only when ordinary typeshed resolution establishes their provenance.
     pub(crate) fn extract_type_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
+        if !self.guard_callees_resolve_to_base(cond, scope) {
+            return Narrowing::None;
+        }
         let built_in = extract_builtin_type_narrowing(cond);
         if let Some((var, truth)) = self.never_numeric_test(cond, scope) {
             let fact = vec![Narrowing::Unreached { var }];

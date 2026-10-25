@@ -418,6 +418,18 @@ impl Checker {
         self.resolves_to_base_impl(name, scope, false)
     }
 
+    /// [`Self::resolves_to_base_lenient`] for a built-in guard callee
+    /// (`is.null`, `length`, ...), extended to quoted bindings, which that
+    /// check matches only by raw spelling: `known_vars` holds the unquoted
+    /// name of a top-level `` `length` <- ``, and a local one sits in the
+    /// scope under its quoted spelling.
+    pub(crate) fn guard_callee_resolves_to_base(&self, name: &str, scope: &Scope) -> bool {
+        self.resolves_to_base_lenient(name, scope)
+            && (name.contains("::")
+                || (!self.fn_table.known_vars.contains(name)
+                    && self.resolves_to_base_lenient(&format!("`{name}`"), scope)))
+    }
+
     /// Whether the callee `name` resolves to `base::bare_name` at this call
     /// site, given the current lexical scope and project metadata.
     ///

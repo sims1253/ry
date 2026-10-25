@@ -96,3 +96,23 @@ expression: rows
       line: 189
       message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
+- case: a project is.null redefinition does not narrow its NULL default
+  diagnostics:
+    - code: RY001
+      line: 199
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a local backtick is.null redefinition does not narrow its NULL default
+  diagnostics:
+    - code: RY001
+      line: 209
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a backtick length mask does not make a length guard prove non-NULL
+  diagnostics:
+    - code: RY001
+      line: 220
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a local data binding named like a guard callee leaves the guard base
+  diagnostics: []

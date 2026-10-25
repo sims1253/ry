@@ -190,3 +190,49 @@ assigns_null <- function(x = NULL) {
 }
 nested_null()
 assigns_null()
+
+## case: a project is.null redefinition does not narrow its NULL default
+# expect: RY001
+is.null <- function(x) FALSE
+f <- function(x = NULL) {
+  if (!is.null(x)) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+
+## case: a local backtick is.null redefinition does not narrow its NULL default
+# expect: RY001
+f <- function(x = NULL) {
+  `is.null` <- function(x) FALSE
+  if (!is.null(x)) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+
+## case: a backtick length mask does not make a length guard prove non-NULL
+# expect: RY001
+`length` <- function(x) 1L
+f <- function() {
+  x <- NULL
+  if (length(x) == 1) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+
+## case: a local data binding named like a guard callee leaves the guard base
+# no-diag
+# R skips non-function bindings when it looks up a call head.
+f <- function(x = NULL, y = NULL) {
+  missing <- "none"
+  length <- 0L
+  if (!missing(x)) {
+    if (x > 0) 1 else 2
+  }
+  if (length(y) == 1) {
+    if (y > 0) 1 else 2
+  }
+}
+f()

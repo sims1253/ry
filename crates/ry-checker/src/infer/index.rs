@@ -150,6 +150,58 @@ pub(super) fn dollar_receiver_mode_description(receiver: &RType) -> String {
 }
 
 impl Checker {
+    /// Whether `generic` (`$`, `is.numeric`) on `receiver` may dispatch to an
+    /// S3 method. R tries `<generic>.<class>` for each class and otherwise
+    /// uses the primitive. Only a fully known class vector with no method in
+    /// the stub inventory, the project, its registrations, its imports or the
+    /// enclosing scope proves the primitive runs; an unknown package on the
+    /// search path or a project that may install bindings could supply one.
+    pub(super) fn s3_method_may_apply(
+        &self,
+        generic: &str,
+        receiver: &RType,
+        scope: &Scope,
+    ) -> bool {
+        if self.fn_table.may_install_bindings
+            || scope.search_path_unknown
+            || self
+                .loaded
+                .iter()
+                .any(|package| !self.package_is_known(package))
+        {
+            return true;
+        }
+        let members = receiver.members.iter().flat_map(|members| members.iter());
+        std::iter::once(receiver)
+            .chain(members)
+            .any(|ty| self.class_may_have_method(generic, &ty.class, scope))
+    }
+
+    fn class_may_have_method(&self, generic: &str, cv: &ClassVector, scope: &Scope) -> bool {
+        // Four slots hold a longer class vector truncated (`from_slice`), so
+        // a full vector may hide the class whose method R selects.
+        if cv.is_unknown() || cv.guarded || cv.len as usize >= cv.names.len() {
+            return true;
+        }
+        cv.names.iter().take(cv.len as usize).any(|class| {
+            let Some(class) = class else {
+                return true;
+            };
+            let method = format!("{generic}.{class}");
+            let named = |name: &String| semantic_argument_name(name) == method;
+            // A local or enclosing binding counts, as for `UseMethod`
+            // (`caller_method_may_shadow`); `$` methods are spelled `` `$.cls` ``.
+            scope.bindings.keys().any(named)
+                || self.s3_lookup_method(generic, class).is_some()
+                || self.fn_table.functions.names().any(named)
+                || self.fn_table.known_vars.iter().any(named)
+                || self.fn_table.registered_s3_methods.iter().any(named)
+                || self.known_vars.iter().any(named)
+                || self.imported_from.keys().any(named)
+                || self.external_bindings.iter().any(named)
+        })
+    }
+
     /// Resolve the type of a subset/extract expression given the base
     /// type, the kind of index (`[`, `[[`, `$`), and the (already
     /// lowered) argument list.
@@ -194,8 +246,11 @@ impl Checker {
             IndexKind::Dollar => {
                 // `$` dispatches on classed atomic values. The pooled method
                 // table cannot prove which method applies here, its return
-                // type, or its writes to the caller.
-                if dollar_atomic_receiver_may_dispatch(&bt) {
+                // type, or its writes to the caller. Without any method a
+                // classed atomic errors like a plain one (`Sys.Date()$x`).
+                if dollar_atomic_receiver_may_dispatch(&bt)
+                    && self.s3_method_may_apply("$", &bt, scope)
+                {
                     scope.invalidate_unknown_effects();
                     return RType::unknown();
                 }
@@ -1667,5 +1722,24 @@ mod operator_generic_tests {
                 "{non_generic:?} is not an Arith/Compare operator and must not be recognized"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod method_lookup_tests {
+    use super::*;
+
+    #[test]
+    fn an_unnamed_class_slot_may_have_a_method() {
+        let checker = Checker::new("t.R");
+        let scope = Scope::default();
+        let partial = ClassVector {
+            names: [Some(Arc::from("Date")), None, None, None],
+            len: 2,
+            known: true,
+            guarded: false,
+        };
+        assert!(checker.class_may_have_method("$", &partial, &scope));
+        assert!(!checker.class_may_have_method("$", &ClassVector::single("Date"), &scope));
     }
 }

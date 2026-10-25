@@ -177,3 +177,16 @@ reassigns_null <- function(x = 1) {
 }
 keeps_null()
 reassigns_null()
+
+## case: a return guard's || whose operand may assign in nested code keeps the NULL
+# expect: RY001, RY001
+nested_null <- function(x = NULL) {
+  if (is.null(x) || { if (TRUE) x <- NULL; FALSE }) return(0)
+  if (x > 0) 1 else 2
+}
+assigns_null <- function(x = NULL) {
+  if (is.null(x) || { assign("x", NULL); FALSE }) return(0)
+  if (x > 0) 1 else 2
+}
+nested_null()
+assigns_null()

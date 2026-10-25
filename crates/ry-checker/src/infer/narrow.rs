@@ -195,13 +195,11 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             // A false disjunction proves every disjunct false, so each
             // `is.null(x)` disjunct makes `x` non-NULL whatever the others
             // test (`if (is.null(x) || x == 1) return(NULL)`, #692): the
-            // mirror of the `&&` arm below. A right operand that assigns
+            // mirror of the `&&` arm below. A right operand that may assign
             // `x` voids the left operand's fact about it.
-            let mut assigned = HashSet::new();
-            binop::collect_condition_assignment_names(rhs, &mut assigned);
             let on_false: Vec<Narrowing> = non_null_else_facts(extract_builtin_type_narrowing(lhs))
                 .into_iter()
-                .filter(|fact| !fact.mentions_any(&assigned))
+                .filter(|fact| !fact.mentions_where(&|var| may_assign(rhs, var)))
                 .chain(non_null_else_facts(extract_builtin_type_narrowing(rhs)))
                 .collect();
             if on_false.is_empty() {
@@ -325,6 +323,40 @@ fn non_null_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
         }
         _ => Vec::new(),
     }
+}
+
+/// Whether evaluating `expr` may bind `name`: an assignment to it (`<-`,
+/// `<<-`, `assign("name", v)`) or a `for` over it at any depth outside
+/// function bodies, including inside nested control flow.
+fn may_assign(expr: &Expr, name: &str) -> bool {
+    let binds = |target: &Expr| matches!(target, Expr::Ident { name: bound, .. } if bound == name);
+    walk_expr(
+        expr,
+        Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node, _| match node {
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) if binds(lhs) => ControlFlow::Break(()),
+            AstNode::Stmt(Stmt::Assign { target, .. }) if binds(target) => ControlFlow::Break(()),
+            AstNode::Stmt(Stmt::For { name: bound, .. }) if bound == name => ControlFlow::Break(()),
+            AstNode::Expr(Expr::Call { func, args, .. })
+                if ident_name(func) == Some("assign")
+                    && matches!(
+                        args.first().map(|arg| &arg.value),
+                        Some(Expr::String(bound, _)) if bound == name
+                    ) =>
+            {
+                ControlFlow::Break(())
+            }
+            _ => ControlFlow::Continue(Descend::Into),
+        },
+    )
+    .is_break()
 }
 
 /// The non-NULL facts a false disjunct proves: `is.null(x)`, or the facts

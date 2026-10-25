@@ -205,16 +205,14 @@ fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
         };
     }
     match enumerate_workspace_tags(payload) {
-        Some(full) => {
-            // Union, never replace: the inventory is existence-only, so a
-            // name either reader found must not be lost to the other.
-            let mut merged = bindings;
-            merged.extend(full);
-            SerializedInventory {
-                bindings: merged,
-                failure: None,
-            }
-        }
+        // The walker only succeeds on a byte-exact walk to the terminator,
+        // so its tags are the complete set; names the desynchronized
+        // parser read past an external pointer are not evidence and must
+        // not survive into an inventory reported as complete.
+        Some(full) => SerializedInventory {
+            bindings: full,
+            failure: None,
+        },
         None => SerializedInventory {
             bindings,
             failure: Some(InventoryFailure::Unsupported),
@@ -336,8 +334,11 @@ impl<'a> TagWalker<'a> {
                         self.skip_item(1)?;
                     }
                     if word & HAS_TAG != 0 {
-                        let tag = self.skip_item(1)?.ok_or(())?;
-                        names.insert(tag.to_string());
+                        // A tag that is not a symbol contributes no
+                        // binding name, like the parser path's filter.
+                        if let Some(tag) = self.skip_item(1)? {
+                            names.insert(tag.to_string());
+                        }
                     }
                     self.skip_item(1)?; // the bound value
                 }
@@ -366,12 +367,9 @@ impl<'a> TagWalker<'a> {
     }
 
     fn peek_u32(&self) -> Result<u32, ()> {
+        let end = self.pos.checked_add(4).ok_or(())?;
         Ok(u32::from_be_bytes(
-            self.bytes
-                .get(self.pos..self.pos + 4)
-                .ok_or(())?
-                .try_into()
-                .unwrap(),
+            self.bytes.get(self.pos..end).ok_or(())?.try_into().unwrap(),
         ))
     }
 
@@ -405,7 +403,9 @@ impl<'a> TagWalker<'a> {
     /// Skip one serialized item. Returns the symbol name for SYMSXP items
     /// and references to earlier symbols, `None` for everything else.
     /// Pairlist-family CDRs (and a closure's body) are tail positions in
-    /// R's writer, so they continue the loop instead of recursing.
+    /// R's writer, so they continue the loop instead of recursing; a
+    /// tail item that is itself a symbol therefore propagates its name,
+    /// which only tag positions may read.
     fn skip_item(&mut self, depth: usize) -> Result<Option<std::rc::Rc<str>>, ()> {
         if depth > MAX_WALK_DEPTH {
             return Err(());
@@ -505,8 +505,9 @@ impl<'a> TagWalker<'a> {
                 self.take(len)?;
             }
             9 => {
+                // CHARSXP: only -1 (NA_STRING) may be negative.
                 let len = self.i32()?;
-                if len >= 0 {
+                if len != -1 {
                     self.take(usize::try_from(len).map_err(|_| ())?)?;
                 }
             }
@@ -572,7 +573,7 @@ impl<'a> TagWalker<'a> {
             return Err(());
         }
         let len = self.i32()?;
-        if len < 0 {
+        if len == -1 {
             return Ok(None);
         }
         Ok(Some(self.take(usize::try_from(len).map_err(|_| ())?)?))

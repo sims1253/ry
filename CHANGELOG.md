@@ -22,6 +22,13 @@ All notable changes to ry are documented in this file.
 - Add RY122 for testthat equality assertions that compare a deterministic
   expression to itself (`expect_equal(round(breaks$major, 3),
   round(breaks$major, 3))`), which cannot check two different values (#572).
+- RY001 now reports an `if`/`while` condition that is a proven scalar
+  `NA`: an `NA` literal (including the typed `NA_*_` constants), closed
+  literal shapes over one (unary `!`/`-`, a comparison or `+`/`-`/`*`
+  with a plain literal, `c()`/`any()`/`all()`/`sum()` and `as.*()`
+  coercions over one), and a definite RY119 cast used directly as the
+  condition. Bindings and possibly-NA conditions stay silent; their
+  value facts are not a sound always-NA proof (#354).
 - Set per-file rule severities with ordered `[[rule-overrides]]` tables in
   `ry.toml`, while keeping matching files in project analysis (#583).
 - Check a source buffer with `ry check - --stdin-filename PATH`. The buffer

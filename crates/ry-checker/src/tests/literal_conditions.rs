@@ -167,6 +167,81 @@ fn null_union_return_components_reach_condition_analysis() {
     }
 }
 
+// Issue #354: a condition that is syntactically a proven scalar `NA`
+// always errors in R ("missing value where TRUE/FALSE needed" for a
+// logical NA, "argument is not interpretable as logical" for the typed
+// NAs). Only closed literal shapes count as proof here; bindings and
+// possibly-NA values stay with the follow-up work recorded on #354.
+#[test]
+fn proven_na_literal_conditions_are_checked() {
+    for source in [
+        "if (NA) 1L",
+        "while (NA) break",
+        "if (NA_integer_) 1L",
+        "if (NA_real_) 1L",
+        "if (NA_character_) 1L",
+        "if (NA_complex_) 1L",
+        "if (!NA) 1L",
+        "if (-NA_real_) 1L",
+        "if (NA_integer_ > 1L) 1L",
+        "if (1L < NA_integer_) 1L",
+        "if (NA + 1L) 1L",
+        "if (any(NA)) 1L",
+        "if (all(NA)) 1L",
+        "if (sum(NA_integer_)) 1L",
+        "if (c(NA)) 1L",
+        "if (as.logical(NA_integer_)) 1L",
+        "if (as.integer(1e10)) 1L",
+        "f <- function() { if (NA) 1L }; f()",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("if (NA) 1L");
+    let invalid: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY001").collect();
+    assert_eq!(invalid.len(), 1, "{diagnostics:?}");
+    assert!(
+        invalid[0].message.contains("NA"),
+        "the message must name the NA condition: {diagnostics:?}"
+    );
+}
+
+// The counterexamples that dropped the earlier value-fact slice on
+// #354, plus the guarded and possibly-NA idioms, must stay silent: a
+// binding's recorded NA fact can be invalidated by replacement,
+// subsetting, `Ops` dispatch, character coercion of `NaN`, or an
+// argument supplied over a default.
+#[test]
+fn guarded_and_unproven_na_conditions_stay_silent() {
+    for source in [
+        "if (!is.na(x)) 1L",
+        "if (isTRUE(x)) 1L",
+        "if (x) 1L",
+        "if (sum(x)) 1L",
+        "if (any(x)) 1L",
+        "x <- NA; if (x) 1L",
+        "x <- NA; x[1L] <- TRUE; if (x) 1L",
+        "x <- c(NA_real_, 1); if (x[2L]) 1L",
+        "if (NaN == \"NaN\") 1L",
+        "Ops.foo <- function(e1, e2) TRUE; x <- if (flag) base::structure(1, class = \"foo\") else 1; if (x > NA_real_) 1L",
+        "f <- function(x = NA) x; if (f(TRUE)) 1L",
+        "if (any(NA, na.rm = TRUE)) 1L",
+        "if (NA & FALSE) 1L",
+        "if (NA^0) 1L",
+        "any <- function(x, ...) TRUE; if (any(NA)) 1L",
+        "if (NA == x) 1L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
 // The same unions without a NULL member, and non-condition uses of a
 // NULL-carrying union, stay silent: the rule is about condition
 // positions on the possibly-NULL value, nothing else.

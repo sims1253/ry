@@ -178,8 +178,12 @@ expression: rows
   diagnostics: []
 - case: imaginary literal 0+0i as condition stays silent
   diagnostics: []
-- case: NA_complex_ condition stays silent
-  diagnostics: []
+- case: NA_complex_ condition is a proven NA
+  diagnostics:
+    - code: RY001
+      line: 375
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
 - case: length-2 logical if condition is an error
   diagnostics:
     - code: RY002

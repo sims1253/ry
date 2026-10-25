@@ -1,0 +1,84 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: a literal NA if condition always errors
+  diagnostics:
+    - code: RY001
+      line: 3
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+- case: a literal NA while condition always errors
+  diagnostics:
+    - code: RY001
+      line: 7
+      message: "loop condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+- case: typed NA literals are proven NA conditions
+  diagnostics:
+    - code: RY001
+      line: 11
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+    - code: RY001
+      line: 12
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+    - code: RY001
+      line: 13
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+    - code: RY001
+      line: 14
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+- case: a comparison between a typed NA and a plain literal is NA
+  diagnostics:
+    - code: RY001
+      line: 18
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+- case: negating a literal NA keeps it NA
+  diagnostics:
+    - code: RY001
+      line: 22
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+- case: arithmetic between a literal NA and a plain literal is NA
+  diagnostics:
+    - code: RY001
+      line: 26
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+- case: any over a literal NA is NA
+  diagnostics:
+    - code: RY001
+      line: 30
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+- case: sum over a typed NA is NA
+  diagnostics:
+    - code: RY001
+      line: 34
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+- case: a definite RY119 cast is an NA condition as well as a range loss
+  diagnostics:
+    - code: RY119
+      line: 38
+      message: "`as.integer()` converts a proven out-of-range value to `NA_integer_`"
+      severity: warning
+    - code: RY001
+      line: 38
+      message: "`if` condition is always `NA`; R errors on an `NA` condition"
+      severity: warning
+- case: an is.na guard is the idiom and stays silent
+  diagnostics: []
+- case: isTRUE absorbs a possible NA and stays silent
+  diagnostics: []
+- case: "a binding to NA is not proof, because replacement can repair it"
+  diagnostics: []
+- case: NaN compared as a string is not an NA proof
+  diagnostics: []
+- case: any with na.rm removes the NA instead of propagating it
+  diagnostics: []

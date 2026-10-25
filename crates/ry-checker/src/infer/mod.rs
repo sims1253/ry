@@ -427,6 +427,17 @@ fn is_coercible_scalar_condition_mode(t: &RType) -> bool {
 /// A scalar literal with no class and no evaluation beyond itself, so
 /// an operator over it cannot dispatch to an `Ops` method. A negated
 /// numeric literal keeps that property through the primitive `-`.
+/// Whether the expression syntactically contains an `NA` literal: the
+/// cheap, scope-free precondition for the proven-NA proof.
+fn contains_na_literal(expr: &Expr) -> bool {
+    use std::ops::ControlFlow;
+    ry_core::walk::walk_expr(expr, ry_core::walk::Walk::ALL, |node, _| match node {
+        ry_core::walk::AstNode::Expr(Expr::Na(..)) => ControlFlow::Break(()),
+        _ => ControlFlow::Continue(ry_core::walk::Descend::Into),
+    })
+    .is_break()
+}
+
 fn plain_scalar_literal(expr: &Expr) -> bool {
     match expr {
         Expr::Logical(..) | Expr::Integer(..) | Expr::Double(..) | Expr::String(..) => true,
@@ -1349,8 +1360,10 @@ impl Checker {
         // The proven-NA proof reads the scope as it is before the
         // condition evaluates: inferring the condition itself
         // invalidates the ops environment its operators are checked
-        // against.
-        let proven_na = self.proven_na_scalar_mode(cond, scope).is_some();
+        // against. The scope-free NA-leaf scan keeps the common
+        // non-NA condition off the proof's scope lookups entirely.
+        let proven_na =
+            contains_na_literal(cond) && self.proven_na_scalar_mode(cond, scope).is_some();
         self.check_class_equality_operand(cond, scope);
         let diagnostic_start = self.diagnostics.len();
         let previous_boolean_context = self.boolean_context_span.replace(span_of(cond));
@@ -1499,6 +1512,19 @@ impl Checker {
                 }
                 let left_na = self.proven_na_scalar_mode(lhs, scope);
                 let right_na = self.proven_na_scalar_mode(rhs, scope);
+                // A negated literal is only plain when unary `-` itself
+                // is not rebound: `` `-` <- function(e1) ... `` can turn
+                // `-1` into a classed value whose `Ops` method decides
+                // the comparison or arithmetic.
+                let neg_ok = |operand: &Expr| {
+                    !matches!(
+                        operand,
+                        Expr::UnaryOp {
+                            op: UnaryOpKind::Neg,
+                            ..
+                        }
+                    ) || !ops_chooser::operator_rebound(self, "-", scope)
+                };
                 if is_comparison(*op) {
                     // Ordering a complex NA errors in the comparison
                     // itself ("invalid comparison with complex values");
@@ -1509,7 +1535,7 @@ impl Checker {
                         return None;
                     }
                     let plain = |operand: &Expr| {
-                        plain_scalar_literal(operand)
+                        (plain_scalar_literal(operand) && neg_ok(operand))
                             || self.proven_na_scalar_mode(operand, scope).is_some()
                     };
                     if (left_na.is_some() && plain(rhs)) || (right_na.is_some() && plain(lhs)) {
@@ -1522,16 +1548,31 @@ impl Checker {
                     return None;
                 }
                 let other = if left_na.is_some() { rhs } else { lhs };
-                if !plain_numeric_literal(other)
+                let other_is_plain = plain_numeric_literal(other) && neg_ok(other);
+                if !other_is_plain
                     && self
                         .proven_na_scalar_mode(other, scope)
                         .is_none_or(|mode| mode == Mode::Character)
                 {
                     return None;
                 }
+                // R's arithmetic coercion ladder, counting a plain
+                // double literal other operand (`1.5 * NA_integer_` is
+                // a double NA).
+                let other_is_double = other_is_plain
+                    && match other.as_ref() {
+                        Expr::Double(..) => true,
+                        Expr::UnaryOp {
+                            op: UnaryOpKind::Neg,
+                            expr: inner,
+                            ..
+                        } => matches!(inner.as_ref(), Expr::Double(..)),
+                        _ => false,
+                    };
                 Some(match (left_na, right_na) {
                     (Some(Mode::Complex), _) | (_, Some(Mode::Complex)) => Mode::Complex,
                     (Some(Mode::Double), _) | (_, Some(Mode::Double)) => Mode::Double,
+                    _ if other_is_double => Mode::Double,
                     _ => Mode::Integer,
                 })
             }
@@ -1612,11 +1653,19 @@ impl Checker {
         // valid condition mode, and the typed NAs look like ordinary
         // numeric or character scalars. The whole condition being a
         // definite RY119 cast is the same proof through the cast's own
-        // range evidence.
+        // range evidence: RY119 is emitted only by
+        // `emit_integer_range_loss`, exclusively for proven out-of-range
+        // `as.integer()` casts, so a scalar result carrying one at the
+        // condition's own span is `NA_integer_`. A longer cast result
+        // (`as.integer(c(1, 1e10))`) is a length error instead, so the
+        // scalar length is part of the proof.
         let proven_na = proven_na_syntax
-            || self.diagnostics[diagnostic_start..]
-                .iter()
-                .any(|diagnostic| diagnostic.code == "RY119" && diagnostic.span == span_of(cond));
+            || (matches!(ct.length, Length::One)
+                && self.diagnostics[diagnostic_start..]
+                    .iter()
+                    .any(|diagnostic| {
+                        diagnostic.code == "RY119" && diagnostic.span == span_of(cond)
+                    }));
         // Preserve the established if-only logical-vector RY002 rule.
         // Other proven multi-value conditions use RY001, never RY003.
         if ctx.allows_length_rule()

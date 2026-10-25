@@ -205,8 +205,17 @@ fn proven_na_literal_conditions_are_checked() {
     let invalid: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY001").collect();
     assert_eq!(invalid.len(), 1, "{diagnostics:?}");
     assert!(
-        invalid[0].message.contains("NA"),
-        "the message must name the NA condition: {diagnostics:?}"
+        invalid[0].message.contains("always `NA`"),
+        "the message must identify the proven-NA condition: {diagnostics:?}"
+    );
+    // A longer out-of-range cast is a length error, not a scalar NA:
+    // RY119 fires, but the message must not claim an always-NA scalar.
+    let diagnostics = check("if (as.integer(c(1, 1e10))) 1L");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != "RY001" || !d.message.contains("always `NA`")),
+        "{diagnostics:?}"
     );
 }
 
@@ -237,6 +246,10 @@ fn guarded_and_unproven_na_conditions_stay_silent() {
         // Ordering a complex NA errors in the comparison, not as an NA.
         "if (NA_complex_ > 1) 1L",
         "if (1 < NA_complex_) 1L",
+        // A rebound unary `-` can make `-1` a classed value whose Ops
+        // method decides the comparison (the branch runs fine in R).
+        "`-` <- function(e1) base::structure(1, class = \"foo\"); Ops.foo <- function(e1, e2) TRUE; if (NA == -1) 1L",
+        "`-` <- function(e1) base::structure(1, class = \"foo\"); Ops.foo <- function(e1, e2) TRUE; if (NA + -1.5) 1L",
     ] {
         let diagnostics = check(source);
         assert!(

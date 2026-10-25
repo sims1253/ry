@@ -345,7 +345,9 @@ fn non_null_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
     match conjunct {
         fact if is_non_null_fact(&fact) => vec![fact],
         Narrowing::Compound { base, on_true, .. }
-            if matches!(*base, Narrowing::None) && on_true.iter().all(is_non_null_fact) =>
+            if matches!(*base, Narrowing::None)
+                && !on_true.is_empty()
+                && on_true.iter().all(is_non_null_fact) =>
         {
             on_true
         }
@@ -785,7 +787,8 @@ fn apply_single_narrowing_branch<'a>(
                     return Some(var.as_str());
                 }
                 // `is.null(x)` leaves a NULL default's type unchanged but
-                // proves it on this path, so a later `Supplied` keeps it.
+                // proves it on this path, so a later `Supplied` keeps it
+                // (see the `Supplied` arm's narrowed-binding guard).
                 if target.mode == Mode::Null
                     && existing.mode == Mode::Null
                     && scope.is_default_parameter(var)
@@ -865,6 +868,9 @@ fn apply_single_narrowing_branch<'a>(
             scope.clear_loop_vector(var);
         }
         // Only the omitted-call type goes; an earlier guard's fact stays.
+        // The `is.null(x)` NULL-default proof in the Positive arm above
+        // relies on this: it marks `x` narrowed so that a nested
+        // `if (!missing(x))` keeps the NULL for `f(NULL)`.
         (Narrowing::Supplied { var }, NarrowingBranch::Then)
             if scope.is_default_parameter(var) && !scope.narrowed_bindings.contains(var) =>
         {
@@ -1292,7 +1298,10 @@ impl Checker {
             } => self.tested_names(expr, !truth, scope),
             _ if truth => {
                 let mut names = BTreeSet::new();
-                self.evaluated_names(cond, &mut names);
+                let _ = self.visit_evaluated_names(cond, UnseenReads::Read, &mut |name| {
+                    names.insert(name.to_owned());
+                    ControlFlow::Continue(())
+                });
                 let decided = self.extract_type_narrowing(cond, scope);
                 names.retain(|name| !decided.mentions(name));
                 names
@@ -1301,11 +1310,17 @@ impl Checker {
         }
     }
 
-    /// Names `expr` evaluates. Field names, assignment targets, closures,
-    /// formulas, and arguments a stub quotes, captures, or evaluates in a
-    /// data mask (`quote(x)`, `substitute(x)`, `filter(df, x > 1)`, where `x`
-    /// may be a column) are not reads.
-    fn evaluated_names(&self, expr: &Expr, names: &mut BTreeSet<String>) {
+    /// Calls `on_read` with each name `expr` evaluates, until it breaks.
+    /// Field names, assignment targets, closures, formulas, and arguments a
+    /// stub quotes, captures, or evaluates in a data mask (`quote(x)`,
+    /// `substitute(x)`, `filter(df, x > 1)`, where `x` may be a column) are
+    /// not reads. `unseen` decides the calls ry cannot see into.
+    pub(crate) fn visit_evaluated_names(
+        &self,
+        expr: &Expr,
+        unseen: UnseenReads,
+        on_read: &mut dyn FnMut(&str) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
         ry_core::stack::grow(|| {
             let walk = Walk {
                 assign_targets: false,
@@ -1314,20 +1329,27 @@ impl Checker {
                 fn_bodies: false,
                 ..Walk::ALL
             };
-            let _ = walk_expr(expr, walk, |node, _| match node {
+            let unseen_call = || match unseen {
+                UnseenReads::Read => ControlFlow::Continue(Descend::Into),
+                UnseenReads::Skip => ControlFlow::Continue(Descend::Skip),
+            };
+            walk_expr(expr, walk, |node, _| match node {
                 AstNode::Expr(Expr::Ident { name, .. }) => {
-                    names.insert(name.clone());
-                    ControlFlow::<(), _>::Continue(Descend::Into)
+                    on_read(name)?;
+                    ControlFlow::Continue(Descend::Into)
                 }
                 AstNode::Expr(Expr::Call { func, args, .. }) => {
                     let Some(callee) = ident_name(func) else {
-                        return ControlFlow::Continue(Descend::Into);
+                        return unseen_call();
                     };
                     if crate::semantic_lists::is_quoting_form(callee) {
                         return ControlFlow::Continue(Descend::Skip);
                     }
+                    if unseen == UnseenReads::Skip && crate::collect::probes_promise(func) {
+                        return ControlFlow::Continue(Descend::Skip);
+                    }
                     let Some(signature) = self.resolve_typeshed_sig_ref(callee) else {
-                        return ControlFlow::Continue(Descend::Into);
+                        return unseen_call();
                     };
                     let bindings = match_params(&signature.params, args);
                     for (index, argument) in args.iter().enumerate() {
@@ -1341,15 +1363,28 @@ impl Checker {
                                     | EvalMode::TidySelect
                             )
                         ) {
-                            self.evaluated_names(&argument.value, names);
+                            self.visit_evaluated_names(&argument.value, unseen, on_read)?;
                         }
                     }
                     ControlFlow::Continue(Descend::Skip)
                 }
                 _ => ControlFlow::Continue(Descend::Into),
-            });
+            })
         })
     }
+}
+
+/// How [`Checker::visit_evaluated_names`] treats what ry cannot see into:
+/// a call no stub resolves (or whose callee is computed) and `missing(x)`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UnseenReads {
+    /// Such a call reads its callee and arguments, and `missing(x)` reads
+    /// `x`: the branch analysis counts every possible read, so a test it
+    /// cannot decide drops a default's omitted-call type (#710).
+    Read,
+    /// Such a call is opaque, and `missing(x)` probes without reading:
+    /// a default that may force a parameter errs toward silence (#790).
+    Skip,
 }
 
 #[cfg(test)]

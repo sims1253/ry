@@ -1758,7 +1758,7 @@ fn is_parameter(expression: &Expr, parameter: &str) -> bool {
 
 /// Whether `func` is `missing`, which inspects whether a promise was
 /// supplied without forcing it: its direct symbol argument is no use.
-fn probes_promise(func: &Expr) -> bool {
+pub(crate) fn probes_promise(func: &Expr) -> bool {
     matches!(ident_name(func).map(bare_name), Some("missing"))
 }
 
@@ -1840,51 +1840,14 @@ impl Checker {
             .collect()
     }
 
-    /// Whether evaluating `expr` may read `name` anywhere. As in
-    /// `evaluated_names` (infer/narrow.rs), field names, assignment targets,
-    /// closures, formulas, and arguments a stub quotes, captures, or
-    /// evaluates in a data mask are no read, and neither is `missing(name)`.
-    /// Unlike there, a call no stub resolves is opaque, erring toward
-    /// silence.
+    /// Whether evaluating `expr` may read `name` anywhere ry can see.
     fn evaluates_name(&self, expr: &Expr, name: &str) -> bool {
-        let walk = Walk {
-            assign_targets: false,
-            assign_operands: false,
-            dollar_args: false,
-            fn_bodies: false,
-            ..Walk::ALL
-        };
-        walk_expr(expr, walk, |node, _| match node {
-            AstNode::Expr(Expr::Ident { name: read, .. }) if read == name => ControlFlow::Break(()),
-            AstNode::Expr(Expr::Call { func, args, .. }) => {
-                let Some(signature) = ident_name(func)
-                    .filter(|callee| {
-                        !crate::semantic_lists::is_quoting_form(callee) && !probes_promise(func)
-                    })
-                    .and_then(|callee| self.resolve_typeshed_sig_ref(callee))
-                else {
-                    return ControlFlow::Continue(Descend::Skip);
-                };
-                let bindings = match_params(&signature.params, args);
-                let reads = args.iter().enumerate().any(|(index, argument)| {
-                    !matches!(
-                        eval_mode_for_arg(signature, &bindings, index),
-                        Some(
-                            EvalMode::QuotedSymbol
-                                | EvalMode::QuotedExpression
-                                | EvalMode::CapturesPromise
-                                | EvalMode::DataMask
-                                | EvalMode::TidySelect
-                        )
-                    ) && self.evaluates_name(&argument.value, name)
-                });
-                if reads {
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(Descend::Skip)
-                }
+        self.visit_evaluated_names(expr, UnseenReads::Skip, &mut |read| {
+            if read == name {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
             }
-            _ => ControlFlow::Continue(Descend::Into),
         })
         .is_break()
     }

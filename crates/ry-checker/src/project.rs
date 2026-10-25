@@ -131,6 +131,9 @@ struct NamespacePool {
     superassigned: HashSet<String>,
 }
 
+/// A namespace pool shared with pass-3 emitters: (known_vars, superassigned).
+type SharedNamespacePool = (Arc<HashSet<String>>, Arc<HashSet<String>>);
+
 /// Project-wide table facts that can change any file's diagnostics without
 /// changing a function name or return slot, so a change re-emits every file.
 #[derive(Default, PartialEq)]
@@ -860,7 +863,7 @@ impl Project {
         // Pass 3 never mutates them.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let package_known_vars = Arc::new(fn_table.known_vars.clone());
-        let namespaces: HashMap<&str, (Arc<HashSet<String>>, Arc<HashSet<String>>)> = tables
+        let namespaces: HashMap<&str, SharedNamespacePool> = tables
             .namespaces
             .iter()
             .map(|(package, pool)| {

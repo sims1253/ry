@@ -2429,11 +2429,12 @@ fn rcpp_load_module_true_binds_the_names_declared_in_src() {
             .map(|diagnostic| diagnostic.message)
             .collect()
     };
+    // An `#ifdef` arm with balanced brackets still reads, quoted `(` aside.
     let module = "#include <Rcpp.h>\nusing namespace Rcpp;\n\
         // class_<Fooo>(\"Fooo\") stays a comment\n\
         RCPP_MODULE(mod) {\n  using namespace Rcpp;\n\
         class_<Foo>(\"Foo\")\n    .constructor<int>()\n    .method(\"size\", &Foo::size)\n\
-        #ifdef EXTRA\n    .method(\"extra\", &Foo::extra)\n#endif\n  ;\n\
+        #ifdef EXTRA\n    .method(\"extra\", &Foo::extra, \"returns (x\")\n#endif\n  ;\n\
         Rcpp::function(\"twice\", &twice, \"doubles\");\n}\n";
     for load in [
         "loadModule(\"mod\", TRUE)\n",
@@ -2449,7 +2450,8 @@ fn rcpp_load_module_true_binds_the_names_declared_in_src() {
         assert_eq!(check(load, module), Vec::<String>::new(), "{load}");
     }
     // So does a body ry cannot read in full: a helper call may declare more,
-    // and an `#if` arm may close the module early.
+    // an `#if` arm may close the module early, and a stray `#endif` leaves
+    // the conditional regions unknown.
     for body in [
         "class_<Foo>(\"Foo\");\n  expose_more();",
         "class_<Foo>(name);",
@@ -2457,6 +2459,7 @@ fn rcpp_load_module_true_binds_the_names_declared_in_src() {
         "function(\"Foo\", &foo), function(\"twice\", &twice);",
         "class_<Foo>(\"Fo\" \"o\");\n  function(\"twice\", &twice);",
         "class_<Foo>(\"Foo\");\n#if 0\n}\n#endif\n  function(\"twice\", &twice);",
+        "class_<Foo>(\"Foo\");\n#endif\n  function(\"twice\", &twice);",
     ] {
         let cpp = format!("RCPP_MODULE(mod) {{\n  {body}\n}}\n");
         let load = "loadModule(\"mod\", TRUE)\n";

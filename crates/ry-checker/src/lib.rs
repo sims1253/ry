@@ -2114,8 +2114,12 @@ impl Checker {
         self.known_vars = known_vars;
     }
 
-    pub(crate) fn set_namespace_superassigned(&mut self, superassigned: Arc<HashSet<String>>) {
-        self.namespace_superassigned = Some(superassigned);
+    /// `None` falls back to `fn_table.superassigned`.
+    pub(crate) fn set_namespace_superassigned(
+        &mut self,
+        superassigned: Option<Arc<HashSet<String>>>,
+    ) {
+        self.namespace_superassigned = superassigned;
     }
 
     /// Install runtime stubs for this checker. A matching package replaces

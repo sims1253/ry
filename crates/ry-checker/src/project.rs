@@ -904,16 +904,15 @@ impl Project {
                     Arc::clone(&return_slots),
                 );
                 emitter.set_shared_declarations(Arc::clone(&declarations));
-                match self
+                let namespace = self
                     .source_package(path)
-                    .and_then(|package| namespaces.get(package))
-                {
-                    Some((known_vars, superassigned)) => {
-                        emitter.set_shared_known_vars(Arc::clone(known_vars));
-                        emitter.set_namespace_superassigned(Arc::clone(superassigned));
-                    }
-                    None => emitter.set_shared_known_vars(Arc::clone(&package_known_vars)),
-                }
+                    .and_then(|package| namespaces.get(package));
+                emitter.set_shared_known_vars(Arc::clone(
+                    namespace.map_or(&package_known_vars, |(known_vars, _)| known_vars),
+                ));
+                emitter.set_namespace_superassigned(
+                    namespace.map(|(_, superassigned)| Arc::clone(superassigned)),
+                );
                 emitter.set_shared_loaded(Arc::clone(&loaded));
                 emitter.set_bare_loaded(
                     self.bare_loaded

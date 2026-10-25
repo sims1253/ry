@@ -302,8 +302,10 @@ struct TagWalker<'a> {
     bytes: &'a [u8],
     pos: usize,
     /// Reference table in encounter order (1-based on the wire). Only
-    /// symbols keep their name; other reference objects hold `None`.
-    refs: Vec<Option<String>>,
+    /// symbols keep their name, shared so a stream with millions of
+    /// references to one long-named symbol does not copy it per use;
+    /// other reference objects hold `None`.
+    refs: Vec<Option<std::rc::Rc<str>>>,
 }
 
 const MAX_WALK_DEPTH: usize = 256;
@@ -335,7 +337,7 @@ impl<'a> TagWalker<'a> {
                     }
                     if word & HAS_TAG != 0 {
                         let tag = self.skip_item(1)?.ok_or(())?;
-                        names.insert(tag);
+                        names.insert(tag.to_string());
                     }
                     self.skip_item(1)?; // the bound value
                 }
@@ -404,7 +406,7 @@ impl<'a> TagWalker<'a> {
     /// and references to earlier symbols, `None` for everything else.
     /// Pairlist-family CDRs (and a closure's body) are tail positions in
     /// R's writer, so they continue the loop instead of recursing.
-    fn skip_item(&mut self, depth: usize) -> Result<Option<String>, ()> {
+    fn skip_item(&mut self, depth: usize) -> Result<Option<std::rc::Rc<str>>, ()> {
         if depth > MAX_WALK_DEPTH {
             return Err(());
         }
@@ -434,7 +436,12 @@ impl<'a> TagWalker<'a> {
                 1 => {
                     let slot = self.refs.len();
                     self.refs.push(None);
-                    let name = self.charsxp_item()?;
+                    let name = self.charsxp_bytes()?.map(|bytes| -> std::rc::Rc<str> {
+                        match String::from_utf8_lossy(bytes) {
+                            std::borrow::Cow::Borrowed(text) => text.into(),
+                            std::borrow::Cow::Owned(text) => text.into_boxed_str().into(),
+                        }
+                    });
                     self.refs[slot] = name.clone();
                     return Ok(name);
                 }
@@ -456,7 +463,7 @@ impl<'a> TagWalker<'a> {
                     let count = self.vec_len()?;
                     self.check_count(count)?;
                     for _ in 0..count {
-                        self.charsxp_item()?;
+                        self.charsxp_bytes()?;
                     }
                     return Ok(None);
                 }
@@ -519,7 +526,7 @@ impl<'a> TagWalker<'a> {
                 let count = self.vec_len()?;
                 self.check_count(count)?;
                 for _ in 0..count {
-                    self.charsxp_item()?;
+                    self.charsxp_bytes()?;
                 }
             }
             19 | 20 => {
@@ -557,8 +564,9 @@ impl<'a> TagWalker<'a> {
         Ok(())
     }
 
-    /// Skip a CHARSXP item, returning its text (`None` for NA_STRING).
-    fn charsxp_item(&mut self) -> Result<Option<String>, ()> {
+    /// Skip a CHARSXP item, returning its borrowed bytes (`None` for
+    /// NA_STRING). Callers that only skip never materialize the text.
+    fn charsxp_bytes(&mut self) -> Result<Option<&'a [u8]>, ()> {
         let word = self.u32()?;
         if word & 0xff != 9 {
             return Err(());
@@ -567,8 +575,7 @@ impl<'a> TagWalker<'a> {
         if len < 0 {
             return Ok(None);
         }
-        let bytes = self.take(usize::try_from(len).map_err(|_| ())?)?;
-        Ok(Some(String::from_utf8_lossy(bytes).into_owned()))
+        Ok(Some(self.take(usize::try_from(len).map_err(|_| ())?)?))
     }
 
     /// BCODESXP: a rep count, then code and constants in the bytecode

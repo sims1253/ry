@@ -161,7 +161,9 @@ async fn parent_config_baseline_keys_match_in_the_editor() {
 
 /// A parent config's `include-build-ignored` brings a package's
 /// `.Rbuildignore`d `vendor/` tree into the index, so the caller's binding
-/// resolves. Without the include, the binding stays unresolved.
+/// resolves. Without the include, the binding stays unresolved. The caller
+/// is a script outside `R/`: indexed vendor code never joins the package
+/// namespace that `R/` code resolves against (#804).
 #[tokio::test]
 async fn parent_config_include_build_ignored_reindexes_vendor_code() {
     for (config, unresolved) in [
@@ -180,11 +182,11 @@ async fn parent_config_include_build_ignored_reindexes_vendor_code() {
             .write_file("pkgA/vendor/consts.R", "answer <- 42L\n")
             .unwrap();
         fixture
-            .write_file("pkgA/R/main.R", "x <- answer + 1L\n")
+            .write_file("pkgA/inst/main.R", "x <- answer + 1L\n")
             .unwrap();
         let folder = fixture.path("pkgA");
         let (mut session, server) = spawn_session(&[&folder], json!({}), None).await;
-        let main_uri = file_uri(&fixture.path("pkgA/R/main.R"));
+        let main_uri = file_uri(&fixture.path("pkgA/inst/main.R"));
         sync_barrier(&mut session, &main_uri).await;
         let publish =
             harness::open_published(&mut session, &main_uri, 1, "x <- answer + 1L\n").await;

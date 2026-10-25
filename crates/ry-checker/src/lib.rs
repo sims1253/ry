@@ -1458,6 +1458,9 @@ pub struct Checker {
     /// emitted. Project checking installs either a package R/ pool or the
     /// current script's own bindings.
     known_vars: Arc<HashSet<String>>,
+    /// `<<-` targets of a package's `R/` files, replacing
+    /// `fn_table.superassigned` when the file being emitted is one of them.
+    namespace_superassigned: Option<Arc<HashSet<String>>>,
     // Inferred return types, refined by the fixpoint loop. Same Arc-shared
     // story as `fn_table`.
     pub(crate) return_slots: Arc<ReturnSlots>,
@@ -1723,6 +1726,7 @@ impl Checker {
             in_dead_arm: false,
             fn_table,
             known_vars: Arc::new(HashSet::new()),
+            namespace_superassigned: None,
             return_slots,
             refinement_reads: std::cell::RefCell::new(None),
             uncomputed_returns: FxSet::default(),
@@ -1942,8 +1946,12 @@ impl Checker {
             self.reference_capture = Some(Box::new(reference_facts::ReferenceCapture::new(file)));
             self.start_reference_scope(&mut scope, whole_file_span(&file.source));
         }
-        self.superassigned_captures
-            .push(self.fn_table.superassigned.clone());
+        let superassigned = self
+            .namespace_superassigned
+            .as_deref()
+            .unwrap_or(&self.fn_table.superassigned)
+            .clone();
+        self.superassigned_captures.push(superassigned);
         self.walk_block(&file.stmts, &mut scope, None);
         self.superassigned_captures.pop();
         if encoding_flagged || !file.parse_errors.is_empty() {
@@ -2104,6 +2112,14 @@ impl Checker {
 
     pub(crate) fn set_shared_known_vars(&mut self, known_vars: Arc<HashSet<String>>) {
         self.known_vars = known_vars;
+    }
+
+    /// `None` falls back to `fn_table.superassigned`.
+    pub(crate) fn set_namespace_superassigned(
+        &mut self,
+        superassigned: Option<Arc<HashSet<String>>>,
+    ) {
+        self.namespace_superassigned = superassigned;
     }
 
     /// Install runtime stubs for this checker. A matching package replaces

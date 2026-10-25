@@ -121,12 +121,27 @@ pub(crate) struct CollectedFile {
     pub(crate) loaded: HashSet<String>,
 }
 
+/// A package namespace's share of the project-wide binding pools, built from
+/// its `R/` files only. R builds a namespace from `R/`, while tests and
+/// scripts run in their own environments, so neither their top-level
+/// assignments nor their `<<-` writes bind names for package code.
+#[derive(Default, PartialEq)]
+struct NamespacePool {
+    known_vars: HashSet<String>,
+    superassigned: HashSet<String>,
+}
+
+/// A namespace pool shared with pass-3 emitters: (known_vars, superassigned).
+type SharedNamespacePool = (Arc<HashSet<String>>, Arc<HashSet<String>>);
+
 /// Project-wide table facts that can change any file's diagnostics without
 /// changing a function name or return slot, so a change re-emits every file.
 #[derive(Default, PartialEq)]
 struct TableSnapshot {
     /// Non-function bindings across files (RY010).
     known_vars: HashSet<String>,
+    /// Per package, the bindings of its `R/` files only.
+    namespaces: HashMap<String, NamespacePool>,
     /// Another file's registration, or literal binding, changes whether a
     /// method gets its dispatch bindings.
     registered_s3_methods: FxSet<String>,
@@ -149,9 +164,10 @@ struct TableSnapshot {
 }
 
 impl TableSnapshot {
-    fn of(table: &FnTable) -> Self {
+    fn of(table: &FnTable, namespaces: HashMap<String, NamespacePool>) -> Self {
         Self {
             known_vars: table.known_vars.clone(),
+            namespaces,
             registered_s3_methods: table.registered_s3_methods.clone(),
             unrecorded_global_literals: table.unrecorded_global_literals.clone(),
             capture_rebounds: table.rebound_after_capture.clone(),
@@ -823,7 +839,7 @@ impl Project {
                 .collect()
         };
 
-        let tables = TableSnapshot::of(&self.fn_table);
+        let tables = TableSnapshot::of(&self.fn_table, self.namespaces());
         let must_emit: HashSet<&str> = if !self.has_prev_emit
             || loaded_changed
             || self.prev_tables != tables
@@ -847,6 +863,17 @@ impl Project {
         // Pass 3 never mutates them.
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let package_known_vars = Arc::new(fn_table.known_vars.clone());
+        let namespaces: HashMap<&str, SharedNamespacePool> = tables
+            .namespaces
+            .iter()
+            .map(|(package, pool)| {
+                let shared = (
+                    Arc::new(pool.known_vars.clone()),
+                    Arc::new(pool.superassigned.clone()),
+                );
+                (package.as_str(), shared)
+            })
+            .collect();
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
         let loaded = Arc::new(std::mem::take(&mut self.loaded));
         let user_stubs = Arc::clone(&self.user_stubs);
@@ -880,7 +907,15 @@ impl Project {
                     Arc::clone(&return_slots),
                 );
                 emitter.set_shared_declarations(Arc::clone(&declarations));
-                emitter.set_shared_known_vars(Arc::clone(&package_known_vars));
+                let namespace = self
+                    .source_package(path)
+                    .and_then(|package| namespaces.get(package));
+                emitter.set_shared_known_vars(Arc::clone(
+                    namespace.map_or(&package_known_vars, |(known_vars, _)| known_vars),
+                ));
+                emitter.set_namespace_superassigned(
+                    namespace.map(|(_, superassigned)| Arc::clone(superassigned)),
+                );
                 emitter.set_shared_loaded(Arc::clone(&loaded));
                 emitter.set_bare_loaded(
                     self.bare_loaded
@@ -1032,6 +1067,28 @@ impl Project {
             .values()
             .flat_map(|known_vars| known_vars.iter().cloned())
             .collect()
+    }
+
+    fn source_package(&self, path: &str) -> Option<&str> {
+        self.package_facts.get(path)?.source_package.as_deref()
+    }
+
+    /// Each package's [`NamespacePool`]. This relies on workspace discovery
+    /// attaching `source_package` only to files under the package's `R/`
+    /// directory (`is_package_r_file` in ry-workspace); a test or `inst/`
+    /// file tagged with it would leak its bindings back into the namespace.
+    fn namespaces(&self) -> HashMap<String, NamespacePool> {
+        let mut pools: HashMap<String, NamespacePool> = HashMap::new();
+        for (path, _) in &self.files {
+            if let Some(package) = self.source_package(path) {
+                let pool = pools.entry(package.to_string()).or_default();
+                let collected = &self.collected_files[path].fn_table;
+                pool.known_vars.extend(collected.known_vars.iter().cloned());
+                pool.superassigned
+                    .extend(collected.superassigned.iter().cloned());
+            }
+        }
+        pools
     }
 }
 
@@ -1539,5 +1596,81 @@ mod tests {
         plain.add_file("a.R".to_string(), parse_file("a.R", src));
         plain.check();
         assert!(plain.take_scope_records().is_empty());
+    }
+
+    /// A package whose `R/` files carry `source_package` facts, plus one
+    /// tinytest file outside `R/`.
+    fn package_with_tinytest(def: &str, test: &str) -> Project {
+        let mut project = Project::new();
+        project.set_package_facts(
+            ["R/def.R", "R/use.R"]
+                .map(|path| {
+                    let facts = ry_workspace::PackageFacts {
+                        source_package: Some("mypkg".into()),
+                        ..Default::default()
+                    };
+                    (path.to_string(), facts)
+                })
+                .into(),
+        );
+        project.add_file("R/def.R".into(), parse_file("R/def.R", def));
+        project.add_file(
+            "R/use.R".into(),
+            parse_file("R/use.R", "f <- function() c(in_ns, leaked)\n"),
+        );
+        project.add_file(
+            "inst/tinytest/test_a.R".into(),
+            parse_file("inst/tinytest/test_a.R", test),
+        );
+        project
+    }
+
+    fn unbound_names(diagnostics: &[(String, Vec<Diagnostic>)], path: &str) -> Vec<String> {
+        diagnostics
+            .iter()
+            .filter(|(found, _)| found == path)
+            .flat_map(|(_, found)| found)
+            .filter(|d| d.code == "RY010")
+            .map(|d| d.message.clone())
+            .collect()
+    }
+
+    #[test]
+    fn package_r_code_does_not_see_bindings_from_files_outside_r() {
+        // R builds the namespace from `R/` only; a tinytest file runs in
+        // its own environment, so its top-level `leaked` never binds in
+        // `f`. The test file still sees the namespace's `in_ns`.
+        // A `<<-` there writes outside the namespace too.
+        for test in [
+            "leaked <- 1L\nin_ns + leaked\n",
+            "h <- function() leaked <<- 1L\nin_ns\n",
+        ] {
+            let mut project = package_with_tinytest("in_ns <- 1L\n", test);
+            let diagnostics = project.check();
+            let use_r = unbound_names(&diagnostics, "R/use.R");
+            assert_eq!(use_r.len(), 1, "{test:?}: {use_r:?}");
+            assert!(use_r[0].contains("`leaked`"), "{test:?}: {use_r:?}");
+            assert!(unbound_names(&diagnostics, "inst/tinytest/test_a.R").is_empty());
+        }
+        // Control: a `<<-` in another `R/` file still binds for package code.
+        let mut project =
+            package_with_tinytest("in_ns <- 1L\ng <- function() leaked <<- 1L\n", "in_ns\n");
+        assert!(unbound_names(&project.check(), "R/use.R").is_empty());
+    }
+
+    #[test]
+    fn removing_a_namespace_binding_re_emits_r_files_when_a_test_still_binds_it() {
+        // Dropping `in_ns` from `R/def.R` leaves the project-wide pool
+        // unchanged (the test file binds it too), but `R/use.R` must still
+        // re-emit against the smaller namespace.
+        let mut project = package_with_tinytest("in_ns <- 1L\nleaked <- 1L\n", "in_ns <- 1L\n");
+        assert!(unbound_names(&project.check(), "R/use.R").is_empty());
+        project.update_file(
+            "R/def.R".into(),
+            parse_file("R/def.R", "leaked <- 1L\n").into(),
+        );
+        let use_r = unbound_names(&project.check_incremental(), "R/use.R");
+        assert_eq!(use_r.len(), 1, "{use_r:?}");
+        assert!(use_r[0].contains("`in_ns`"), "{use_r:?}");
     }
 }

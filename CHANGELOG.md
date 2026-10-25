@@ -277,6 +277,9 @@ All notable changes to ry are documented in this file.
   `is.numeric()` on a Date, POSIXt, difftime or factor value, or under a
   failing `inherits()` test of a class the value is known to carry, is no
   longer reported: R never runs it.
+- In a package, top-level assignments and `<<-` writes in tests, `inst/` and
+  other files outside `R/` no longer bind names for `R/` code, which restores
+  RY010s in terra hidden by tinytest variables (#804).
 - A built-in guard (`is.null(x)`, `length(x) == 1`, `missing(x)`, ...)
   whose callee a project or local function redefines, also as
   `` `is.null` <- ``, no longer narrows `x`, and RY032 no longer trusts a

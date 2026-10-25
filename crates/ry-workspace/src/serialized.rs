@@ -433,15 +433,16 @@ impl<'a> TagWalker<'a> {
                 // namespace, missing argument, unbound value, NILVALUE.
                 241 | 242 | 250 | 251 | 252 | 253 | 254 => return Ok(None),
                 // SYMSXP: a bare type word and the print-name CHARSXP.
+                // A print name that is not valid UTF-8 (a Latin-1 or
+                // native-encoded symbol) cannot be reported faithfully,
+                // so the walk fails and the scope degrades instead.
                 1 => {
                     let slot = self.refs.len();
                     self.refs.push(None);
-                    let name = self.charsxp_bytes()?.map(|bytes| -> std::rc::Rc<str> {
-                        match String::from_utf8_lossy(bytes) {
-                            std::borrow::Cow::Borrowed(text) => text.into(),
-                            std::borrow::Cow::Owned(text) => text.into_boxed_str().into(),
-                        }
-                    });
+                    let name = match self.charsxp_bytes()? {
+                        Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|_| ())?.into()),
+                        None => None,
+                    };
                     self.refs[slot] = name.clone();
                     return Ok(name);
                 }
@@ -590,7 +591,12 @@ impl<'a> TagWalker<'a> {
         if depth > MAX_WALK_DEPTH {
             return Err(());
         }
-        self.skip_item(depth + 1)?; // instruction stream (INTSXP item)
+        // The instruction stream is always an INTSXP item; anything
+        // else means the walk has desynchronized from the writer.
+        if self.peek_u32()? & 0xff != 13 {
+            return Err(());
+        }
+        self.skip_item(depth + 1)?;
         let count = usize::try_from(self.i32()?).map_err(|_| ())?;
         self.check_count(count)?;
         for _ in 0..count {
@@ -1007,6 +1013,12 @@ mod tests {
         assert_eq!(enumerate_workspace_tags(&overlong), None);
         assert_eq!(enumerate_workspace_tags(b""), None);
         assert_eq!(enumerate_workspace_tags(b"X\n"), None);
+        // A Latin-1 print name (0xE9 alone is invalid UTF-8) cannot be
+        // reported faithfully, so the walk fails instead of mangling it.
+        let mut latin1 = payload.to_vec();
+        let at = latin1.windows(4).position(|w| w == b"only").unwrap();
+        latin1[at] = 0xe9;
+        assert_eq!(enumerate_workspace_tags(&latin1), None);
     }
 
     #[test]

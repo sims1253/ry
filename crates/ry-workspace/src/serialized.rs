@@ -170,11 +170,32 @@ fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
         read_end: Cell::new(0),
     };
     let parsed = match rds2rust::read_rds_lazy_with_input(&input) {
-        Ok(parsed) => parsed,
+        Ok(parsed) => Some(parsed),
         Err(error) if is_resource_limit(&error) => {
-            return unavailable(InventoryFailure::ParserResourceLimit);
+            // The tag walker skips values instead of materializing them,
+            // so a stream beyond the parser's nesting limit can still
+            // enumerate; only if it also fails is this a resource limit.
+            return match enumerate_workspace_tags(payload) {
+                Some(bindings) => SerializedInventory {
+                    bindings,
+                    failure: None,
+                },
+                None => unavailable(InventoryFailure::ParserResourceLimit),
+            };
         }
-        Err(_) => return unavailable(InventoryFailure::Unreadable),
+        Err(_) => None,
+    };
+    let Some(parsed) = parsed else {
+        // rds2rust 0.3 desynchronizes on an external pointer's payload and
+        // can fail outright; the tag walker below reads the format the way
+        // R writes it and recovers the full inventory (#714).
+        return match enumerate_workspace_tags(payload) {
+            Some(bindings) => SerializedInventory {
+                bindings,
+                failure: None,
+            },
+            None => unavailable(InventoryFailure::Unreadable),
+        };
     };
     let bindings = match parsed.object.into_concrete() {
         rds2rust::RObject::Pairlist(elements) => elements
@@ -187,10 +208,23 @@ fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
     // A workspace ends with its pairlist terminator. rds2rust 0.3 leaves an
     // external pointer's payload unread and stops at a premature terminator,
     // so a stream it did not read to the end is only a partial inventory.
-    let complete = input.read_end.get() == payload.len();
-    SerializedInventory {
-        bindings,
-        failure: (!complete).then_some(InventoryFailure::Unsupported),
+    // Recover the missing names with the tag walker; if that also fails,
+    // keep the names read so far but report the scope as degraded.
+    if input.read_end.get() == payload.len() {
+        return SerializedInventory {
+            bindings,
+            failure: None,
+        };
+    }
+    match enumerate_workspace_tags(payload) {
+        Some(full) => SerializedInventory {
+            bindings: full,
+            failure: None,
+        },
+        None => SerializedInventory {
+            bindings,
+            failure: Some(InventoryFailure::Unsupported),
+        },
     }
 }
 
@@ -233,6 +267,368 @@ fn is_resource_limit(error: &rds2rust::Error) -> bool {
                 || message.contains(" overflow while parsing ")
         }
         _ => false,
+    }
+}
+
+/// Enumerate a workspace's top-level pairlist tags by walking the XDR
+/// stream the way R's serializer writes it, skipping every value. This is
+/// the fallback for streams rds2rust 0.3 cannot finish: it returns NULL
+/// for an external pointer without consuming the protected-value and tag
+/// items R writes after it, which desynchronizes everything that follows
+/// (#714). The result is trusted only when the walk ends exactly at the
+/// pairlist terminator with no bytes left over; any surprise yields
+/// `None` and the caller keeps its degraded outcome. Payload shapes mirror
+/// `WriteItem`/`WriteBC` in R's serialize.c (format versions 2 and 3).
+fn enumerate_workspace_tags(payload: &[u8]) -> Option<HashSet<String>> {
+    let mut walker = TagWalker {
+        bytes: payload,
+        pos: 0,
+        refs: Vec::new(),
+    };
+    walker.enumerate().ok()
+}
+
+/// Bounds-checked cursor over an XDR serialization stream. Only symbol
+/// names are materialized (pairlist tags and the reference table); every
+/// other payload is skipped by length. Nesting is depth-capped and
+/// pairlist spines are walked iteratively, so hostile input can fail the
+/// walk but cannot overflow the stack or loop without consuming bytes.
+struct TagWalker<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    /// Reference table in encounter order (1-based on the wire). Only
+    /// symbols keep their name; other reference objects hold `None`.
+    refs: Vec<Option<String>>,
+}
+
+const MAX_WALK_DEPTH: usize = 256;
+
+impl<'a> TagWalker<'a> {
+    fn enumerate(&mut self) -> Result<HashSet<String>, ()> {
+        if self.take(2)? != b"X\n" {
+            return Err(());
+        }
+        let version = self.i32()?;
+        self.i32()?;
+        self.i32()?;
+        if version == 3 {
+            let len = usize::try_from(self.i32()?).map_err(|_| ())?;
+            self.take(len)?;
+        } else if version != 2 {
+            return Err(());
+        }
+        let mut names = HashSet::new();
+        loop {
+            let word = self.u32()?;
+            match word & 0xff {
+                254 => break, // NILVALUE terminator
+                2 => {
+                    if word & HAS_ATTR != 0 {
+                        self.skip_item(1)?;
+                    }
+                    if word & HAS_TAG != 0 {
+                        let tag = self.skip_item(1)?.ok_or(())?;
+                        names.insert(tag);
+                    }
+                    self.skip_item(1)?; // the bound value
+                }
+                _ => return Err(()),
+            }
+        }
+        if self.pos != self.bytes.len() {
+            return Err(());
+        }
+        Ok(names)
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8], ()> {
+        let end = self.pos.checked_add(len).ok_or(())?;
+        let chunk = self.bytes.get(self.pos..end).ok_or(())?;
+        self.pos = end;
+        Ok(chunk)
+    }
+
+    fn u32(&mut self) -> Result<u32, ()> {
+        Ok(u32::from_be_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
+    fn i32(&mut self) -> Result<i32, ()> {
+        Ok(self.u32()? as i32)
+    }
+
+    fn peek_u32(&self) -> Result<u32, ()> {
+        Ok(u32::from_be_bytes(
+            self.bytes
+                .get(self.pos..self.pos + 4)
+                .ok_or(())?
+                .try_into()
+                .unwrap(),
+        ))
+    }
+
+    /// R writes a vector length as one signed integer, or `-1` followed by
+    /// a big-endian 64-bit count for long vectors.
+    fn vec_len(&mut self) -> Result<usize, ()> {
+        let first = self.i32()?;
+        if first == -1 {
+            let hi = u64::from(self.u32()?);
+            let lo = u64::from(self.u32()?);
+            usize::try_from((hi << 32) | lo).map_err(|_| ())
+        } else {
+            usize::try_from(first).map_err(|_| ())
+        }
+    }
+
+    fn skip_bytes(&mut self, count: usize, width: usize) -> Result<(), ()> {
+        let len = count.checked_mul(width).ok_or(())?;
+        self.take(len).map(|_| ())
+    }
+
+    /// Each skipped element occupies at least one word, so a count beyond
+    /// the remaining words cannot be real.
+    fn check_count(&self, count: usize) -> Result<(), ()> {
+        if count > (self.bytes.len() - self.pos) / 4 {
+            return Err(());
+        }
+        Ok(())
+    }
+}
+
+const HAS_ATTR: u32 = 1 << 9;
+const HAS_TAG: u32 = 1 << 10;
+
+impl<'a> TagWalker<'a> {
+    /// Skip one serialized item. Returns the symbol name for SYMSXP items
+    /// and references to earlier symbols, `None` for everything else.
+    /// Pairlist-family CDRs (and a closure's body) are tail positions in
+    /// R's writer, so they continue the loop instead of recursing.
+    fn skip_item(&mut self, depth: usize) -> Result<Option<String>, ()> {
+        if depth > MAX_WALK_DEPTH {
+            return Err(());
+        }
+        loop {
+            let word = self.u32()?;
+            let typ = word & 0xff;
+            let has_attr = word & HAS_ATTR != 0;
+            let has_tag = word & HAS_TAG != 0;
+            match typ {
+                // Reference to an earlier reference object: the index is
+                // packed above the type byte, or follows when it is zero.
+                255 => {
+                    let mut index = word >> 8;
+                    if index == 0 {
+                        index = self.u32()?;
+                    }
+                    let slot = usize::try_from(index)
+                        .map_err(|_| ())?
+                        .checked_sub(1)
+                        .ok_or(())?;
+                    return Ok(self.refs.get(slot).ok_or(())?.clone());
+                }
+                // Bare singletons: base/empty/global environments, base
+                // namespace, missing argument, unbound value, NILVALUE.
+                241 | 242 | 250 | 251 | 252 | 253 | 254 => return Ok(None),
+                // SYMSXP: a bare type word and the print-name CHARSXP.
+                1 => {
+                    let slot = self.refs.len();
+                    self.refs.push(None);
+                    let name = self.charsxp_item()?;
+                    self.refs[slot] = name.clone();
+                    return Ok(name);
+                }
+                // ENVSXP: bare type word, locked flag, enclosure, frame,
+                // hash table, and attributes (written unconditionally).
+                4 => {
+                    self.refs.push(None);
+                    self.u32()?;
+                    for _ in 0..4 {
+                        self.skip_item(depth + 1)?;
+                    }
+                    return Ok(None);
+                }
+                // PERSISTSXP / PACKAGESXP / NAMESPACESXP: bare type word
+                // and a string vector with a placeholder integer first.
+                247..=249 => {
+                    self.refs.push(None);
+                    self.u32()?;
+                    let count = self.vec_len()?;
+                    self.check_count(count)?;
+                    for _ in 0..count {
+                        self.charsxp_item()?;
+                    }
+                    return Ok(None);
+                }
+                // LISTSXP / LANGSXP / PROMSXP / DOTSXP: attributes and tag
+                // first, then CAR, then CDR as the tail.
+                2 | 6 | 5 | 17 => {
+                    if has_attr {
+                        self.skip_item(depth + 1)?;
+                    }
+                    if has_tag {
+                        self.skip_item(depth + 1)?;
+                    }
+                    self.skip_item(depth + 1)?;
+                }
+                // CLOSXP: attributes, environment, formals, body as tail.
+                3 => {
+                    if has_attr {
+                        self.skip_item(depth + 1)?;
+                    }
+                    self.skip_item(depth + 1)?;
+                    self.skip_item(depth + 1)?;
+                }
+                _ => {
+                    self.skip_payload(typ, has_attr, depth)?;
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    /// Skip the payload of a non-pairlist item (header word consumed),
+    /// then its attributes unless the type writes them itself.
+    fn skip_payload(&mut self, typ: u32, has_attr: bool, depth: usize) -> Result<(), ()> {
+        match typ {
+            0 | 25 => {} // NILSXP, S4: nothing but attributes
+            7 | 8 => {
+                let len = usize::try_from(self.i32()?).map_err(|_| ())?;
+                self.take(len)?;
+            }
+            9 => {
+                let len = self.i32()?;
+                if len >= 0 {
+                    self.take(usize::try_from(len).map_err(|_| ())?)?;
+                }
+            }
+            10 | 13 => {
+                let count = self.vec_len()?;
+                self.skip_bytes(count, 4)?;
+            }
+            14 => {
+                let count = self.vec_len()?;
+                self.skip_bytes(count, 8)?;
+            }
+            15 => {
+                let count = self.vec_len()?;
+                self.skip_bytes(count, 16)?;
+            }
+            16 => {
+                let count = self.vec_len()?;
+                self.check_count(count)?;
+                for _ in 0..count {
+                    self.charsxp_item()?;
+                }
+            }
+            19 | 20 => {
+                let count = self.vec_len()?;
+                self.check_count(count)?;
+                for _ in 0..count {
+                    self.skip_item(depth + 1)?;
+                }
+            }
+            21 => self.skip_bytecode(depth)?,
+            // EXTPTRSXP: protected value and tag items follow.
+            22 => {
+                self.refs.push(None);
+                self.skip_item(depth + 1)?;
+                self.skip_item(depth + 1)?;
+            }
+            // WEAKREFSXP: registered, but R writes no payload for it.
+            23 => self.refs.push(None),
+            24 => {
+                let count = self.vec_len()?;
+                self.skip_bytes(count, 1)?;
+            }
+            // ALTREP: info, state, and attributes, all unconditional.
+            238 => {
+                for _ in 0..3 {
+                    self.skip_item(depth + 1)?;
+                }
+                return Ok(());
+            }
+            _ => return Err(()),
+        }
+        if has_attr {
+            self.skip_item(depth + 1)?;
+        }
+        Ok(())
+    }
+
+    /// Skip a CHARSXP item, returning its text (`None` for NA_STRING).
+    fn charsxp_item(&mut self) -> Result<Option<String>, ()> {
+        let word = self.u32()?;
+        if word & 0xff != 9 {
+            return Err(());
+        }
+        let len = self.i32()?;
+        if len < 0 {
+            return Ok(None);
+        }
+        let bytes = self.take(usize::try_from(len).map_err(|_| ())?)?;
+        Ok(Some(String::from_utf8_lossy(bytes).into_owned()))
+    }
+
+    /// BCODESXP: a rep count, then code and constants in the bytecode
+    /// writer's own grammar (bare type words, rep markers, 0-pad leaves).
+    fn skip_bytecode(&mut self, depth: usize) -> Result<(), ()> {
+        self.u32()?;
+        self.skip_bc_body(depth + 1)
+    }
+
+    fn skip_bc_body(&mut self, depth: usize) -> Result<(), ()> {
+        if depth > MAX_WALK_DEPTH {
+            return Err(());
+        }
+        self.skip_item(depth + 1)?; // instruction stream (INTSXP item)
+        let count = usize::try_from(self.i32()?).map_err(|_| ())?;
+        self.check_count(count)?;
+        for _ in 0..count {
+            match self.peek_u32()? {
+                21 => {
+                    self.u32()?;
+                    self.skip_bc_body(depth + 1)?;
+                }
+                2 | 6 | 239 | 240 | 243 | 244 => self.skip_bc_lang(depth + 1)?,
+                _ => {
+                    self.u32()?;
+                    self.skip_item(depth + 1)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// One language/pairlist node inside bytecode. Shared nodes are
+    /// wrapped in BCREPDEF/BCREPREF markers; non-node leaves are a zero
+    /// pad word followed by a full item. CDR is the tail.
+    fn skip_bc_lang(&mut self, depth: usize) -> Result<(), ()> {
+        if depth > MAX_WALK_DEPTH {
+            return Err(());
+        }
+        loop {
+            let mut word = self.u32()?;
+            if word == 243 {
+                self.u32()?;
+                return Ok(());
+            }
+            if word == 244 {
+                self.u32()?;
+                word = self.u32()?;
+            }
+            match word {
+                0 => {
+                    self.skip_item(depth + 1)?;
+                    return Ok(());
+                }
+                239 | 240 => {
+                    self.skip_item(depth + 1)?; // attributes
+                }
+                2 | 6 => {}
+                _ => return Err(()),
+            }
+            self.skip_item(depth + 1)?; // tag, always written here
+            self.skip_bc_lang(depth + 1)?; // CAR
+        }
     }
 }
 
@@ -514,6 +910,9 @@ mod tests {
         assert_eq!(inventory.failure, None);
         assert!(inventory.bindings.is_empty());
 
+        // Seventy nested lists exceed the full parser's nesting limit of
+        // 64, but the tag walker only skips payloads, so it still
+        // enumerates the workspace the parser had to give up on.
         let nested = include_bytes!("../../../testdata/serialized/nested-limit.rda");
         assert!(nested.len() < cap as usize);
         assert!(matches!(
@@ -521,6 +920,14 @@ mod tests {
             Ok(bytes) if bytes.len() < cap as usize
         ));
         std::fs::write(&path, nested).unwrap();
+        let inventory = serialized_inventory(&path, cap).unwrap();
+        assert_eq!(inventory.failure, None);
+        assert_eq!(inventory.bindings, HashSet::from(["x".to_string()]));
+
+        // Three hundred levels also exceed the walker's depth cap, which
+        // is a genuine resource limit: degraded, with the file stem.
+        let deep = include_bytes!("../../../testdata/serialized/nested-deep.rda");
+        std::fs::write(&path, deep).unwrap();
         let inventory = serialized_inventory(&path, cap).unwrap();
         assert_eq!(
             inventory.failure,
@@ -535,17 +942,60 @@ mod tests {
     }
 
     #[test]
-    fn stream_the_parser_stops_short_of_is_a_partial_inventory() {
-        // rds2rust 0.3 leaves an external pointer's payload unread and then
-        // ends the workspace early (#714). The names read so far are real,
-        // but the inventory must not pass for complete.
+    fn external_pointer_workspaces_enumerate_completely() {
+        // rds2rust 0.3 leaves an external pointer's payload unread and ends
+        // the workspace early (#714); the tag walker recovers every name,
+        // including the ones saved after the pointer.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sysdata.rda");
         let extptr = include_bytes!("../../../testdata/serialized/extptr.rda");
         std::fs::write(&path, extptr).unwrap();
         let inventory = serialized_inventory(&path, 4096).unwrap();
-        assert!(inventory.bindings.contains("a_first"));
-        assert_eq!(inventory.failure, Some(InventoryFailure::Unsupported));
+        assert_eq!(inventory.failure, None);
+        assert_eq!(
+            inventory.bindings,
+            HashSet::from(["a_first".into(), "ptr_value".into(), "z_last".into()])
+        );
+
+        // The gtsummary shape: an external pointer nested in the first
+        // object's attributes, plus ALTREP, bytecode, and an environment,
+        // must not hide the bindings saved after them either.
+        let nested = include_bytes!("../../../testdata/serialized/extptr-nested.rda");
+        std::fs::write(&path, nested).unwrap();
+        let inventory = serialized_inventory(&path, 4096).unwrap();
+        assert_eq!(inventory.failure, None);
+        assert_eq!(
+            inventory.bindings,
+            HashSet::from([
+                "df_like".into(),
+                "seq_like".into(),
+                "fn_like".into(),
+                "env_like".into(),
+                "z_last".into(),
+            ])
+        );
+    }
+
+    #[test]
+    fn tag_walker_rejects_truncated_and_overlong_streams() {
+        // The walker's result is trusted only at exact end of stream: a
+        // truncated workspace and one with trailing garbage both stay
+        // degraded instead of passing for complete.
+        let full = rda_v2_workspace(&[("only", ProbeValue::Doubles(1))]);
+        let payload = full.strip_prefix(b"RDX2\n").unwrap();
+        assert_eq!(
+            enumerate_workspace_tags(payload),
+            Some(HashSet::from(["only".into()]))
+        );
+        assert_eq!(
+            enumerate_workspace_tags(&payload[..payload.len() - 1]),
+            None
+        );
+        let mut overlong = payload.to_vec();
+        overlong.push(0);
+        assert_eq!(enumerate_workspace_tags(&overlong), None);
+        assert_eq!(enumerate_workspace_tags(b""), None);
+        assert_eq!(enumerate_workspace_tags(b"X\n"), None);
     }
 
     #[test]

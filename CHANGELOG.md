@@ -136,9 +136,9 @@ All notable changes to ry are documented in this file.
   arm now sees an unknown value (#752).
 - Let closures in a `local()` block read helpers the block assigns later,
   removing RY010 false positives in cli, pak, and rlang.
-- Report a serialized workspace the parser stops reading early, such as an
-  `R/sysdata.rda` that holds an external pointer, as a degraded scope instead
-  of a complete inventory (#714).
+- Enumerate every binding in a serialized workspace that holds an external
+  pointer, such as a `readr` tibble saved into `R/sysdata.rda`, instead of
+  stopping at the pointer and reporting the later bindings unbound (#714).
 - Let function bodies see `<<-` updates from writers defined after them or
   in another package file, such as a `NULL` placeholder filled by
   `.onLoad`, removing false RY001 and RY070 reports (#706).

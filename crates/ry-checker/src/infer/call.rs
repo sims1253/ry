@@ -13,6 +13,12 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> RType {
+        // R fixes the call head before promises can mutate its binding,
+        // so an error-assertion wrapper (#344) is recognized here too.
+        let probe = self.error_probe_span(func, args, scope);
+        if let Some(probe) = probe {
+            self.error_probe_spans.push(probe);
+        }
         if self.capture_references {
             self.enable_eager_reference_argument(func, args, scope, span);
         }
@@ -40,7 +46,125 @@ impl Checker {
         if !pure {
             scope.invalidate_ops_environment();
         }
+        if probe.is_some() {
+            self.error_probe_spans.pop();
+        }
         result
+    }
+
+    /// The span of the probe argument when this call asserts or catches
+    /// an error by construction (#344): testthat's `expect_error`,
+    /// `expect_warning`, and `expect_snapshot(error = TRUE)`, plus base
+    /// `try` and `tryCatch` with an `error` handler. The formals listed
+    /// are only those the probe and assertion bindings need; matching
+    /// follows R, so named and partial forms bind the same probe as the
+    /// positional one. `expect_snapshot` asserts an error only with a
+    /// literal `error = TRUE`; any other value may be false at runtime.
+    fn error_probe_span(&self, func: &Expr, args: &[Arg], scope: &Scope) -> Option<Span> {
+        let name = callee_name(func)?;
+        let semantic_name = scope.function_alias(&name).unwrap_or(&name).to_string();
+        // An alias cannot prove the captured callable is the wrapper.
+        if name != semantic_name || is_user_infix_name(&semantic_name) {
+            return None;
+        }
+        let lookup_name = crate::semantic_lists::bare_name(&semantic_name);
+        let (package, formals): (&str, &[&str]) = match lookup_name {
+            "expect_error" => ("testthat", &["object", "regexp", "...", "info", "label"]),
+            "expect_warning" => (
+                "testthat",
+                &["object", "regexp", "...", "all", "info", "label"],
+            ),
+            "expect_snapshot" => (
+                "testthat",
+                &["x", "cran", "error", "transform", "variant", "cnd_class"],
+            ),
+            "tryCatch" => ("base", &["expr", "...", "finally"]),
+            "try" => ("base", &["expr", "silent", "outFile"]),
+            _ => return None,
+        };
+        if !self.error_wrapper_recognized(&name, func, &semantic_name, lookup_name, package, scope)
+        {
+            return None;
+        }
+        let matched = match_arguments(formals, args);
+        let asserts = match lookup_name {
+            "expect_snapshot" => matched
+                .arg_for_param(2)
+                .is_some_and(|arg| matches!(args[arg].value, Expr::Logical(true, _))),
+            "tryCatch" => args.iter().any(|arg| {
+                arg.name.as_deref() == Some("error") && !matches!(arg.value, Expr::Missing(_))
+            }),
+            _ => true,
+        };
+        if !asserts {
+            return None;
+        }
+        let probe = matched.arg_for_param(0)?;
+        Some(span_of(&args[probe].value))
+    }
+
+    /// Whether the callee is the real testthat/base wrapper rather than
+    /// a masked same-named function. Proven provenance decides most
+    /// calls. Under ambient uncertainty the expected package must be
+    /// attached (the state of real test files, where testthat is on the
+    /// search path and its exports are external bindings) and no
+    /// concrete mask may be visible: a project or lexical definition, a
+    /// formal, a function-valued binding, another package's import, a
+    /// user stub for the package, or an unknown data mask all refuse.
+    /// A qualified call requires proven provenance, so a masked `::`
+    /// never qualifies. This mirrors the testthat block verbs, which
+    /// also apply their semantics under ambient uncertainty once a
+    /// project-local definition is excluded.
+    fn error_wrapper_recognized(
+        &self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        lookup_name: &str,
+        package: &str,
+        scope: &Scope,
+    ) -> bool {
+        use crate::resolve::SpecialCallProvenance;
+        use ry_core::types::Mode;
+        match self.special_call_provenance(name, func, semantic_name, lookup_name, package, scope) {
+            SpecialCallProvenance::Proven => true,
+            SpecialCallProvenance::Ordinary => false,
+            SpecialCallProvenance::AmbientUncertainty | SpecialCallProvenance::Unknown => {
+                // R's function-mode lookup skips a binding known to hold
+                // data, so only a possibly-function binding can mask.
+                let binding_may_be_function = scope.get(semantic_name).is_some_and(|ty| {
+                    ty.fn_sig.is_some()
+                        || !matches!(
+                            ty.mode,
+                            Mode::Logical
+                                | Mode::Integer
+                                | Mode::Double
+                                | Mode::Complex
+                                | Mode::Character
+                                | Mode::Raw
+                                | Mode::List
+                                | Mode::Null
+                                | Mode::Environment
+                                | Mode::Language
+                        )
+                });
+                !semantic_name.contains("::")
+                    && !scope.data_mask_unknown
+                    && !scope.is_parameter(semantic_name)
+                    && scope.lexical_definition(semantic_name).is_none()
+                    && !self.fn_table.functions.binds(semantic_name)
+                    && !binding_may_be_function
+                    && !self.user_stubs.contains_key(package)
+                    && !self.user_stubs.contains_key("base")
+                    && self
+                        .imported_from
+                        .get(semantic_name)
+                        .is_none_or(|imported| imported == package)
+                    && (package == "base"
+                        || self.bare_loaded.contains(package)
+                        || self.loaded.contains(package))
+            }
+        }
     }
 
     /// Discard declaration-only exact identities after evaluating an

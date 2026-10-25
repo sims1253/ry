@@ -1447,6 +1447,12 @@ pub struct Checker {
     // never takes (issue #703). Unlike `discarding`, it keeps reference
     // and scope capture, so navigation over dead code is unaffected.
     in_dead_arm: bool,
+    // Spans of error-assertion probe arguments currently being inferred
+    // (`expect_error(<probe>)`, `try(<probe>)`, ...; issue #344). A
+    // diagnostic whose span lies inside one is demoted one confidence
+    // tier at emit time, the same down-weight non-source paths receive
+    // in post-processing. Balanced by `infer_call`; empty between calls.
+    error_probe_spans: Vec<Span>,
     // User-defined functions collected in pass 1. Stored behind an `Arc`
     // so the multi-file `Project` can share the refined tables across
     // per-file pass-3 emitters without deep-cloning them.
@@ -1729,6 +1735,7 @@ impl Checker {
             escaped_external_bindings: false,
             discarding: false,
             in_dead_arm: false,
+            error_probe_spans: Vec::new(),
             fn_table,
             known_vars: Arc::new(HashSet::new()),
             namespace_superassigned: None,
@@ -1912,6 +1919,7 @@ impl Checker {
         self.stmt_continuations.clear();
         self.formal_shadows.clear();
         self.formal_reads.clear();
+        self.error_probe_spans.clear();
         infer::vacuous::index_statement_continuations(
             &file.stmts,
             &mut self.stmt_continuations,

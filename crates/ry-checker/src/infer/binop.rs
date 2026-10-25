@@ -681,7 +681,8 @@ impl Checker {
                 // resolves through the package search path before base,
                 // and the package would have to define or import its own
                 // `length` for the callee to leave base semantics (#372).
-                ident_name(func).is_some_and(|name| checker.resolves_to_base_lenient(name, scope))
+                ident_name(func)
+                    .is_some_and(|name| checker.guard_callee_resolves_to_base(name, scope))
             };
             compared_with_one(lhs, rhs)
                 .filter(|length_side| base_length(length_side))

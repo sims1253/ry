@@ -190,3 +190,118 @@ assigns_null <- function(x = NULL) {
 }
 nested_null()
 assigns_null()
+
+## case: a project is.null redefinition does not narrow its NULL default
+# expect: RY001
+is.null <- function(x) FALSE
+f <- function(x = NULL) {
+  if (!is.null(x)) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+
+## case: a local backtick is.null redefinition does not narrow its NULL default
+# expect: RY001
+f <- function(x = NULL) {
+  `is.null` <- function(x) FALSE
+  if (!is.null(x)) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+
+## case: a backtick length mask does not make a length guard prove non-NULL
+# expect: RY001
+`length` <- function(x) 1L
+f <- function() {
+  x <- NULL
+  if (length(x) == 1) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+
+## case: a local data binding named like a guard callee leaves the guard base
+# no-diag
+# R skips non-function bindings when it looks up a call head.
+f <- function(x = NULL, y = NULL) {
+  missing <- "none"
+  length <- 0L
+  if (!missing(x)) {
+    if (x > 0) 1 else 2
+  }
+  if (length(y) == 1) {
+    if (y > 0) 1 else 2
+  }
+}
+f()
+
+## case: a top-level data binding named like a guard callee leaves the guard base
+# no-diag
+length <- 5
+missing <- TRUE
+f <- function(x = NULL) {
+  y <- NULL
+  if (!missing(x)) {
+    if (x > 0) 1 else 2
+  }
+  if (length(y) == 1) {
+    if (y > 0) 1 else 2
+  }
+}
+f()
+
+## case: a rebound callee voids only the facts about its own subject
+# expect: RY001
+length <- function(z) 1L
+f <- function(x = NULL) {
+  y <- NULL
+  if (!is.null(x) && length(y) == 1) {
+    if (x > 0) 1 else 2
+    if (y > 0) 1 else 2
+  }
+}
+f()
+f(1)
+
+## case: a missing() qualified by another package proves nothing, base:: still does
+# expect: RY001
+f <- function(x = NULL) {
+  if (!otherpkg::missing(x)) {
+    if (x > 0) 1 else 2
+  }
+}
+g <- function(x = NULL) {
+  if (!base::missing(x)) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+g()
+
+## case: a data value bound under the quoted spelling leaves the guard base
+# no-diag
+`length` <- 0L
+f <- function() {
+  x <- NULL
+  if (length(x) == 1) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+
+## case: a language object or environment bound to a guard callee name is data too
+# no-diag
+is.null <- quote(x)
+length <- new.env()
+f <- function(x = NULL) {
+  if (!is.null(x)) {
+    if (x > 0) 1 else 2
+  }
+  y <- NULL
+  if (length(y) == 1) {
+    if (y > 0) 1 else 2
+  }
+}
+f()

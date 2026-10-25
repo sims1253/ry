@@ -86,6 +86,30 @@ impl Narrowing {
             | Narrowing::Unreached { var } => about(var),
         }
     }
+
+    /// This narrowing without its facts about `names`.
+    fn without(self, names: &HashSet<String>) -> Narrowing {
+        let keep = |facts: Vec<Narrowing>| -> Vec<Narrowing> {
+            facts
+                .into_iter()
+                .map(|fact| fact.without(names))
+                .filter(|fact| !matches!(fact, Narrowing::None))
+                .collect()
+        };
+        match self {
+            Narrowing::Compound {
+                base,
+                on_true,
+                on_false,
+            } => Narrowing::Compound {
+                base: Box::new(base.without(names)),
+                on_true: keep(on_true),
+                on_false: keep(on_false),
+            },
+            fact if fact.mentions_any(names) => Narrowing::None,
+            fact => fact,
+        }
+    }
 }
 
 /// Extract a type narrowing from an `if` condition expression.
@@ -477,6 +501,14 @@ pub(crate) fn predicate_target(name: &str) -> Option<RType> {
         "is.raw" => Some(RType::scalar(Mode::Raw)),
         _ => None,
     }
+}
+
+/// Whether `extract_builtin_type_narrowing` trusts the call head `name` by
+/// spelling alone, so a rebinding or a non-`base::` qualifier must void it.
+/// The `is.<class>` fallback, which project predicates use, is not.
+fn builtin_guard_callee(name: &str) -> bool {
+    let name = crate::semantic_lists::bare_name(name);
+    predicate_target(name).is_some() || matches!(name, "inherits" | "length" | "missing")
 }
 
 pub(crate) fn s3_predicate_target(name: &str) -> Option<RType> {
@@ -976,6 +1008,30 @@ impl Checker {
         .then_some((var, truth))
     }
 
+    /// The subjects of the guards in `cond` whose built-in callee
+    /// (`is.null(x)`, `length(x)`, ...) may be rebound here. A project or
+    /// local redefinition may answer anything, so it proves nothing about
+    /// its subject; the other guards in `cond` still do.
+    fn rebound_guard_subjects(&self, cond: &Expr, scope: &Scope, subjects: &mut HashSet<String>) {
+        match cond {
+            Expr::UnaryOp { expr, .. } => self.rebound_guard_subjects(expr, scope, subjects),
+            Expr::BinOp { lhs, rhs, .. } => {
+                self.rebound_guard_subjects(lhs, scope, subjects);
+                self.rebound_guard_subjects(rhs, scope, subjects);
+            }
+            Expr::Call { func, args, .. } => {
+                if let Some(name) = ident_name(func)
+                    && builtin_guard_callee(name)
+                    && !self.guard_callee_resolves_to_base(name, scope)
+                    && let Some(subject) = first_arg_ident(args)
+                {
+                    subjects.insert(subject);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Restrict compound facts to predicates without intervening writes or calls.
     fn compound_guard_is_pure(&self, cond: &Expr, scope: &Scope) -> bool {
         match cond {
@@ -1037,9 +1093,22 @@ impl Checker {
         }
     }
 
+    /// The facts `cond` proves, minus those about the subject of a guard
+    /// whose built-in callee may be rebound.
+    pub(crate) fn extract_type_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
+        let mut rebound = HashSet::new();
+        self.rebound_guard_subjects(cond, scope, &mut rebound);
+        let narrowing = self.extract_unscreened_type_narrowing(cond, scope);
+        if rebound.is_empty() {
+            narrowing
+        } else {
+            narrowing.without(&rebound)
+        }
+    }
+
     /// Signature-declared predicates extend the built-in predicate vocabulary
     /// only when ordinary typeshed resolution establishes their provenance.
-    pub(crate) fn extract_type_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
+    fn extract_unscreened_type_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
         let built_in = extract_builtin_type_narrowing(cond);
         if let Some((var, truth)) = self.never_numeric_test(cond, scope) {
             let fact = vec![Narrowing::Unreached { var }];

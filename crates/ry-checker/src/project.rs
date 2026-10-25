@@ -1732,4 +1732,39 @@ mod tests {
             "{diagnostics:?}"
         );
     }
+
+    #[test]
+    fn package_r_forwarders_do_not_inherit_quoting_from_outside_r() {
+        // `f` forwards `x` to `g`. A tinytest `g` that quotes its argument
+        // is not the `g` that `f` reaches, so `f(1 + "a")` still forces
+        // the sum. Control: an `R/` `g` makes `f` quote too.
+        let forwarder = "f <- function(x) g(x)\n";
+        let quoter = "g <- function(x) substitute(x)\n";
+        let use_r = "h <- function() f(1 + \"a\")\n";
+        let diagnostics = package_files(forwarder, use_r, quoter).check();
+        assert_eq!(
+            count(&diagnostics, "R/use.R", "RY040"),
+            1,
+            "{diagnostics:?}"
+        );
+        let mut project = package_files(&format!("{forwarder}{quoter}"), use_r, "");
+        let diagnostics = project.check();
+        assert_eq!(
+            count(&diagnostics, "R/use.R", "RY040"),
+            0,
+            "{diagnostics:?}"
+        );
+        // Moving `g` out of `R/` drops the flag `f` inherited from it.
+        project.update_file("R/def.R".into(), parse_file("R/def.R", forwarder).into());
+        project.update_file(
+            "inst/tinytest/test_a.R".into(),
+            parse_file("inst/tinytest/test_a.R", quoter).into(),
+        );
+        let diagnostics = project.check_incremental();
+        assert_eq!(
+            count(&diagnostics, "R/use.R", "RY040"),
+            1,
+            "{diagnostics:?}"
+        );
+    }
 }

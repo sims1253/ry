@@ -424,9 +424,6 @@ fn is_coercible_scalar_condition_mode(t: &RType) -> bool {
         && matches!(t.length, Length::One | Length::Unknown | Length::Nonempty)
 }
 
-/// A scalar literal with no class and no evaluation beyond itself, so
-/// an operator over it cannot dispatch to an `Ops` method. A negated
-/// numeric literal keeps that property through the primitive `-`.
 /// Whether the expression syntactically contains an `NA` literal: the
 /// cheap, scope-free precondition for the proven-NA proof.
 fn contains_na_literal(expr: &Expr) -> bool {
@@ -438,6 +435,9 @@ fn contains_na_literal(expr: &Expr) -> bool {
     .is_break()
 }
 
+/// A scalar literal with no class and no evaluation beyond itself, so
+/// an operator over it cannot dispatch to an `Ops` method. A negated
+/// numeric literal keeps that property through the primitive `-`.
 fn plain_scalar_literal(expr: &Expr) -> bool {
     match expr {
         Expr::Logical(..) | Expr::Integer(..) | Expr::Double(..) | Expr::String(..) => true,
@@ -446,6 +446,20 @@ fn plain_scalar_literal(expr: &Expr) -> bool {
             expr: inner,
             ..
         } => matches!(inner.as_ref(), Expr::Integer(..) | Expr::Double(..)),
+        _ => false,
+    }
+}
+
+/// A plain double literal, optionally negated (finite or not; callers
+/// that need finiteness check it separately).
+fn plain_double_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Double(..) => true,
+        Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr: inner,
+            ..
+        } => matches!(inner.as_ref(), Expr::Double(..)),
         _ => false,
     }
 }
@@ -1449,7 +1463,9 @@ impl Checker {
     /// invalidated by replacement and subsetting, which is why the
     /// earlier fact-based slice was dropped. `^` is excluded because
     /// `NA^0` and `1^NA` are `1`, and `&`/`|` because `NA & FALSE` and
-    /// `NA | TRUE` are not `NA`.
+    /// `NA | TRUE` are not `NA`. The mode is load-bearing inside the
+    /// recursion (the character and complex exclusions, the coercion
+    /// ladder); the condition caller only needs its presence.
     fn proven_na_scalar_mode(&self, expr: &Expr, scope: &Scope) -> Option<Mode> {
         match expr {
             Expr::Na(ty, _) => match ty.mode {
@@ -1534,11 +1550,14 @@ impl Checker {
                     {
                         return None;
                     }
-                    let plain = |operand: &Expr| {
-                        (plain_scalar_literal(operand) && neg_ok(operand))
-                            || self.proven_na_scalar_mode(operand, scope).is_some()
+                    // Reuse the modes just computed: re-descending an
+                    // operand here would multiply work per nesting level.
+                    let plain = |operand: &Expr, operand_na: Option<Mode>| {
+                        (plain_scalar_literal(operand) && neg_ok(operand)) || operand_na.is_some()
                     };
-                    if (left_na.is_some() && plain(rhs)) || (right_na.is_some() && plain(lhs)) {
+                    if (left_na.is_some() && plain(rhs, right_na))
+                        || (right_na.is_some() && plain(lhs, left_na))
+                    {
                         return Some(Mode::Logical);
                     }
                     return None;
@@ -1547,28 +1566,19 @@ impl Checker {
                 if na_mode == Mode::Character {
                     return None;
                 }
-                let other = if left_na.is_some() { rhs } else { lhs };
+                let (other, other_na) = if left_na.is_some() {
+                    (rhs, right_na)
+                } else {
+                    (lhs, left_na)
+                };
                 let other_is_plain = plain_numeric_literal(other) && neg_ok(other);
-                if !other_is_plain
-                    && self
-                        .proven_na_scalar_mode(other, scope)
-                        .is_none_or(|mode| mode == Mode::Character)
-                {
+                if !other_is_plain && other_na.is_none_or(|mode| mode == Mode::Character) {
                     return None;
                 }
                 // R's arithmetic coercion ladder, counting a plain
                 // double literal other operand (`1.5 * NA_integer_` is
                 // a double NA).
-                let other_is_double = other_is_plain
-                    && match other.as_ref() {
-                        Expr::Double(..) => true,
-                        Expr::UnaryOp {
-                            op: UnaryOpKind::Neg,
-                            expr: inner,
-                            ..
-                        } => matches!(inner.as_ref(), Expr::Double(..)),
-                        _ => false,
-                    };
+                let other_is_double = other_is_plain && plain_double_literal(other);
                 Some(match (left_na, right_na) {
                     (Some(Mode::Complex), _) | (_, Some(Mode::Complex)) => Mode::Complex,
                     (Some(Mode::Double), _) | (_, Some(Mode::Double)) => Mode::Double,

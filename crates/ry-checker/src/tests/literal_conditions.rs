@@ -183,6 +183,10 @@ fn proven_na_literal_conditions_are_checked() {
         "if (NA_complex_) 1L",
         "if (!NA) 1L",
         "if (-NA_real_) 1L",
+        "x <- if (NA) 1L else 2L",
+        // Mixed-type comparisons coerce in R and still yield NA.
+        "if (NA_integer_ < \"x\") 1L",
+        "if (NA_character_ < TRUE) 1L",
         "if (NA_complex_ == 1) 1L",
         "if (NA_integer_ > 1L) 1L",
         "if (1L < NA_integer_) 1L",
@@ -211,6 +215,10 @@ fn proven_na_literal_conditions_are_checked() {
     // A longer out-of-range cast is a length error, not a scalar NA:
     // RY119 fires, but the message must not claim an always-NA scalar.
     let diagnostics = check("if (as.integer(c(1, 1e10))) 1L");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY119"),
+        "the cast itself must still be diagnosed: {diagnostics:?}"
+    );
     assert!(
         diagnostics
             .iter()

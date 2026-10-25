@@ -27,7 +27,9 @@ impl Token {
 pub(crate) fn registered_symbols(root: &Path, library: &str) -> HashSet<String> {
     let mut found = HashSet::new();
     for_each_source(root, &["c", "cc", "cpp", "cxx"], |source| {
-        found.extend(source_symbols(source, library));
+        if let Some(source) = source {
+            found.extend(source_symbols(source, library));
+        }
     });
     found
 }
@@ -35,26 +37,49 @@ pub(crate) fn registered_symbols(root: &Path, library: &str) -> HashSet<String> 
 /// The class and function names each `RCPP_MODULE(name) { ... }` in `src/`
 /// declares, which `Rcpp::loadModule(name, TRUE)` binds (#704). A module
 /// with a body this scan cannot read in full is left out, and so is every
-/// module when a file naming `RCPP_MODULE` cannot be tokenized.
+/// module when a source file is skipped or a file naming `RCPP_MODULE`
+/// cannot be tokenized: either may hold more of a module's declarations.
 pub(crate) fn rcpp_modules(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
     let mut modules: BTreeMap<String, Option<BTreeSet<String>>> = BTreeMap::new();
     let mut readable = true;
     let extensions = ["c", "cc", "cpp", "cxx", "h", "hh", "hpp"];
     for_each_source(root, &extensions, |source| {
-        if !source.contains("RCPP_MODULE") {
+        let Some(source) = source.filter(|source| source.contains("RCPP_MODULE")) else {
+            readable &= source.is_some();
             return;
-        }
+        };
         let joined = source.replace("\\\r\n", "").replace("\\\n", "");
         let Some(code) = strip_comments(&joined) else {
             readable = false;
             return;
         };
-        // Drop preprocessor lines, so both arms of an `#if` count.
-        let code: Vec<_> = code
-            .lines()
-            .filter(|line| !line.trim_start().starts_with('#'))
-            .collect();
-        let tokens = lex(&code.join("\n"));
+        // Drop preprocessor lines, so both arms of an `#if` count. Code in a
+        // conditional must balance its own brackets, or one arm could close
+        // the module early.
+        let balanced = |text: &str| {
+            [('{', '}'), ('(', ')'), ('[', ']')]
+                .iter()
+                .all(|(open, close)| text.matches(*open).count() == text.matches(*close).count())
+        };
+        let (mut kept, mut conditional, mut depth) = (Vec::new(), String::new(), 0usize);
+        for line in code.lines() {
+            let Some(directive) = line.trim_start().strip_prefix('#') else {
+                kept.push(line);
+                conditional.push_str(line);
+                continue;
+            };
+            if depth > 0 && !balanced(&conditional) {
+                readable = false;
+                return;
+            }
+            conditional.clear();
+            match lex(directive).first().and_then(Token::word) {
+                Some("if" | "ifdef" | "ifndef") => depth += 1,
+                Some("endif") => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        let tokens = lex(&kept.join("\n"));
         let mut index = 0;
         while index < tokens.len() {
             let [
@@ -126,33 +151,53 @@ fn statement_name(statement: &[Token]) -> Option<Option<String>> {
         .take_while(|token| **token == Token::Punct(':') || token.word() == Some("Rcpp"))
         .count();
     let statement = &statement[qualifier..];
-    match statement {
-        [] => Some(None),
-        [Token::Word(head), ..] if head == "using" => Some(None),
+    let (name, call) = match statement {
+        [] => return Some(None),
+        [Token::Word(head), ..] if head == "using" => return Some(None),
         [
             Token::Word(head),
             Token::Punct('('),
             Token::String(name),
+            Token::Punct(')' | ','),
             ..,
-        ] if head == "function" => Some(Some(name.clone())),
+        ] if head == "function" => (name, 1),
         [Token::Word(head), ..] if head == "class_" => {
             let end = balanced_end(statement, 1, '<', '>')?;
-            match statement.get(end + 1..end + 3)? {
-                [Token::Punct('('), Token::String(name)] => Some(Some(name.clone())),
-                _ => None,
+            match statement.get(end + 1..end + 4)? {
+                [
+                    Token::Punct('('),
+                    Token::String(name),
+                    Token::Punct(')' | ','),
+                ] => (name, end + 1),
+                _ => return None,
             }
         }
-        _ => None,
+        _ => return None,
+    };
+    // Only a `.member<T>(...)` chain may follow, not `, expose_more()`.
+    let mut index = balanced_end(statement, call, '(', ')')? + 1;
+    while index < statement.len() {
+        let [Token::Punct('.'), Token::Word(_), ..] = &statement[index..] else {
+            return None;
+        };
+        index += 2;
+        if statement.get(index) == Some(&Token::Punct('<')) {
+            index = balanced_end(statement, index, '<', '>')? + 1;
+        }
+        index = balanced_end(statement, index, '(', ')')? + 1;
     }
+    Some(Some(name.clone()))
 }
 
 /// Visit the UTF-8 files directly in `src/` with one of `extensions`,
-/// within fixed file-count and byte budgets.
-fn for_each_source(root: &Path, extensions: &[&str], mut visit: impl FnMut(&str)) {
-    let Ok(entries) = std::fs::read_dir(root.join("src")) else {
+/// within fixed file-count and byte budgets. `None` stands for files
+/// skipped over a budget, unreadable, or not UTF-8.
+fn for_each_source(root: &Path, extensions: &[&str], mut visit: impl FnMut(Option<&str>)) {
+    let Ok(mut entries) = std::fs::read_dir(root.join("src")) else {
         return;
     };
     let mut paths: Vec<_> = entries
+        .by_ref()
         .take(4096)
         .flatten()
         .filter(|entry| {
@@ -166,27 +211,32 @@ fn for_each_source(root: &Path, extensions: &[&str], mut visit: impl FnMut(&str)
         .map(|entry| entry.path())
         .collect();
     paths.sort();
+    if entries.next().is_some() || paths.len() > 256 {
+        visit(None);
+    }
     let mut remaining = 8 * 1024 * 1024;
     for path in paths.into_iter().take(256) {
         let Ok(size) = path.metadata().map(|m| m.len()) else {
+            visit(None);
             continue;
         };
         if size > 2 * 1024 * 1024 || size > remaining {
+            visit(None);
             continue;
         }
         // Bound the read even if the file grows after metadata was read.
         use std::io::Read;
         let Ok(file) = std::fs::File::open(&path) else {
+            visit(None);
             continue;
         };
         let mut bytes = Vec::new();
         if file.take(size + 1).read_to_end(&mut bytes).is_err() || bytes.len() as u64 != size {
+            visit(None);
             continue;
         }
         remaining -= size;
-        if let Ok(source) = std::str::from_utf8(&bytes) {
-            visit(source);
-        }
+        visit(std::str::from_utf8(&bytes).ok());
     }
 }
 

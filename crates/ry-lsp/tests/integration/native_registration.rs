@@ -35,7 +35,7 @@ async fn native_registration_edits_refresh_open_document_bindings() {
     assert!(
         watchers
             .iter()
-            .any(|watcher| watcher["globPattern"] == "**/src/*.{c,cc,cpp,cxx}"),
+            .any(|watcher| watcher["globPattern"] == "**/src/*.{c,cc,cpp,cxx,h,hh,hpp}"),
         "{watchers:?}"
     );
 

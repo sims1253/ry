@@ -358,7 +358,7 @@ impl IndexWriter {
                         path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("src"))
                             && matches!(
                                 path.extension().and_then(|ext| ext.to_str()),
-                                Some("c" | "cc" | "cpp" | "cxx")
+                                Some("c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp")
                             )
                     })
                     || path.ends_with(".rda")

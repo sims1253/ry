@@ -280,6 +280,9 @@ All notable changes to ry are documented in this file.
 - In a package, top-level assignments and `<<-` writes in tests, `inst/` and
   other files outside `R/` no longer bind names for `R/` code, which restores
   RY010s in terra hidden by tinytest variables (#804).
+- Likewise, a function defined in a test or other file outside `R/` no longer
+  resolves a bare call from `R/` code, so its return type no longer types
+  package code (#806).
 - A built-in guard (`is.null(x)`, `length(x) == 1`, `missing(x)`, ...)
   whose callee a project or local function redefines, also as
   `` `is.null` <- ``, no longer narrows `x`, and RY032 no longer trusts a

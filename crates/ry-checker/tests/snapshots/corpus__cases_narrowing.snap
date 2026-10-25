@@ -1,6 +1,5 @@
 ---
 source: crates/ry-checker/tests/corpus.rs
-assertion_line: 376
 expression: rows
 ---
 - case: a not-null guard on a NULL binding keeps the branch well typed
@@ -508,4 +507,12 @@ expression: rows
     - code: RY040
       line: 1157
       message: "cannot apply arithmetic op to `union` and `character`"
+      severity: error
+- case: "code past a return guard a local's mode always passes gives it an unknown value"
+  diagnostics: []
+- case: "the arm a return guard's mode test passes still reports"
+  diagnostics:
+    - code: RY040
+      line: 1178
+      message: "cannot apply arithmetic op to `character` and `double`"
       severity: error

@@ -66,3 +66,33 @@ expression: rows
       line: 142
       message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
+- case: "an is.null() operand of a return guard's || excludes the NULL default"
+  diagnostics:
+    - code: RY032
+      line: 153
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+    - code: RY032
+      line: 160
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: "a return guard's || that may leave a NULL keeps reporting it"
+  diagnostics:
+    - code: RY001
+      line: 172
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+    - code: RY001
+      line: 176
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: "a return guard's || whose operand may assign in nested code keeps the NULL"
+  diagnostics:
+    - code: RY001
+      line: 185
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+    - code: RY001
+      line: 189
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning

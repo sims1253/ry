@@ -1156,3 +1156,25 @@ union_date_else <- function(flag) {
   s <- if (flag) structure(1, class = "Date") else 1L
   if (is.numeric(s)) 0 else s + "a"
 }
+
+## case: code past a return guard a local's mode always passes gives it an unknown value
+# no-diag
+# R returns at the guard, so the code after it never runs for this value (#692).
+as_text <- function(x) {
+  y <- "a"
+  if (is.character(y)) return(x)
+  y + 1
+}
+as_number <- function(x) {
+  s <- 1L
+  if (!is.numeric(s)) message("not a number") else return(x)
+  s$x
+}
+
+## case: the arm a return guard's mode test passes still reports
+# expect: RY040
+live_return <- function(x) {
+  y <- "a"
+  if (is.character(y)) return(y + 1)
+  x
+}

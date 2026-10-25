@@ -33,10 +33,6 @@ pub(crate) enum Narrowing {
     Positive { var: String, target: RType },
     /// `var` satisfies `target` in the `else` branch of `!predicate(var)`.
     Negative { var: String, target: RType },
-    /// An `||` guard whose false path proves a predicate. It deliberately
-    /// has no then-branch refinement: either operand may have made the
-    /// condition true.
-    Else { var: String, target: RType },
     /// A zero-length guard (`!length(x)` or `length(x) == 0`) whose false
     /// path proves only that `x` is non-NULL.  This is deliberately weaker
     /// than claiming anything about its storage mode or non-emptiness.
@@ -83,7 +79,6 @@ impl Narrowing {
             Narrowing::None => false,
             Narrowing::Positive { var, .. }
             | Narrowing::Negative { var, .. }
-            | Narrowing::Else { var, .. }
             | Narrowing::NonNullElse { var }
             | Narrowing::ScalarElse { var, .. }
             | Narrowing::ScalarThen { var }
@@ -201,17 +196,24 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             if let Some((var, target)) = scalar_false_path_fact(cond) {
                 return Narrowing::ScalarElse { var, target };
             }
-            // The false path through `a || b` reaches the continuation only
-            // when both operands are false. Keep this intentionally strict:
-            // a null guard may contribute its non-null fact only when the
-            // other operand is also a predicate over the same variable.
-            let Narrowing::Positive { var, target } = extract_builtin_type_narrowing(lhs) else {
-                return Narrowing::None;
-            };
-            if target.mode != Mode::Null || predicate_var(rhs).as_deref() != Some(&var) {
+            // A false disjunction proves every disjunct false, so each
+            // `is.null(x)` disjunct makes `x` non-NULL whatever the others
+            // test (`if (is.null(x) || x == 1) return(NULL)`, #692): the
+            // mirror of the `&&` arm below. A right operand that may assign
+            // `x` voids the left operand's fact about it.
+            let on_false: Vec<Narrowing> = non_null_else_facts(extract_builtin_type_narrowing(lhs))
+                .into_iter()
+                .filter(|fact| !fact.mentions_where(&|var| may_assign(rhs, var)))
+                .chain(non_null_else_facts(extract_builtin_type_narrowing(rhs)))
+                .collect();
+            if on_false.is_empty() {
                 return Narrowing::None;
             }
-            Narrowing::Else { var, target }
+            Narrowing::Compound {
+                base: Box::new(Narrowing::None),
+                on_true: Vec::new(),
+                on_false,
+            }
         }
         Expr::BinOp {
             op: BinOpKind::And | BinOpKind::AndAnd,
@@ -327,6 +329,61 @@ fn non_null_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
     }
 }
 
+/// Whether evaluating `expr` may bind `name`: an assignment to it (`<-`,
+/// `<<-`, `assign("name", v)`) or a `for` over it at any depth outside
+/// function bodies, including inside nested control flow.
+fn may_assign(expr: &Expr, name: &str) -> bool {
+    let binds = |target: &Expr| matches!(target, Expr::Ident { name: bound, .. } if bound == name);
+    walk_expr(
+        expr,
+        Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node, _| match node {
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) if binds(lhs) => ControlFlow::Break(()),
+            AstNode::Stmt(Stmt::Assign { target, .. }) if binds(target) => ControlFlow::Break(()),
+            AstNode::Stmt(Stmt::For { name: bound, .. }) if bound == name => ControlFlow::Break(()),
+            AstNode::Expr(Expr::Call { func, args, .. })
+                if ident_name(func) == Some("assign")
+                    && matches!(
+                        args.first().map(|arg| &arg.value),
+                        Some(Expr::String(bound, _)) if bound == name
+                    ) =>
+            {
+                ControlFlow::Break(())
+            }
+            _ => ControlFlow::Continue(Descend::Into),
+        },
+    )
+    .is_break()
+}
+
+/// The non-NULL facts a false disjunct proves: `is.null(x)`, or the facts
+/// of a nested disjunction.
+fn non_null_else_facts(disjunct: Narrowing) -> Vec<Narrowing> {
+    match disjunct {
+        Narrowing::Positive { var, target } if target.mode == Mode::Null => {
+            vec![Narrowing::Negative { var, target }]
+        }
+        Narrowing::Compound {
+            base,
+            on_true,
+            on_false,
+        } if matches!(*base, Narrowing::None)
+            && on_true.is_empty()
+            && on_false.iter().all(is_non_null_fact) =>
+        {
+            on_false
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn is_non_null_fact(fact: &Narrowing) -> bool {
     matches!(fact, Narrowing::Negative { target, .. } if target.mode == Mode::Null)
 }
@@ -395,22 +452,6 @@ fn is_literal_eq(expr: &Expr, value: f64) -> bool {
         Expr::Double(n, _) => *n == value,
         _ => false,
     }
-}
-
-/// Return the variable inspected by a simple predicate. `is.na` is included
-/// here solely to recognize common compound guards such as
-/// `is.null(x) || is.na(x)`; it is not itself a type refinement.
-fn predicate_var(expr: &Expr) -> Option<String> {
-    let Expr::Call { func, args, .. } = expr else {
-        return None;
-    };
-    let Expr::Ident { name, .. } = func.as_ref() else {
-        return None;
-    };
-    if name != "is.na" && predicate_target(name).is_none() && name != "inherits" {
-        return None;
-    }
-    first_arg_ident(args)
 }
 
 /// Map a type predicate name to the `RType` it tests for. Group
@@ -762,12 +803,6 @@ fn apply_single_narrowing_branch<'a>(
             }
         }
         (Narrowing::NonNullElse { var }, NarrowingBranch::Else) => {
-            if narrow_away_from_null_in(scope, var) {
-                return Some(var.as_str());
-            }
-        }
-        (Narrowing::Else { var, target }, NarrowingBranch::Else) => {
-            debug_assert_eq!(target.mode, Mode::Null);
             if narrow_away_from_null_in(scope, var) {
                 return Some(var.as_str());
             }

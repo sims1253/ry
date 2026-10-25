@@ -143,3 +143,50 @@ f <- function(x = NULL, y = NULL, cb = function() NULL) {
   }
 }
 f()
+
+## case: an is.null() operand of a return guard's || excludes the NULL default
+# expect: RY032, RY032
+# The code after the guard runs only when every operand is FALSE, whatever
+# the other operand tests (gt `ooxml_vMerge`, #692). RY032 is the `||`
+# length warning on `val == 1`.
+vmerge <- function(val = NULL) {
+  if (is.null(val) || val == 1) {
+    return(NULL)
+  }
+  if (val > 1) "restart" else "continue"
+}
+cell <- function(row_span = NULL) vmerge_span(row_span)
+vmerge_span <- function(val = 1) {
+  if (is.null(val) || val == 1) return(NULL)
+  if (val > 1) "restart" else "continue"
+}
+vmerge()
+cell()
+
+## case: a return guard's || that may leave a NULL keeps reporting it
+# expect: RY001, RY001
+# A not-null operand is FALSE for NULL, and an operand that assigns `x`
+# voids the is.null() fact about it.
+keeps_null <- function(x = NULL, p = FALSE) {
+  if (!is.null(x) || p) return(x)
+  if (x > 0) 1 else 2
+}
+reassigns_null <- function(x = 1) {
+  if (is.null(x) || !is.null(x <- NULL)) return(x)
+  if (x > 0) 1 else 2
+}
+keeps_null()
+reassigns_null()
+
+## case: a return guard's || whose operand may assign in nested code keeps the NULL
+# expect: RY001, RY001
+nested_null <- function(x = NULL) {
+  if (is.null(x) || { if (TRUE) x <- NULL; FALSE }) return(0)
+  if (x > 0) 1 else 2
+}
+assigns_null <- function(x = NULL) {
+  if (is.null(x) || { assign("x", NULL); FALSE }) return(0)
+  if (x > 0) 1 else 2
+}
+nested_null()
+assigns_null()

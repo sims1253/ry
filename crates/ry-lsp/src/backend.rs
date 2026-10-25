@@ -482,7 +482,10 @@ async fn refresh_watchers(client: Client, state: Arc<Mutex<State>>) {
         serde_json::json!({"globPattern": "**/ry.toml"}),
         serde_json::json!({"globPattern": "**/DESCRIPTION"}),
         serde_json::json!({"globPattern": "**/NAMESPACE"}),
-        serde_json::json!({"globPattern": "**/src/*.{c,cc,cpp,cxx,h,hh,hpp}"}),
+        serde_json::json!({"globPattern": format!(
+            "**/src/*.{{{}}}",
+            ry_workspace::NATIVE_SOURCE_EXTENSIONS.join(",")
+        )}),
         serde_json::json!({"globPattern": "**/*.{rda,RData,rdata,json}"}),
         // Sources, so edits to unopened files refresh the disk index;
         // per-file walk rules apply when the event is processed.

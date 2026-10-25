@@ -22,6 +22,10 @@ impl Token {
     }
 }
 
+/// Extensions of the `src/` files workspace resolution reads: C and C++
+/// sources for registration tables, plus headers for Rcpp modules.
+pub const NATIVE_SOURCE_EXTENSIONS: &[&str] = &["c", "cc", "cpp", "cxx", "h", "hh", "hpp"];
+
 /// Read ordinary source files only. Headers, generated sources, and custom
 /// build steps may supply more routines; this inventory is never exhaustive.
 pub(crate) fn registered_symbols(root: &Path, library: &str) -> HashSet<String> {
@@ -42,8 +46,7 @@ pub(crate) fn registered_symbols(root: &Path, library: &str) -> HashSet<String> 
 pub(crate) fn rcpp_modules(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
     let mut modules: BTreeMap<String, Option<BTreeSet<String>>> = BTreeMap::new();
     let mut readable = true;
-    let extensions = ["c", "cc", "cpp", "cxx", "h", "hh", "hpp"];
-    for_each_source(root, &extensions, |source| {
+    for_each_source(root, NATIVE_SOURCE_EXTENSIONS, |source| {
         let Some(source) = source.filter(|source| source.contains("RCPP_MODULE")) else {
             readable &= source.is_some();
             return;

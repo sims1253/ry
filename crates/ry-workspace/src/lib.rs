@@ -20,6 +20,7 @@ mod serialized;
 pub use serialized::InventoryFailure;
 use serialized::serialized_inventory;
 
+pub use native::NATIVE_SOURCE_EXTENSIONS;
 use packages::NamespaceMetadata;
 pub use packages::{PackageFacts, attaching};
 

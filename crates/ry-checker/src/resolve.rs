@@ -418,6 +418,58 @@ impl Checker {
         self.resolves_to_base_impl(name, scope, false)
     }
 
+    /// [`Self::resolves_to_base_lenient`] for a built-in guard callee
+    /// (`is.null`, `length`, ...), extended to quoted bindings, which that
+    /// check matches only by raw spelling, and to top-level bindings ry
+    /// cannot show hold data.
+    pub(crate) fn guard_callee_resolves_to_base(&self, name: &str, scope: &Scope) -> bool {
+        if name.contains("::") {
+            return self.resolves_to_base_lenient(name, scope);
+        }
+        let quoted = format!("`{name}`");
+        self.resolves_to_base_lenient(name, scope)
+            && self.resolves_to_base_lenient(&quoted, scope)
+            && !self.top_level_binding_may_be_function([name, quoted.as_str()], scope)
+    }
+
+    /// Whether a top-level binding of a symbol, under either of its
+    /// `spellings` (`length`, `` `length` ``), may hold a function. R skips a
+    /// binding that holds data when it looks up a call head, so only a value
+    /// ry knows to be data is safe.
+    fn top_level_binding_may_be_function(&self, spellings: [&str; 2], scope: &Scope) -> bool {
+        use ry_core::types::Mode;
+        let table = &self.fn_table;
+        if !spellings
+            .iter()
+            .any(|spelling| table.known_vars.contains(*spelling))
+        {
+            return false;
+        }
+        let mut values = spellings
+            .iter()
+            .filter_map(|spelling| scope.get(spelling))
+            .peekable();
+        spellings
+            .iter()
+            .any(|spelling| table.callable_vars.contains(*spelling))
+            || values.peek().is_none()
+            || values.any(|ty| {
+                !matches!(
+                    ty.mode,
+                    Mode::Logical
+                        | Mode::Integer
+                        | Mode::Double
+                        | Mode::Complex
+                        | Mode::Character
+                        | Mode::Raw
+                        | Mode::List
+                        | Mode::Null
+                        | Mode::Environment
+                        | Mode::Language
+                )
+            })
+    }
+
     /// Whether the callee `name` resolves to `base::bare_name` at this call
     /// site, given the current lexical scope and project metadata.
     ///

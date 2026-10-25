@@ -349,22 +349,23 @@ impl IndexWriter {
                     .to_file_path()
                     .is_ok_and(|path| config_paths.contains(&path))
         });
-        let resolution_changed = config_or_baseline_changed
-            || changes.iter().any(|change| {
-                let path = change.uri.path();
-                path.ends_with("DESCRIPTION")
-                    || path.ends_with("NAMESPACE")
-                    || change.uri.to_file_path().is_ok_and(|path| {
-                        path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("src"))
-                            && matches!(
-                                path.extension().and_then(|ext| ext.to_str()),
-                                Some("c" | "cc" | "cpp" | "cxx")
-                            )
-                    })
-                    || path.ends_with(".rda")
-                    || path.ends_with(".RData")
-                    || path.ends_with(".rdata")
-            });
+        let resolution_changed =
+            config_or_baseline_changed
+                || changes.iter().any(|change| {
+                    let path = change.uri.path();
+                    path.ends_with("DESCRIPTION")
+                        || path.ends_with("NAMESPACE")
+                        || change.uri.to_file_path().is_ok_and(|path| {
+                            path.parent().and_then(Path::file_name)
+                                == Some(std::ffi::OsStr::new("src"))
+                                && path.extension().and_then(|ext| ext.to_str()).is_some_and(
+                                    |ext| ry_workspace::NATIVE_SOURCE_EXTENSIONS.contains(&ext),
+                                )
+                        })
+                        || path.ends_with(".rda")
+                        || path.ends_with(".RData")
+                        || path.ends_with(".rdata")
+                });
         let sources: Vec<PathBuf> = changes
             .iter()
             .filter_map(|change| change.uri.to_file_path().ok())

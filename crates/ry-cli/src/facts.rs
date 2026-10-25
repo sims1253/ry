@@ -89,6 +89,7 @@ fn workspace_value(workspace: &ry_workspace::WorkspaceContext) -> Value {
                 "native_routine_prefixes": prefixes,
                 "native_registration": facts.native_registration,
                 "base_before_search_path": facts.base_before_search_path,
+                "rcpp_modules": facts.rcpp_modules.as_ref(),
             });
             (path, value)
         })

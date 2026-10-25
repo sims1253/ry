@@ -92,6 +92,12 @@ fn shadowed_length_and_dispatch_risk_still_warn_in_package_mode() {
         "length <- function(x) 1L\nprobe <- function(x) length(x) == 1L && x == \"\"\n",
     );
     assert!(shadowed.contains(&"RY032".to_string()), "{shadowed:?}");
+    // A backtick-quoted definition binds the same `length`.
+    let quoted = check_package(
+        "",
+        "`length` <- function(x) 1L\nprobe <- function(x) length(x) == 1L && x == \"\"\n",
+    );
+    assert!(quoted.contains(&"RY032".to_string()), "{quoted:?}");
     let dispatched = check_package(
         "S3method(length, disguised)\n",
         "length.disguised <- function(x) 1L\nprobe <- function(x) length(x) == 1L && x == \"\"\n",
@@ -106,6 +112,17 @@ fn shadowed_length_and_dispatch_risk_still_warn_in_package_mode() {
         unregistered.contains(&"RY032".to_string()),
         "{unregistered:?}"
     );
+}
+
+/// R skips a data binding when it looks up a call head, so a top-level
+/// `length <- 0L` leaves the guard calling base `length`.
+#[test]
+fn data_named_length_keeps_the_guard() {
+    let codes = check_package(
+        "",
+        "length <- 0L\nprobe <- function(x) length(x) == 1L && x == \"\"\n",
+    );
+    assert!(!codes.contains(&"RY032".to_string()), "{codes:?}");
 }
 
 /// Reassignment inside the guarded operand invalidates the scalar proof.

@@ -8,8 +8,9 @@ use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use ry_typeshed::Typeshed;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 /// Per-file package facts that are not R bindings.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -29,6 +30,10 @@ pub struct PackageFacts {
     /// there. Set only without whole-package `import()`s: an installed export
     /// list does not prove an import lacks a base name.
     pub base_before_search_path: bool,
+    /// Class and function names each fully read `RCPP_MODULE` in `src/`
+    /// declares, for `Rcpp::loadModule(module, TRUE)`. Read only for a
+    /// package whose R code calls `loadModule()`.
+    pub rcpp_modules: Arc<BTreeMap<String, BTreeSet<String>>>,
 }
 
 /// Bindings and whole-package imports declared by an R package NAMESPACE.

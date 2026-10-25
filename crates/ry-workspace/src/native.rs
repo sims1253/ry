@@ -1,6 +1,7 @@
-//! Literal native registration tables from a package's C and C++ sources.
+//! Literal native registration tables and Rcpp module declarations from a
+//! package's C and C++ sources.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,24 +25,148 @@ impl Token {
 /// Read ordinary source files only. Headers, generated sources, and custom
 /// build steps may supply more routines; this inventory is never exhaustive.
 pub(crate) fn registered_symbols(root: &Path, library: &str) -> HashSet<String> {
+    let mut found = HashSet::new();
+    for_each_source(root, &["c", "cc", "cpp", "cxx"], |source| {
+        found.extend(source_symbols(source, library));
+    });
+    found
+}
+
+/// The class and function names each `RCPP_MODULE(name) { ... }` in `src/`
+/// declares, which `Rcpp::loadModule(name, TRUE)` binds (#704). A module
+/// with a body this scan cannot read in full is left out, and so is every
+/// module when a file naming `RCPP_MODULE` cannot be tokenized.
+pub(crate) fn rcpp_modules(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
+    let mut modules: BTreeMap<String, Option<BTreeSet<String>>> = BTreeMap::new();
+    let mut readable = true;
+    let extensions = ["c", "cc", "cpp", "cxx", "h", "hh", "hpp"];
+    for_each_source(root, &extensions, |source| {
+        if !source.contains("RCPP_MODULE") {
+            return;
+        }
+        let joined = source.replace("\\\r\n", "").replace("\\\n", "");
+        let Some(code) = strip_comments(&joined) else {
+            readable = false;
+            return;
+        };
+        // Drop preprocessor lines, so both arms of an `#if` count.
+        let code: Vec<_> = code
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .collect();
+        let tokens = lex(&code.join("\n"));
+        let mut index = 0;
+        while index < tokens.len() {
+            let [
+                Token::Word(head),
+                Token::Punct('('),
+                Token::Word(name),
+                Token::Punct(')'),
+                ..,
+            ] = &tokens[index..]
+            else {
+                index += 1;
+                continue;
+            };
+            if head != "RCPP_MODULE" {
+                index += 1;
+                continue;
+            }
+            let Some(end) = balanced_end(&tokens, index + 4, '{', '}') else {
+                readable = false;
+                return;
+            };
+            let entry = modules
+                .entry(name.clone())
+                .or_insert_with(|| Some(BTreeSet::new()));
+            match (entry.as_mut(), module_names(&tokens[index + 5..end])) {
+                (Some(known), Some(names)) => known.extend(names),
+                _ => *entry = None,
+            }
+            index = end + 1;
+        }
+    });
+    if !readable {
+        return BTreeMap::new();
+    }
+    modules
+        .into_iter()
+        .filter_map(|(module, names)| Some((module, names?)))
+        .collect()
+}
+
+/// The names one module body declares, if each statement is `using ...`,
+/// `class_<T>("Name")...` or `function("name", ...)`. Anything else, such
+/// as a helper call that declares more objects, makes the body unreadable.
+fn module_names(body: &[Token]) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (index, token) in body.iter().enumerate() {
+        match token {
+            Token::Punct('(' | '[' | '{') => depth += 1,
+            Token::Punct(')' | ']' | '}') => depth = depth.checked_sub(1)?,
+            Token::Punct(';') if depth == 0 => {
+                names.extend(statement_name(&body[start..index])?);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    names.extend(statement_name(&body[start..])?);
+    Some(names)
+}
+
+/// `Some(None)` for a statement that declares nothing, `None` for one this
+/// scan does not understand.
+fn statement_name(statement: &[Token]) -> Option<Option<String>> {
+    // `Rcpp::class_`, `::Rcpp::function`.
+    let qualifier = statement
+        .iter()
+        .take_while(|token| **token == Token::Punct(':') || token.word() == Some("Rcpp"))
+        .count();
+    let statement = &statement[qualifier..];
+    match statement {
+        [] => Some(None),
+        [Token::Word(head), ..] if head == "using" => Some(None),
+        [
+            Token::Word(head),
+            Token::Punct('('),
+            Token::String(name),
+            ..,
+        ] if head == "function" => Some(Some(name.clone())),
+        [Token::Word(head), ..] if head == "class_" => {
+            let end = balanced_end(statement, 1, '<', '>')?;
+            match statement.get(end + 1..end + 3)? {
+                [Token::Punct('('), Token::String(name)] => Some(Some(name.clone())),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Visit the UTF-8 files directly in `src/` with one of `extensions`,
+/// within fixed file-count and byte budgets.
+fn for_each_source(root: &Path, extensions: &[&str], mut visit: impl FnMut(&str)) {
     let Ok(entries) = std::fs::read_dir(root.join("src")) else {
-        return HashSet::new();
+        return;
     };
     let mut paths: Vec<_> = entries
         .take(4096)
         .flatten()
         .filter(|entry| {
             entry.file_type().is_ok_and(|kind| kind.is_file())
-                && matches!(
-                    entry.path().extension().and_then(|s| s.to_str()),
-                    Some("c" | "cc" | "cpp" | "cxx")
-                )
+                && entry
+                    .path()
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|extension| extensions.contains(&extension))
         })
         .map(|entry| entry.path())
         .collect();
     paths.sort();
     let mut remaining = 8 * 1024 * 1024;
-    let mut found = HashSet::new();
     for path in paths.into_iter().take(256) {
         let Ok(size) = path.metadata().map(|m| m.len()) else {
             continue;
@@ -60,10 +185,9 @@ pub(crate) fn registered_symbols(root: &Path, library: &str) -> HashSet<String> 
         }
         remaining -= size;
         if let Ok(source) = std::str::from_utf8(&bytes) {
-            found.extend(source_symbols(source, library));
+            visit(source);
         }
     }
-    found
 }
 
 fn lex(source: &str) -> Vec<Token> {

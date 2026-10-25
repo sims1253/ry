@@ -32,6 +32,7 @@ use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Nearest ancestor directory (starting at the path itself for
 /// directories, at the parent for files) holding a `DESCRIPTION` file:
@@ -424,6 +425,7 @@ pub fn resolve_workspace_context(
     let mut dataset_cache: HashMap<PathBuf, DataInventory> = HashMap::new();
     let mut source_binding_cache: HashMap<PathBuf, SourceBindings> = HashMap::new();
     let mut native_inventory_cache = HashMap::new();
+    let mut rcpp_module_cache = HashMap::new();
     // A package root is visited once per file in it, so cache the
     // DESCRIPTION read like the sibling namespace/dataset caches.
     let mut description_cache: HashMap<PathBuf, DescriptionPackages> = HashMap::new();
@@ -518,6 +520,15 @@ pub fn resolve_workspace_context(
             file_bindings.extend(metadata.native_routines.iter().cloned());
             file_package_facts.native_routine_prefixes = metadata.native_routine_prefixes.clone();
             file_package_facts.native_registration = metadata.native_registration;
+            // Only a package that calls `loadModule()` reads `src/` for it.
+            file_package_facts.rcpp_modules =
+                Arc::clone(rcpp_module_cache.entry(root.clone()).or_insert_with(|| {
+                    Arc::new(if source_bindings.loads_rcpp_module {
+                        native::rcpp_modules(&root)
+                    } else {
+                        BTreeMap::new()
+                    })
+                }));
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
             // `import(pkg)` puts pkg's exports in the package namespace, not
             // on the search path. Two execution contexts still resolve those
@@ -725,6 +736,9 @@ struct SourceBindings {
     /// ordinary variables. Only meaningful when the NAMESPACE declares
     /// `useDynLib(..., .registration = TRUE)`; see [`resolve_workspace_context`].
     native_symbols: HashSet<String>,
+    /// Whether some call is `loadModule()`, so `src/` may hold the
+    /// `RCPP_MODULE` declarations it binds.
+    loads_rcpp_module: bool,
 }
 
 fn source_package_namespace_bindings(root: &Path, files: &[&SourceFile]) -> SourceBindings {
@@ -844,6 +858,9 @@ fn collect_dynamic_bindings_stmts(stmts: &[Stmt], found: &mut SourceBindings) {
                 .map(|arg| &arg.value)
         {
             found.native_symbols.insert(symbol.clone());
+        }
+        if matches!(name.as_str(), "loadModule" | "Rcpp::loadModule") {
+            found.loads_rcpp_module = true;
         }
         let has_named_environment = args.iter().any(|argument| {
             matches!(

@@ -1073,7 +1073,10 @@ impl Project {
         self.package_facts.get(path)?.source_package.as_deref()
     }
 
-    /// Each package's [`NamespacePool`].
+    /// Each package's [`NamespacePool`]. This relies on workspace discovery
+    /// attaching `source_package` only to files under the package's `R/`
+    /// directory (`is_package_r_file` in ry-workspace); a test or `inst/`
+    /// file tagged with it would leak its bindings back into the namespace.
     fn namespaces(&self) -> HashMap<String, NamespacePool> {
         let mut pools: HashMap<String, NamespacePool> = HashMap::new();
         for (path, _) in &self.files {

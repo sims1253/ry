@@ -688,6 +688,28 @@ fn type_is_exactly_tested_family(existing: &RType, target: &RType) -> bool {
     }
 }
 
+/// Install the selected branch's failed-namespace fact (RY122): the
+/// `FALSE` branch gains the package, the `TRUE` branch loses it (a nested
+/// positive guard proves the namespace loaded).
+pub(crate) fn apply_failed_namespace_branch(
+    scope: &mut Scope,
+    guard: &Option<(String, bool)>,
+    branch: NarrowingBranch,
+) {
+    let Some((package, failed_then)) = guard else {
+        return;
+    };
+    let failed = matches!(
+        (branch, failed_then),
+        (NarrowingBranch::Then, true) | (NarrowingBranch::Else, false)
+    );
+    if failed {
+        scope.failed_namespaces.insert(package.clone());
+    } else {
+        scope.failed_namespaces.remove(package);
+    }
+}
+
 /// Apply all facts proved by the selected branch and return their binding names.
 pub(crate) fn apply_narrowing_branch<'a>(
     scope: &mut Scope,
@@ -1208,6 +1230,105 @@ impl Checker {
             var: var.clone(),
             target: guard_target(json_rtype_to_rtype(&predicate.target)),
         }
+    }
+
+    /// A literal-package `requireNamespace` test whose result selects a
+    /// branch (RY122): the package and whether the `then` branch is the
+    /// one where loading failed. Only `quietly = TRUE` returns `FALSE` on
+    /// failure; without it base `requireNamespace` errors first, so the
+    /// `FALSE` branch never runs. A masked `requireNamespace` (anything
+    /// [`Checker::resolves_to_base`] rejects) and a dynamic package name
+    /// prove nothing.
+    pub(crate) fn failed_namespace_guard(
+        &self,
+        cond: &Expr,
+        scope: &Scope,
+    ) -> Option<(String, bool)> {
+        let mut negated = false;
+        let mut test = cond;
+        while let Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } = test
+        {
+            if ops_chooser::operator_rebound(self, "!", scope) {
+                return None;
+            }
+            negated = !negated;
+            test = expr;
+        }
+        let Expr::Call { func, args, .. } = test else {
+            return None;
+        };
+        let name = ident_name(func)?;
+        if crate::semantic_lists::bare_name(name) != "requireNamespace"
+            || !self.resolves_to_base(name, scope)
+            || scope.data_mask_unknown
+        {
+            return None;
+        }
+        let named_package: Vec<&Arg> = args
+            .iter()
+            .filter(|arg| arg.name.as_deref() == Some("package"))
+            .collect();
+        let package_arg = match named_package.as_slice() {
+            [arg] => {
+                // A named `package` plus an unnamed first argument is a
+                // duplicate match in R, not a guard.
+                if args.first().is_some_and(|first| first.name.is_none()) {
+                    return None;
+                }
+                *arg
+            }
+            [] => args.first().filter(|first| first.name.is_none())?,
+            _ => return None,
+        };
+        let Expr::String(package, _) = &package_arg.value else {
+            return None;
+        };
+        if package.is_empty() {
+            return None;
+        }
+        let mut quietly = args
+            .iter()
+            .filter(|arg| arg.name.as_deref() == Some("quietly"));
+        let quietly_true = matches!(
+            (quietly.next(), quietly.next()),
+            (Some(arg), None) if matches!(arg.value, Expr::Logical(true, _))
+        );
+        quietly_true.then(|| (package.clone(), negated))
+    }
+
+    /// RY122: a `pkg::name` / `pkg:::name` access whose package is proven
+    /// unloaded on this branch. A rebound `::`/`:::` operator runs instead
+    /// of the namespace lookup, so it proves nothing.
+    pub(crate) fn check_failed_namespace_access(&mut self, name: &str, span: Span, scope: &Scope) {
+        if scope.failed_namespaces.is_empty() {
+            return;
+        }
+        let clean = name
+            .strip_prefix('`')
+            .and_then(|rest| rest.strip_suffix('`'))
+            .unwrap_or(name);
+        let Some((package, _)) = crate::resolve::split_qualified(clean) else {
+            return;
+        };
+        if !scope.failed_namespaces.contains(package) {
+            return;
+        }
+        let operator = if clean.contains(":::") { ":::" } else { "::" };
+        if ops_chooser::operator_rebound(self, operator, scope) {
+            return;
+        }
+        self.emit(
+            Severity::Warning,
+            span,
+            "RY122",
+            format!(
+                "`{name}` needs the `{package}` namespace, but `requireNamespace(\"{package}\", quietly = TRUE)` returned `FALSE` on this branch"
+            ),
+        );
     }
 
     /// The narrowing for a condition that selects code: an `if` test, the

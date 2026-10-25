@@ -98,6 +98,12 @@ impl Checker {
             }
             _ => scope.clear_condition_aliases(),
         }
+        // A failed-namespace fact (RY122) dies with any call that could
+        // load a namespace; only the audited inert calls keep it.
+        match effect {
+            CallEffect::None | CallEffect::RunsCallerCode => {}
+            _ => scope.failed_namespaces.clear(),
+        }
         match effect {
             CallEffect::None => {}
             CallEffect::Writes(writes) => {

@@ -383,6 +383,16 @@ expression: snapshots
         start: 2015
   fixture: err_dynamic_formals_scope_precision.R
 - diagnostics:
+    - code: RY122
+      message: "`bslib::page_fluid` needs the `bslib` namespace, but `requireNamespace(\"bslib\", quietly = TRUE)` returned `FALSE` on this branch"
+      severity: warning
+      span:
+        column: 56
+        end: 89
+        line: 1
+        start: 72
+  fixture: err_failed_namespace_access.R
+- diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
@@ -2334,6 +2344,8 @@ expression: snapshots
   fixture: ok_factor_class.R
 - diagnostics: []
   fixture: ok_factor_comparison.R
+- diagnostics: []
+  fixture: ok_failed_namespace_controls.R
 - diagnostics: []
   fixture: ok_ffi_call_first_arg.R
 - diagnostics: []

@@ -80,5 +80,6 @@ mod printf_provenance;
 mod s4_dispatch;
 mod switch_selection;
 
+mod failed_namespace;
 mod integer_range;
 mod literal_conditions;

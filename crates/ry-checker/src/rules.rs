@@ -346,6 +346,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A resolved testthat `expect_equal()`/`expect_identical()` compares the same conservatively deterministic expression to itself, so it cannot check two different values. Silent for differing operands, RNG/time/I/O or unknown calls, masked assertion functions, and `$`/`[[` access whose receiver is not proven plain data.",
     },
+    Rule {
+        code: "RY123",
+        name: "failed-namespace-access",
+        default_severity: Severity::Warning,
+        summary: "A `pkg::name` or `pkg:::name` access runs on the branch where `requireNamespace(\"pkg\", quietly = TRUE)` returned `FALSE`, so the namespace is not loaded and the access errors instead of selecting the fallback. Reported only for a literal package name whose `base::requireNamespace` result dominates the access.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

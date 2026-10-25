@@ -330,12 +330,21 @@ impl Checker {
         // length-1 logical condition.
         self.infer_condition(cond, scope, ConditionContext::If);
         let narrowing = self.extract_branch_narrowing(cond, scope);
+        let failed_ns = self.failed_namespace_guard(cond, scope);
         // The arm a literal condition never takes is inferred silently.
         let literal_cond = match cond {
             Expr::Logical(value, _) => Some(*value),
             _ => None,
         };
-        self.walk_journal_if(scope, &narrowing, literal_cond, then, else_, IfWalk::Value)
+        self.walk_journal_if(
+            scope,
+            &narrowing,
+            &failed_ns,
+            literal_cond,
+            then,
+            else_,
+            IfWalk::Value,
+        )
     }
 
     /// Infer the result type of `switch(EXPR, ...)`. Both forms are
@@ -381,10 +390,26 @@ impl Checker {
     pub(crate) fn infer_trycatch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         let matched = match_arguments(&["expr", "...", "finally"], args);
         let expr_index = matched.arg_for_param(0);
+        // RY122: an `error` handler deliberately probes failure, so a
+        // proven-failed namespace access inside `expr` is the caught
+        // error, not a missed fallback. Without an `error` handler the
+        // error still propagates and the fact stays live.
+        let has_error_handler = args
+            .iter()
+            .enumerate()
+            .any(|(i, a)| a.name.as_deref() == Some("error") && matched.param_for_arg[i].is_none());
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {
             if Some(i) == expr_index {
+                // Only `expr` is protected by the handler; `finally` and
+                // handler bodies keep the surrounding fact (function
+                // bodies discard it on entry regardless).
+                let probed =
+                    has_error_handler.then(|| std::mem::take(&mut scope.failed_namespaces));
                 types.push(self.infer(&a.value, scope));
+                if let Some(probed) = probed {
+                    scope.failed_namespaces = probed;
+                }
             } else if a.name.is_some() && matched.param_for_arg[i].is_none() {
                 if let Some(rt) = self.callback_return_type(&a.value, &[RType::unknown()], scope) {
                     types.push(rt);

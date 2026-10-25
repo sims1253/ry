@@ -523,6 +523,11 @@ pub struct Scope {
     /// only possible, so a call head of that name keeps its stub (#722).
     /// Monotone: a stale entry only restores the stub fallback.
     pub(crate) possible_block_writes: FxSet<String>,
+    /// Literal packages whose `base::requireNamespace(pkg, quietly = TRUE)`
+    /// returned `FALSE` on the branch dominating this point (RY122). A
+    /// branch-local fact: journal snapshots restore it, unknown calls and
+    /// fresh execution frames clear it.
+    pub(crate) failed_namespaces: FxSet<String>,
     pub data_mask_unknown: bool,
     pub(crate) data_mask: Option<Arc<DataMaskFrame>>,
     pub(crate) tidy_injection: Option<InjectionMode>,
@@ -546,6 +551,9 @@ impl Scope {
         scope.uncertainty.dynamic_bindings = false;
         scope.uncertainty.unseen_rebinds = true;
         scope.scalar_asserted_bindings.clear();
+        // A closure may run after the namespace loads, so a failed-load
+        // branch fact from the defining frame proves nothing inside it.
+        scope.failed_namespaces.clear();
         scope.loop_vector_bindings.clear();
         scope.known_strings.clear();
         scope.condition_aliases.clear();
@@ -634,6 +642,7 @@ impl Scope {
                 self.journal_binding(&name);
             }
         }
+        self.failed_namespaces.clear();
         self.clear_reference_bindings();
         for (_, ty) in self.bindings.iter_mut() {
             *ty = RType::unknown();

@@ -933,6 +933,7 @@ impl Checker {
                     scope,
                 );
                 let narrowing = self.extract_branch_narrowing(cond, scope);
+                let failed_ns = self.failed_namespace_guard(cond, scope);
                 let literal_cond = match cond {
                     Expr::Logical(value, _) => Some(*value),
                     _ => None,
@@ -942,6 +943,7 @@ impl Checker {
                     self.walk_cloned_if(
                         scope,
                         &narrowing,
+                        &failed_ns,
                         literal_cond,
                         then,
                         else_.as_deref(),
@@ -952,6 +954,7 @@ impl Checker {
                 self.walk_journal_if(
                     scope,
                     &narrowing,
+                    &failed_ns,
                     literal_cond,
                     IfArm::Statements(then),
                     else_.as_deref().map(IfArm::Statements),
@@ -1664,10 +1667,12 @@ impl Checker {
     /// `literal_cond` is the value of a literal `TRUE`/`FALSE` condition;
     /// the arm it never takes contributes no loop-vector alternative and
     /// is walked without diagnostics.
+    #[allow(clippy::too_many_arguments)]
     fn walk_journal_if(
         &mut self,
         scope: &mut Scope,
         narrowing: &Narrowing,
+        failed_ns: &Option<(String, bool)>,
         literal_cond: Option<bool>,
         then: IfArm<'_>,
         else_: Option<IfArm<'_>>,
@@ -1678,6 +1683,7 @@ impl Checker {
         for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
             narrowed.insert(name.to_string());
         }
+        apply_failed_namespace_branch(scope, failed_ns, NarrowingBranch::Then);
         let then_value = self.walk_journal_arm(then, literal_cond == Some(false), scope, &mut walk);
         let mut then_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
@@ -1685,6 +1691,7 @@ impl Checker {
         for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Else) {
             narrowed.insert(name.to_string());
         }
+        apply_failed_namespace_branch(scope, failed_ns, NarrowingBranch::Else);
         // Without an `else`, R returns NULL on the FALSE path.
         let else_value = match else_ {
             Some(arm) => self.walk_journal_arm(arm, literal_cond == Some(true), scope, &mut walk),
@@ -3405,6 +3412,7 @@ impl Checker {
                 // RY010. The `contains("::")` test matches both
                 // `::` and `:::`.
                 if name.contains("::") {
+                    self.check_failed_namespace_access(name, *span, scope);
                     return RType::unknown();
                 }
                 // Special/operator names referenced via backticks

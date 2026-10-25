@@ -114,6 +114,17 @@ fn shadowed_length_and_dispatch_risk_still_warn_in_package_mode() {
     );
 }
 
+/// R skips a data binding when it looks up a call head, so a top-level
+/// `length <- 0L` leaves the guard calling base `length`.
+#[test]
+fn data_named_length_keeps_the_guard() {
+    let codes = check_package(
+        "",
+        "length <- 0L\nprobe <- function(x) length(x) == 1L && x == \"\"\n",
+    );
+    assert!(!codes.contains(&"RY032".to_string()), "{codes:?}");
+}
+
 /// Reassignment inside the guarded operand invalidates the scalar proof.
 #[test]
 fn reassigned_guarded_operand_still_warns_in_package_mode() {

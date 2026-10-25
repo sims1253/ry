@@ -420,14 +420,40 @@ impl Checker {
 
     /// [`Self::resolves_to_base_lenient`] for a built-in guard callee
     /// (`is.null`, `length`, ...), extended to quoted bindings, which that
-    /// check matches only by raw spelling: `known_vars` holds the unquoted
-    /// name of a top-level `` `length` <- ``, and a local one sits in the
-    /// scope under its quoted spelling.
+    /// check matches only by raw spelling, and to top-level bindings ry
+    /// cannot show hold data.
     pub(crate) fn guard_callee_resolves_to_base(&self, name: &str, scope: &Scope) -> bool {
-        self.resolves_to_base_lenient(name, scope)
-            && (name.contains("::")
-                || (!self.fn_table.known_vars.contains(name)
-                    && self.resolves_to_base_lenient(&format!("`{name}`"), scope)))
+        if name.contains("::") {
+            return self.resolves_to_base_lenient(name, scope);
+        }
+        let quoted = format!("`{name}`");
+        [name, quoted.as_str()].into_iter().all(|spelling| {
+            self.resolves_to_base_lenient(spelling, scope)
+                && !self.top_level_binding_may_be_function(spelling, scope)
+        })
+    }
+
+    /// Whether a top-level binding of `spelling` may hold a function.
+    /// `known_vars` also holds the unquoted name of a `` `length` <- ``
+    /// binding. R skips a binding that holds data when it looks up a call
+    /// head, so only a value ry knows to be data is safe.
+    fn top_level_binding_may_be_function(&self, spelling: &str, scope: &Scope) -> bool {
+        use ry_core::types::Mode;
+        self.fn_table.known_vars.contains(spelling)
+            && (self.fn_table.callable_vars.contains(spelling)
+                || !scope.get(spelling).is_some_and(|ty| {
+                    matches!(
+                        ty.mode,
+                        Mode::Logical
+                            | Mode::Integer
+                            | Mode::Double
+                            | Mode::Complex
+                            | Mode::Character
+                            | Mode::Raw
+                            | Mode::List
+                            | Mode::Null
+                    )
+                }))
     }
 
     /// Whether the callee `name` resolves to `base::bare_name` at this call

@@ -236,3 +236,31 @@ f <- function(x = NULL, y = NULL) {
   }
 }
 f()
+
+## case: a top-level data binding named like a guard callee leaves the guard base
+# no-diag
+length <- 5
+missing <- TRUE
+f <- function(x = NULL) {
+  y <- NULL
+  if (!missing(x)) {
+    if (x > 0) 1 else 2
+  }
+  if (length(y) == 1) {
+    if (y > 0) 1 else 2
+  }
+}
+f()
+
+## case: a rebound callee voids only the facts about its own subject
+# expect: RY001
+length <- function(z) 1L
+f <- function(x = NULL) {
+  y <- NULL
+  if (!is.null(x) && length(y) == 1) {
+    if (x > 0) 1 else 2
+    if (y > 0) 1 else 2
+  }
+}
+f()
+f(1)

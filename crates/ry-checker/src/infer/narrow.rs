@@ -504,9 +504,10 @@ pub(crate) fn predicate_target(name: &str) -> Option<RType> {
 }
 
 /// Whether `extract_builtin_type_narrowing` trusts the call head `name` by
-/// spelling alone, so a rebinding must void it. Qualified heads and the
-/// `is.<class>` fallback, which project predicates use, are not.
+/// spelling alone, so a rebinding or a non-`base::` qualifier must void it.
+/// The `is.<class>` fallback, which project predicates use, is not.
 fn builtin_guard_callee(name: &str) -> bool {
+    let name = crate::semantic_lists::bare_name(name);
     predicate_target(name).is_some() || matches!(name, "inherits" | "length" | "missing")
 }
 

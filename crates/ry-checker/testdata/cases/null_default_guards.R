@@ -264,3 +264,44 @@ f <- function(x = NULL) {
 }
 f()
 f(1)
+
+## case: a missing() qualified by another package proves nothing, base:: still does
+# expect: RY001
+f <- function(x = NULL) {
+  if (!otherpkg::missing(x)) {
+    if (x > 0) 1 else 2
+  }
+}
+g <- function(x = NULL) {
+  if (!base::missing(x)) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+g()
+
+## case: a data value bound under the quoted spelling leaves the guard base
+# no-diag
+`length` <- 0L
+f <- function() {
+  x <- NULL
+  if (length(x) == 1) {
+    if (x > 0) 1 else 2
+  }
+}
+f()
+
+## case: a language object or environment bound to a guard callee name is data too
+# no-diag
+is.null <- quote(x)
+length <- new.env()
+f <- function(x = NULL) {
+  if (!is.null(x)) {
+    if (x > 0) 1 else 2
+  }
+  y <- NULL
+  if (length(y) == 1) {
+    if (y > 0) 1 else 2
+  }
+}
+f()

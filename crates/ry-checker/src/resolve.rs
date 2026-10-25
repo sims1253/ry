@@ -427,33 +427,47 @@ impl Checker {
             return self.resolves_to_base_lenient(name, scope);
         }
         let quoted = format!("`{name}`");
-        [name, quoted.as_str()].into_iter().all(|spelling| {
-            self.resolves_to_base_lenient(spelling, scope)
-                && !self.top_level_binding_may_be_function(spelling, scope)
-        })
+        self.resolves_to_base_lenient(name, scope)
+            && self.resolves_to_base_lenient(&quoted, scope)
+            && !self.top_level_binding_may_be_function([name, quoted.as_str()], scope)
     }
 
-    /// Whether a top-level binding of `spelling` may hold a function.
-    /// `known_vars` also holds the unquoted name of a `` `length` <- ``
-    /// binding. R skips a binding that holds data when it looks up a call
-    /// head, so only a value ry knows to be data is safe.
-    fn top_level_binding_may_be_function(&self, spelling: &str, scope: &Scope) -> bool {
+    /// Whether a top-level binding of a symbol, under either of its
+    /// `spellings` (`length`, `` `length` ``), may hold a function. R skips a
+    /// binding that holds data when it looks up a call head, so only a value
+    /// ry knows to be data is safe.
+    fn top_level_binding_may_be_function(&self, spellings: [&str; 2], scope: &Scope) -> bool {
         use ry_core::types::Mode;
-        self.fn_table.known_vars.contains(spelling)
-            && (self.fn_table.callable_vars.contains(spelling)
-                || !scope.get(spelling).is_some_and(|ty| {
-                    matches!(
-                        ty.mode,
-                        Mode::Logical
-                            | Mode::Integer
-                            | Mode::Double
-                            | Mode::Complex
-                            | Mode::Character
-                            | Mode::Raw
-                            | Mode::List
-                            | Mode::Null
-                    )
-                }))
+        let table = &self.fn_table;
+        if !spellings
+            .iter()
+            .any(|spelling| table.known_vars.contains(*spelling))
+        {
+            return false;
+        }
+        let mut values = spellings
+            .iter()
+            .filter_map(|spelling| scope.get(spelling))
+            .peekable();
+        spellings
+            .iter()
+            .any(|spelling| table.callable_vars.contains(*spelling))
+            || values.peek().is_none()
+            || values.any(|ty| {
+                !matches!(
+                    ty.mode,
+                    Mode::Logical
+                        | Mode::Integer
+                        | Mode::Double
+                        | Mode::Complex
+                        | Mode::Character
+                        | Mode::Raw
+                        | Mode::List
+                        | Mode::Null
+                        | Mode::Environment
+                        | Mode::Language
+                )
+            })
     }
 
     /// Whether the callee `name` resolves to `base::bare_name` at this call

@@ -124,3 +124,13 @@ expression: rows
       line: 262
       message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
+- case: "a missing() qualified by another package proves nothing, base:: still does"
+  diagnostics:
+    - code: RY001
+      line: 272
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a data value bound under the quoted spelling leaves the guard base
+  diagnostics: []
+- case: a language object or environment bound to a guard callee name is data too
+  diagnostics: []

@@ -56,10 +56,18 @@ pub(crate) fn rcpp_modules(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
         // Drop preprocessor lines, so both arms of an `#if` count. Code in a
         // conditional must balance its own brackets, or one arm could close
         // the module early.
+        // Brackets inside string and character literals do not count.
         let balanced = |text: &str| {
+            let tokens = lex(text);
+            let count = |bracket: char| {
+                tokens
+                    .iter()
+                    .filter(|t| **t == Token::Punct(bracket))
+                    .count()
+            };
             [('{', '}'), ('(', ')'), ('[', ']')]
                 .iter()
-                .all(|(open, close)| text.matches(*open).count() == text.matches(*close).count())
+                .all(|(open, close)| count(*open) == count(*close))
         };
         let (mut kept, mut conditional, mut depth) = (Vec::new(), String::new(), 0usize);
         for line in code.lines() {
@@ -75,7 +83,11 @@ pub(crate) fn rcpp_modules(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
             conditional.clear();
             match lex(directive).first().and_then(Token::word) {
                 Some("if" | "ifdef" | "ifndef") => depth += 1,
-                Some("endif") => depth = depth.saturating_sub(1),
+                Some("endif") if depth > 0 => depth -= 1,
+                Some("endif") => {
+                    readable = false;
+                    return;
+                }
                 _ => {}
             }
         }

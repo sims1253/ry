@@ -521,6 +521,8 @@ pub fn resolve_workspace_context(
             file_package_facts.native_routine_prefixes = metadata.native_routine_prefixes.clone();
             file_package_facts.native_registration = metadata.native_registration;
             // Only a package that calls `loadModule()` reads `src/` for it.
+            // `source_bindings` is cached per root over all its files, so
+            // `loads_rcpp_module` is the same for every file of this root.
             file_package_facts.rcpp_modules =
                 Arc::clone(rcpp_module_cache.entry(root.clone()).or_insert_with(|| {
                     Arc::new(if source_bindings.loads_rcpp_module {

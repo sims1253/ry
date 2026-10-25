@@ -51,6 +51,9 @@ pub(crate) enum Narrowing {
     /// `!missing(x)`: the caller supplied `x` in the then branch, so a
     /// defaulted parameter's omitted-call type does not describe it.
     Supplied { var: String },
+    /// R never enters this branch with `var`'s recorded type, so code there
+    /// sees an unknown value (base `is.numeric()` on a Date).
+    Unreached { var: String },
 }
 
 impl Narrowing {
@@ -84,7 +87,8 @@ impl Narrowing {
             | Narrowing::NonNullElse { var }
             | Narrowing::ScalarElse { var, .. }
             | Narrowing::ScalarThen { var }
-            | Narrowing::Supplied { var } => about(var),
+            | Narrowing::Supplied { var }
+            | Narrowing::Unreached { var } => about(var),
         }
     }
 }
@@ -786,6 +790,10 @@ fn apply_single_narrowing_branch<'a>(
                 }
             }
         }
+        (Narrowing::Unreached { var }, NarrowingBranch::Then) => {
+            scope.insert_narrowed(var.clone(), RType::unknown());
+            return Some(var.as_str());
+        }
         (Narrowing::ScalarThen { var }, NarrowingBranch::Then) => {
             scope.clear_loop_vector(var);
         }
@@ -837,37 +845,27 @@ fn is_mode_predicate(target: &RType) -> bool {
 /// under `is.character(dof)`), so the branch sees an unknown value instead
 /// (#741, #752).
 fn disjoint_mode_guard(scope: &Scope, var: &str, existing: &RType, target: &RType) -> bool {
-    let disjoint = is_mode_predicate(target)
+    is_mode_predicate(target)
         && !existing.mode.is_unknown_or_non_vector()
         && existing.mode != Mode::Null
         && !scope.is_default_parameter(var)
-        && !types_intersect(existing, target);
-    disjoint || classed_numeric_guard(existing, target)
+        && !types_intersect(existing, target)
 }
 
-/// `is.numeric` dispatches: base's `is.numeric.Date`, `is.numeric.POSIXt`
-/// and `is.numeric.difftime` return FALSE, and so does the primitive for a
-/// factor. Any other class keeps `is.numeric()` TRUE for an integer or
-/// double. The passing branch is dead when every value carries one of these
-/// classes.
-fn classed_numeric_guard(existing: &RType, target: &RType) -> bool {
-    let non_numeric = |cv: &ClassVector| {
+/// Base `is.numeric.Date`, `is.numeric.POSIXt` and `is.numeric.difftime`
+/// return FALSE, and so does the primitive for a factor. Any other class
+/// keeps `is.numeric()` TRUE for an integer or double. Whether every value
+/// of `existing` carries one of these classes.
+fn never_numeric(existing: &RType) -> bool {
+    let rejected = |cv: &ClassVector| {
         ["Date", "POSIXt", "difftime", "factor"]
             .iter()
             .any(|class| cv.contains(class))
     };
-    let numeric_test = is_mode_predicate(target)
-        && target.members.as_ref().is_some_and(|members| {
-            members.len() == 2
-                && members.iter().any(|member| member.mode == Mode::Integer)
-                && members.iter().any(|member| member.mode == Mode::Double)
-                && members.iter().all(|member| !member.class.has_known_class())
-        });
-    numeric_test
-        && (non_numeric(&existing.class)
-            || existing.members.as_ref().is_some_and(|members| {
-                !members.is_empty() && members.iter().all(|member| non_numeric(&member.class))
-            }))
+    rejected(&existing.class)
+        || existing.members.as_ref().is_some_and(|members| {
+            !members.is_empty() && members.iter().all(|member| rejected(&member.class))
+        })
 }
 
 /// A failing class test (`!inherits(x, "Date")`) on a value whose fully known
@@ -883,8 +881,11 @@ fn proven_class_guard(scope: &Scope, var: &str, existing: &RType, target: &RType
             .names
             .iter()
             .take(target.class.len as usize)
-            .flatten()
-            .all(|class| existing.class.contains(class))
+            .all(|class| {
+                class
+                    .as_deref()
+                    .is_some_and(|class| existing.class.contains(class))
+            })
 }
 
 fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> bool {
@@ -911,6 +912,35 @@ fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> b
 }
 
 impl Checker {
+    /// `is.numeric(x)` or its negation, resolved to base, on a binding
+    /// [`never_numeric`] covers: the binding and the truth of `cond` on the
+    /// path where `is.numeric(x)` would be TRUE, which R never takes.
+    fn never_numeric_test(&self, cond: &Expr, scope: &Scope) -> Option<(String, bool)> {
+        let mut truth = true;
+        let mut test = cond;
+        while let Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } = test
+        {
+            truth = !truth;
+            test = expr;
+        }
+        let Expr::Call { func, args, .. } = test else {
+            return None;
+        };
+        let name = ident_name(func)?;
+        let var = first_arg_ident(args)?;
+        (crate::semantic_lists::bare_name(name) == "is.numeric"
+            && args.len() == 1
+            && self.resolves_to_base(name, scope)
+            && scope.get(&var).is_some_and(|existing| {
+                never_numeric(existing) && !self.s3_method_may_apply("is.numeric", existing, scope)
+            }))
+        .then_some((var, truth))
+    }
+
     /// Restrict compound facts to predicates without intervening writes or calls.
     fn compound_guard_is_pure(&self, cond: &Expr, scope: &Scope) -> bool {
         match cond {
@@ -976,6 +1006,19 @@ impl Checker {
     /// only when ordinary typeshed resolution establishes their provenance.
     pub(crate) fn extract_type_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
         let built_in = extract_builtin_type_narrowing(cond);
+        if let Some((var, truth)) = self.never_numeric_test(cond, scope) {
+            let fact = vec![Narrowing::Unreached { var }];
+            let (on_true, on_false) = if truth {
+                (fact, Vec::new())
+            } else {
+                (Vec::new(), fact)
+            };
+            return Narrowing::Compound {
+                base: Box::new(built_in),
+                on_true,
+                on_false,
+            };
+        }
         if !scope.loop_vector_bindings.is_empty()
             && let Some(var) = self.scalar_assertion_subject(cond, scope)
         {
@@ -1208,6 +1251,26 @@ impl Checker {
 #[cfg(test)]
 mod selected_branch_tests {
     use super::*;
+
+    #[test]
+    fn an_unnamed_tested_class_does_not_prove_the_class_test() {
+        let scope = Scope::default();
+        let date = RType::scalar(Mode::Double).with_class(ClassVector::single("Date"));
+        let target = |class: ClassVector| RType::unknown().with_class(class);
+        assert!(proven_class_guard(
+            &scope,
+            "x",
+            &date,
+            &target(ClassVector::single("Date"))
+        ));
+        let partial = ClassVector {
+            names: [Some(Arc::from("Date")), None, None, None],
+            len: 2,
+            known: true,
+            guarded: false,
+        };
+        assert!(!proven_class_guard(&scope, "x", &date, &target(partial)));
+    }
 
     #[test]
     fn class_carrying_predicate_targets_do_not_degrade_the_rejected_branch() {

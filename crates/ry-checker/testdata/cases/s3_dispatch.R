@@ -273,6 +273,18 @@ h <- function() {
 x <- structure(1, class = "myclass")
 if (is.numeric(x)) x$y
 
+## case: a project is.numeric() is not base's dead test
+# expect: RY061
+is.numeric <- function(x) TRUE
+x <- Sys.Date()
+if (is.numeric(x)) x$y
+
+## case: a project is.numeric.Date method keeps the is.numeric() branch live
+# expect: RY061
+is.numeric.Date <- function(x) TRUE
+x <- Sys.Date()
+if (is.numeric(x)) x$y
+
 ## case: a project $ method for the receiver's class keeps $ quiet
 # no-diag
 `$.myclass` <- function(x, name) name

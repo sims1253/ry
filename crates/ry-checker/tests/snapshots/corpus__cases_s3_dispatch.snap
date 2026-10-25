@@ -166,12 +166,24 @@ expression: rows
       line: 274
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
+- case: "a project is.numeric() is not base's dead test"
+  diagnostics:
+    - code: RY061
+      line: 280
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+- case: a project is.numeric.Date method keeps the is.numeric() branch live
+  diagnostics:
+    - code: RY061
+      line: 286
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
 - case: "a project $ method for the receiver's class keeps $ quiet"
   diagnostics: []
 - case: a classed atomic without any $ method is invalid
   diagnostics:
     - code: RY061
-      line: 285
+      line: 297
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
 - case: a project $.Date method keeps $ on Sys.Date() quiet

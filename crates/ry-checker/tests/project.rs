@@ -2384,6 +2384,91 @@ fn rcpp_load_module_binds_its_objects_in_the_namespace() {
 }
 
 #[test]
+fn rcpp_load_module_true_binds_the_names_declared_in_src() {
+    // With `what = TRUE`, the package's own `RCPP_MODULE(mod) { ... }`
+    // lists exactly the objects Rcpp binds, so a typo still fires. A module
+    // ry cannot find or read keeps every name open.
+    let unbound = |name: &str| format!("variable `{name}` is not bound in this scope");
+    let check = |load: &str, cpp: &str| -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("R")).unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("DESCRIPTION"),
+            "Package: rcpppkg\nVersion: 0.0.0\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("src/mod.cpp"), cpp).unwrap();
+        let mut project = Project::new();
+        let files: Vec<_> = [
+            ("zzz.R", load),
+            ("use.R", "reads <- function() list(Foo, twice, Fooo)\n"),
+        ]
+        .into_iter()
+        .map(|(name, src)| {
+            let path = dir.path().join("R").join(name);
+            parse(path.to_str().unwrap(), src)
+        })
+        .collect();
+        let workspace = ry_workspace::resolve_workspace_context(
+            dir.path(),
+            &ry_config::Config::default(),
+            files.iter().collect(),
+            &Default::default(),
+        )
+        .unwrap();
+        ry_checker::frontend::set_workspace_context(&mut project, workspace);
+        for file in files {
+            project.add_file(file.path.clone(), file);
+        }
+        project
+            .check()
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .filter(|diagnostic| diagnostic.code == "RY010")
+            .map(|diagnostic| diagnostic.message)
+            .collect()
+    };
+    // An `#ifdef` arm with balanced brackets still reads, quoted `(` aside.
+    let module = "#include <Rcpp.h>\nusing namespace Rcpp;\n\
+        // class_<Fooo>(\"Fooo\") stays a comment\n\
+        RCPP_MODULE(mod) {\n  using namespace Rcpp;\n\
+        class_<Foo>(\"Foo\")\n    .constructor<int>()\n    .method(\"size\", &Foo::size)\n\
+        #ifdef EXTRA\n    .method(\"extra\", &Foo::extra, \"returns (x\")\n#endif\n  ;\n\
+        Rcpp::function(\"twice\", &twice, \"doubles\");\n}\n";
+    for load in [
+        "loadModule(\"mod\", TRUE)\n",
+        "Rcpp::loadModule(module = \"mod\", what = TRUE)\n",
+    ] {
+        assert_eq!(check(load, module), [unbound("Fooo")]);
+    }
+    // Another module or a computed module name keeps the marker.
+    for load in [
+        "loadModule(\"other\", TRUE)\n",
+        "m <- \"mod\"\nloadModule(m, TRUE)\n",
+    ] {
+        assert_eq!(check(load, module), Vec::<String>::new(), "{load}");
+    }
+    // So does a body ry cannot read in full: a helper call may declare more,
+    // an `#if` arm may close the module early, and a stray `#endif` or an
+    // unterminated `#ifdef` leaves the conditional regions unknown.
+    for body in [
+        "class_<Foo>(\"Foo\");\n  expose_more();",
+        "class_<Foo>(name);",
+        "function(\"twice\", &twice), expose_more();",
+        "function(\"Foo\", &foo), function(\"twice\", &twice);",
+        "class_<Foo>(\"Fo\" \"o\");\n  function(\"twice\", &twice);",
+        "class_<Foo>(\"Foo\");\n#if 0\n}\n#endif\n  function(\"twice\", &twice);",
+        "class_<Foo>(\"Foo\");\n#endif\n  function(\"twice\", &twice);",
+        "class_<Foo>(\"Foo\");\n#ifdef EXTRA\n  function(\"twice\", &twice);",
+    ] {
+        let cpp = format!("RCPP_MODULE(mod) {{\n  {body}\n}}\n");
+        let load = "loadModule(\"mod\", TRUE)\n";
+        assert_eq!(check(load, &cpp), Vec::<String>::new(), "{cpp}");
+    }
+}
+
+#[test]
 fn user_stub_captures_reach_collected_wrappers() {
     // A `--typeshed` stub's `captures_promise` formal must reach collection
     // (#776): a wrapper forwarding its formal there quotes it, so the

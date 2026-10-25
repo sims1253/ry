@@ -228,6 +228,9 @@ All notable changes to ry are documented in this file.
 - Treat the objects `Rcpp::loadModule()` installs as package bindings: a
   literal `what` binds exactly those names, and `what = TRUE` stops RY010
   for names a function does not assign itself (#704).
+- For `loadModule("mod", TRUE)`, bind exactly the `class_<T>("Name")` and
+  `function("name", ...)` objects the package's `src/` `RCPP_MODULE(mod)`
+  declares, so typos and other unbound names report RY010 again (#704).
 - Treat passing `col` to a project validator that only tests its formal with
   `missing()`, like the standalone `check_not_missing()` that cards vendors
   from insightsengineering's standalone-checks.R, as no use of `col`, so a

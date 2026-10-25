@@ -3,6 +3,7 @@ use crate::definitions::GenericDecl;
 use crate::infer::*;
 use crate::semantic_lists::{BINDING_INSTALLERS, FRAME_REFLECTION, bare_name, strip_package};
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
 
 /// Bindings some code may replace. `opaque` marks a write no name
@@ -290,13 +291,19 @@ fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
 
 /// The names `Rcpp::loadModule(module, what)` assigns in the package
 /// namespace (#704): each module object `what` names, under its `names()`
-/// entry where one is given. `None` when ry cannot list them: `what = TRUE`
-/// binds every object the C++ module declares, and a computed `what` may
-/// name any of them. An `env` other than the default
+/// entry where one is given. `what = TRUE` binds every object the C++
+/// module declares, which `modules` lists when the package's `src/` holds
+/// a readable `RCPP_MODULE` of that literal name. `None` when ry cannot list
+/// them: an unread module, or a computed `what` that may name any of its
+/// objects. An `env` other than the default
 /// `topenv(parent.frame())`, `topenv()` or `asNamespace(pkg)` binds nothing
 /// in the namespace;
 /// so does `environment()` inside a function, where it is the call's frame.
-fn rcpp_module_bindings(args: &[Arg], top_level: bool) -> Option<Vec<String>> {
+fn rcpp_module_bindings(
+    args: &[Arg],
+    top_level: bool,
+    modules: &BTreeMap<String, BTreeSet<String>>,
+) -> Option<Vec<String>> {
     // A bare or `base::` call head named one of `names`.
     fn base_head(func: &Expr, names: &[&str]) -> bool {
         matches!(func, Expr::Ident { name, .. }
@@ -337,6 +344,10 @@ fn rcpp_module_bindings(args: &[Arg], top_level: bool) -> Option<Vec<String>> {
             .collect(),
         // Like an omitted `what`, `NULL` binds nothing.
         Expr::Null(_) => Some(Vec::new()),
+        Expr::Logical(true, _) => matched
+            .arg_for_param(0)
+            .and_then(|index| modules.get(string_literal(&args[index].value)?))
+            .map(|names| names.iter().cloned().collect()),
         _ => None,
     }
 }
@@ -848,8 +859,9 @@ impl Checker {
                         }
                     }
                     if matches!(name.as_str(), "loadModule" | "Rcpp::loadModule") {
+                        let modules = &self.package_facts.rcpp_modules;
                         let table = Arc::make_mut(&mut self.fn_table);
-                        match rcpp_module_bindings(args, fn_depth == 0) {
+                        match rcpp_module_bindings(args, fn_depth == 0, modules) {
                             Some(names) => {
                                 for bound in names {
                                     table.note_bound_name(&bound);

@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.30",
+  "version": "0.0.31",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2636,7 +2636,10 @@
       "return": {
         "mode": "double",
         "length": "1",
-        "na": false
+        "na": false,
+        "class": [
+          "Date"
+        ]
       }
     },
     "Sys.getenv": {
@@ -2654,7 +2657,11 @@
       "return": {
         "mode": "double",
         "length": "1",
-        "na": false
+        "na": false,
+        "class": [
+          "POSIXct",
+          "POSIXt"
+        ]
       }
     },
     "abs": {

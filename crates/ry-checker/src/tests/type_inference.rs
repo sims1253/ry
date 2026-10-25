@@ -693,8 +693,13 @@ fn dollar_on_classed_atomic_values_keeps_dispatch_opaque() {
 }
 
 #[test]
-fn dollar_on_classed_atomic_values_does_not_require_a_collected_method() {
-    let (diags, scope) = check_with_scope("x <- structure(1L, class='external'); out <- x$field");
+fn dollar_on_classed_atomic_values_needs_some_method() {
+    let diags = check("x <- structure(1L, class='external'); out <- x$field");
+    assert!(diags.iter().any(|d| d.code == "RY061"), "{diags:?}");
+    // An attached package without a stub may register `$.external`.
+    let (diags, scope) = check_with_scope(
+        "library(unknownpkg); x <- structure(1L, class='external'); out <- x$field",
+    );
     assert!(diags.iter().all(|d| d.code != "RY061"), "{diags:?}");
     assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
 }

@@ -101,7 +101,11 @@ impl Checker {
         let qualified = callee.is_qualified();
         let lexical_callable = !qualified && scope.is_lexical_function(lookup_name);
         let function = (!lexical_callable)
-            .then(|| self.fn_table.functions.select(callee))
+            .then(|| {
+                self.fn_table
+                    .functions
+                    .select_in(callee, self.namespace.as_deref())
+            })
             .flatten()
             .cloned();
         let inherited = (!qualified)

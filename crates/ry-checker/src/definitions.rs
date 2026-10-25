@@ -99,6 +99,13 @@ impl Definitions {
     /// sources. Unknown provenance cannot establish namespace membership. An
     /// exact raw binding wins, else any quoted binding of the same name.
     pub(crate) fn select(&self, callee: Callee<'_>) -> Option<&UserFn> {
+        self.select_in(callee, None)
+    }
+
+    /// [`Self::select`] for a call made from `namespace`'s `R/` code. R
+    /// builds a namespace from `R/` only, so a bare spelling there selects
+    /// only that package's definitions, never a test's or script's.
+    pub(crate) fn select_in(&self, callee: Callee<'_>, namespace: Option<&str>) -> Option<&UserFn> {
         let member = callee.member();
         self.live
             .get(member)
@@ -119,11 +126,12 @@ impl Definitions {
                     .find(|(name, _)| semantic_argument_name(name) == member)
                     .map(|(_, function)| function)
             })
-            .filter(|function| match callee {
-                Callee::Bare(_) => true,
-                Callee::Qualified { package, .. } => {
-                    function.source_package.as_deref() == Some(package)
-                }
+            .filter(|function| {
+                let package = match callee {
+                    Callee::Bare(_) => namespace,
+                    Callee::Qualified { package, .. } => Some(package),
+                };
+                package.is_none_or(|package| function.source_package.as_deref() == Some(package))
             })
     }
 

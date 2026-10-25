@@ -1598,9 +1598,13 @@ mod tests {
         assert!(plain.take_scope_records().is_empty());
     }
 
+    fn package_with_tinytest(def: &str, test: &str) -> Project {
+        package_files(def, "f <- function() c(in_ns, leaked)\n", test)
+    }
+
     /// A package whose `R/` files carry `source_package` facts, plus one
     /// tinytest file outside `R/`.
-    fn package_with_tinytest(def: &str, test: &str) -> Project {
+    fn package_files(def: &str, use_r: &str, test: &str) -> Project {
         let mut project = Project::new();
         project.set_package_facts(
             ["R/def.R", "R/use.R"]
@@ -1614,10 +1618,7 @@ mod tests {
                 .into(),
         );
         project.add_file("R/def.R".into(), parse_file("R/def.R", def));
-        project.add_file(
-            "R/use.R".into(),
-            parse_file("R/use.R", "f <- function() c(in_ns, leaked)\n"),
-        );
+        project.add_file("R/use.R".into(), parse_file("R/use.R", use_r));
         project.add_file(
             "inst/tinytest/test_a.R".into(),
             parse_file("inst/tinytest/test_a.R", test),
@@ -1672,5 +1673,98 @@ mod tests {
         let use_r = unbound_names(&project.check_incremental(), "R/use.R");
         assert_eq!(use_r.len(), 1, "{use_r:?}");
         assert!(use_r[0].contains("`in_ns`"), "{use_r:?}");
+    }
+
+    fn count(diagnostics: &[(String, Vec<Diagnostic>)], path: &str, code: &str) -> usize {
+        diagnostics
+            .iter()
+            .filter(|(found, _)| found == path)
+            .flat_map(|(_, found)| found)
+            .filter(|d| d.code == code)
+            .count()
+    }
+
+    // `f` sits in another file, so `g` reads its refined return slot.
+    const WRAPS_LEAKED: &str = "f <- function() leaked()\n";
+    const DEFINES_LEAKED: &str = "f <- function() leaked()\nleaked <- function() 1\n";
+    const CALLS_LEAKED: &str = "g <- function() f() + \"a\"\nh <- function() leaked() + \"a\"\n";
+
+    #[test]
+    fn package_r_calls_do_not_select_functions_defined_outside_r() {
+        // A tinytest file's `leaked` never joins the namespace, so an
+        // installed `mypkg:::h()` errors `could not find function`. Its
+        // return types neither the direct call nor `f()`'s refined
+        // return. The test file still selects it.
+        let test = "leaked <- function() 1\nleaked() + \"a\"\n";
+        let diagnostics = package_files(WRAPS_LEAKED, CALLS_LEAKED, test).check();
+        assert_eq!(
+            count(&diagnostics, "R/use.R", "RY040"),
+            0,
+            "{diagnostics:?}"
+        );
+        assert_eq!(count(&diagnostics, "inst/tinytest/test_a.R", "RY040"), 1);
+        // Control: defined in `R/`, both package calls are typed.
+        let diagnostics = package_files(DEFINES_LEAKED, CALLS_LEAKED, "").check();
+        assert_eq!(
+            count(&diagnostics, "R/use.R", "RY040"),
+            2,
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn moving_a_function_into_r_re_emits_its_package_callers() {
+        let test = "leaked <- function() 1\n";
+        let mut project = package_files(WRAPS_LEAKED, CALLS_LEAKED, test);
+        assert_eq!(count(&project.check(), "R/use.R", "RY040"), 0);
+        project.update_file(
+            "R/def.R".into(),
+            parse_file("R/def.R", DEFINES_LEAKED).into(),
+        );
+        project.update_file(
+            "inst/tinytest/test_a.R".into(),
+            parse_file("inst/tinytest/test_a.R", "").into(),
+        );
+        let diagnostics = project.check_incremental();
+        assert_eq!(
+            count(&diagnostics, "R/use.R", "RY040"),
+            2,
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn package_r_forwarders_do_not_inherit_quoting_from_outside_r() {
+        // `f` forwards `x` to `g`. A tinytest `g` that quotes its argument
+        // is not the `g` that `f` reaches, so `f(1 + "a")` still forces
+        // the sum. Control: an `R/` `g` makes `f` quote too.
+        let forwarder = "f <- function(x) g(x)\n";
+        let quoter = "g <- function(x) substitute(x)\n";
+        let use_r = "h <- function() f(1 + \"a\")\n";
+        let diagnostics = package_files(forwarder, use_r, quoter).check();
+        assert_eq!(
+            count(&diagnostics, "R/use.R", "RY040"),
+            1,
+            "{diagnostics:?}"
+        );
+        let mut project = package_files(&format!("{forwarder}{quoter}"), use_r, "");
+        let diagnostics = project.check();
+        assert_eq!(
+            count(&diagnostics, "R/use.R", "RY040"),
+            0,
+            "{diagnostics:?}"
+        );
+        // Moving `g` out of `R/` drops the flag `f` inherited from it.
+        project.update_file("R/def.R".into(), parse_file("R/def.R", forwarder).into());
+        project.update_file(
+            "inst/tinytest/test_a.R".into(),
+            parse_file("inst/tinytest/test_a.R", quoter).into(),
+        );
+        let diagnostics = project.check_incremental();
+        assert_eq!(
+            count(&diagnostics, "R/use.R", "RY040"),
+            1,
+            "{diagnostics:?}"
+        );
     }
 }

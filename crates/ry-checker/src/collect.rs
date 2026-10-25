@@ -1154,6 +1154,8 @@ impl Checker {
         let previous_path = std::mem::replace(&mut self.path, function.source_path.clone());
         let previous_native_path =
             std::mem::replace(&mut self.native_path, function.source_native_path.clone());
+        let previous_namespace =
+            std::mem::replace(&mut self.namespace, function.source_package.clone());
 
         let mut scope = Scope::default();
         // Deferred execution can observe later syntax and constructor changes.
@@ -1196,6 +1198,7 @@ impl Checker {
         self.inferring.pop();
         self.path = previous_path;
         self.native_path = previous_native_path;
+        self.namespace = previous_namespace;
         joined
     }
 }

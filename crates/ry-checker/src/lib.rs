@@ -1494,6 +1494,11 @@ pub struct Checker {
     // same invocation.
     external_bindings: HashSet<String>,
     pub(crate) package_facts: ry_workspace::PackageFacts,
+    /// The package whose `R/` code is being walked: the emitted file's, or
+    /// during refinement the definition's. Its bare calls select only that
+    /// package's definitions; tests and scripts (`None`) select from the
+    /// whole project.
+    namespace: Option<String>,
     imported_from: HashMap<String, String>,
     external_s3_methods: HashSet<(String, String)>,
     /// Method screens derived from the collected and imported tables. They
@@ -1738,6 +1743,7 @@ impl Checker {
             bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
             package_facts: Default::default(),
+            namespace: None,
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
             method_screens: std::sync::OnceLock::new(),
@@ -2188,6 +2194,7 @@ impl Checker {
     }
 
     pub fn set_package_facts(&mut self, facts: ry_workspace::PackageFacts) {
+        self.namespace = facts.source_package.clone();
         self.package_facts = facts;
     }
 

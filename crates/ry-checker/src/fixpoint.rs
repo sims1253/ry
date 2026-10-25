@@ -438,10 +438,10 @@ impl Checker {
 
             // Forwarding and direct calls use the same package provenance
             // when selecting a collected definition.
-            let user_callee = self
-                .fn_table
-                .functions
-                .select(Callee::parse(&call.stub_callee));
+            let user_callee = self.fn_table.functions.select_in(
+                Callee::parse(&call.stub_callee),
+                caller.source_package.as_deref(),
+            );
             let stub_callee = self.resolve_typeshed_sig(&call.stub_callee);
             if user_callee.is_none() && stub_callee.is_none() {
                 for (_, source) in &call.arguments {

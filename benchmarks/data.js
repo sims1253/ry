@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792993220931,
+  "lastUpdate": 1793007670326,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -58218,6 +58218,219 @@ window.BENCHMARK_DATA = {
           {
             "name": "server/unrelated-file/p95",
             "value": 182.157529,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1e1f6fceed54e6fbb4532af2cf7bff15e3fc740d",
+          "message": "feat(checker): diagnose proven-NA if/while conditions as RY001 (#824)\n\n* feat(checker): diagnose proven-NA if/while conditions as RY001\n\nA condition that is syntactically a proven scalar NA (an NA literal, closed literal shapes over one, or a definite RY119 cast) now reports RY001 instead of passing silently or as numeric truthiness. Bindings and possibly-NA conditions stay silent: their value facts are not a sound always-NA proof.\n\nRefs #354\n\n* fix(checker): ordering a complex NA is not a proven-NA condition\n\nNA_complex_ > 1 errors inside the comparison (\"invalid comparison\nwith complex values\"); it never evaluates to NA, so the proven-NA\nproof must not claim it. Equality still counts. Verified against R\nand pinned with literal-condition tests.\n\nRefs #354\n\n* fix(checker): keep proven-NA proof sound under rebound negation and non-scalar casts\n\nGreptile P1: a negated plain literal is not plain when unary - is\nrebound (it can yield a classed value whose Ops method decides the\nresult; the flagged condition runs fine in R). Greptile P2: an RY119\nat the condition span proves a scalar NA only when the result is\nlength 1; longer casts keep the length diagnostic. Also: double\nliterals count in the arithmetic mode ladder, the proof only runs\nwhen the condition syntactically contains an NA literal, and the\nRY119 invariant is documented at its use site.\n\nRefs #354\n\n* fix(checker): linear proven-NA descent; pin value-form and mixed-type comparisons\n\nReuse the operand modes already computed instead of re-descending\n(3x per nesting level). Move plain_scalar_literal's doc back onto\nit, share plain_double_literal, note why the returned mode is\nload-bearing, and pin the value-form condition, R-coerced mixed-type\nNA comparisons, and RY119 presence on the length-error cast.\n\nRefs #354\n\n* fix(checker): make the RY119 proven-NA proof structural; exactly-one RY001 tests\n\nRefs #354\n\n* fix(checker): depth-cap the proven-NA proof; name supported coercions\n\nRefs #354\n\n* fix(checker): name proof depth cap; invariant-test RY119 single emitter\n\nRefs #354\n\n* fix(checker): explicit proven-NA accept-list; position-independent RY119 invariant\n\nRefs #354\n\n* test(checker): scan all production sources for RY119 emitters\n\nRefs #354\n\n* test(checker): pin in-condition operator rebind silence and NA mode ladder\n\nRefs #354\n\n* docs(checker): name the actual RY001 read site in RY119 invariant\n\nRefs #354\n\n* fix(checker): restore RY001 summary lead; hoist unary-minus rebound check\n\nRefs #354",
+          "timestamp": "2026-10-26T10:33:02+01:00",
+          "tree_id": "df2b41ed5ac27a5cca03623bbe127d1693458715",
+          "url": "https://github.com/sims1253/ry/commit/1e1f6fceed54e6fbb4532af2cf7bff15e3fc740d"
+        },
+        "date": 1793007670233,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 4355913.342031296,
+            "range": "4346292.99–4367634.93",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 1127511.817755208,
+            "range": "1126036.00–1129173.91",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 3756007.1487692096,
+            "range": "3740989.67–3777552.10",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 560909.056704716,
+            "range": "559627.65–562751.06",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 3755140.0757024316,
+            "range": "3748897.82–3762277.20",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 559438.9480172468,
+            "range": "557111.52–562155.31",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 21649002.8012708,
+            "range": "21570849.94–21739148.35",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 74669888.88333334,
+            "range": "74563022.35–74772523.74",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 12592552.86400851,
+            "range": "12536162.37–12653034.35",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 75398095.9,
+            "range": "75257378.83–75556768.59",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 13220006.509718003,
+            "range": "13107401.97–13325638.48",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 74867438.01666667,
+            "range": "74782782.17–74955009.86",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 11976601.598836029,
+            "range": "11929512.11–12023556.41",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 157469811.75,
+            "range": "155452981.33–160035710.27",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 20534120.60349363,
+            "range": "20496847.04–20573837.07",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 6606487.242351398,
+            "range": "6589993.24–6630719.91",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 20689412.19336539,
+            "range": "20612897.68–20794398.26",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 8267174.907145649,
+            "range": "8253285.10–8283087.61",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 22788469.60730803,
+            "range": "22625142.62–22999266.93",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 1437256.5703478833,
+            "range": "1429963.07–1444718.62",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 11179592,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 366343,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 220172,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 318570,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 114.30304099997738,
+            "range": "89.74–137.44",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 89.74488700000802, 91.52762100001564, 114.30304099997738, 124.16567600000417, 137.43861099996138"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 503.133273000014,
+            "range": "457.49–591.92",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 457.4892509999918, 482.9639700000407, 503.133273000014, 565.1805920000188, 591.9199709999957"
+          },
+          {
+            "name": "server/startup-median",
+            "value": 197.558629,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/median",
+            "value": 182.149967,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/p95",
+            "value": 182.259731,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/median",
+            "value": 181.927033,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/p95",
+            "value": 182.015712,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/median",
+            "value": 181.985934,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/p95",
+            "value": 182.118232,
             "unit": "ms"
           }
         ]

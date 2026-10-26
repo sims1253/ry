@@ -605,15 +605,28 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
 /// silent. Unions distribute: any member with a proven-bad length
 /// flags the call, which is how a find-or-NULL helper's
 /// `character | NULL` return reaches the selector (issue #362).
+pub(crate) fn switch_expr_length_rejected(t: &RType) -> bool {
+    match t.mode {
+        Mode::Union => t
+            .members
+            .as_ref()
+            .is_some_and(|members| members.iter().any(switch_expr_length_rejected)),
+        mode if mode.is_unknown_or_non_vector() => false,
+        _ => matches!(t.length, Length::Zero) || matches!(t.length, Length::Known(n) if n > 1),
+    }
+}
+
 /// Whether a formal's default expression is closed over value
 /// bindings: literals composed with unary/binary operators and
-/// calls whose arguments are all closed (callee position is not
-/// a value read). R forces defaults lazily at call time in the
+/// `c()`/`list()` constructor calls whose arguments are all
+/// closed. R forces defaults lazily at call time in the
 /// function's evaluation environment, so a default reading an
-/// enclosing binding (`type = x`) evaluates whatever that binding
-/// holds then — its definition-time type is not evidence about
-/// the no-argument call path. Anything else (indexing, blocks,
-/// conditionals, bare identifiers) is conservatively open.
+/// enclosing binding (`type = x`, or any other call — the callee
+/// is itself a binding read resolved at forcing time) evaluates
+/// whatever those bindings hold then; its definition-time type
+/// is not evidence about the no-argument call path. Anything
+/// else (indexing, blocks, conditionals, bare identifiers) is
+/// conservatively open.
 fn closed_default_expr(expr: &Expr) -> bool {
     match expr {
         Expr::Logical(..)
@@ -624,19 +637,13 @@ fn closed_default_expr(expr: &Expr) -> bool {
         | Expr::Na(..) => true,
         Expr::UnaryOp { expr, .. } => closed_default_expr(expr),
         Expr::BinOp { lhs, rhs, .. } => closed_default_expr(lhs) && closed_default_expr(rhs),
-        Expr::Call { args, .. } => args.iter().all(|arg| closed_default_expr(&arg.value)),
+        Expr::Call { func, args, .. } => {
+            matches!(
+                ident_name(func).map(semantic_argument_name),
+                Some("c" | "list" | "base::c" | "base:::c" | "base::list" | "base:::list")
+            ) && args.iter().all(|arg| closed_default_expr(&arg.value))
+        }
         _ => false,
-    }
-}
-
-pub(crate) fn switch_expr_length_rejected(t: &RType) -> bool {
-    match t.mode {
-        Mode::Union => t
-            .members
-            .as_ref()
-            .is_some_and(|members| members.iter().any(switch_expr_length_rejected)),
-        mode if mode.is_unknown_or_non_vector() => false,
-        _ => matches!(t.length, Length::Zero) || matches!(t.length, Length::Known(n) if n > 1),
     }
 }
 
@@ -1355,7 +1362,11 @@ impl Checker {
         self.push_enclosing_formals(params, span);
         if let Some(frame) = self.enclosing_formals.last_mut() {
             frame.authored_defaults = authored_defaults;
-            frame.body_writes = self.frame_writes.last().cloned().unwrap_or_default();
+            frame.body_writes = self
+                .frame_writes
+                .last()
+                .cloned()
+                .expect("frame_writes entry pushed with the function frame");
         }
         // RY124: only a top-level `.onLoad`/`.onAttach` binding is a
         // package load hook; R calls those two names from the finished
@@ -1872,7 +1883,11 @@ impl Checker {
     /// whose formals contain the name, so an inner formal shadows
     /// an outer default. Scope: body reads only — a selector read
     /// inside a sibling formal's default is reached through the
-    /// ordinary dynamic path, not this check.
+    /// ordinary dynamic path, not this check. The write guard is
+    /// flow-insensitive over each frame's whole body, so a write
+    /// after the read (or a closure-local write in a nested
+    /// frame) also suppresses the warning: conservative misses,
+    /// never false positives.
     fn check_switch_authored_default_selector(
         &mut self,
         selector_expr: &Expr,

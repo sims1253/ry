@@ -321,8 +321,9 @@ fn authored_default_selector_shadowing_and_captures() {
         );
     }
     // A default reading a captured binding evaluates whatever
-    // it holds at call time, not its definition-time value.
-    let source = "x <- c(\"a\", \"b\")\nf <- function(type = x) switch(type, a = 1L, b = 2L)";
+    // it holds at call time, not its definition-time value; a
+    // zero-argument call is a callee read with the same hazard.
+    let source = "x <- c(\"a\", \"b\")\nf <- function(type = x) switch(type, a = 1L, b = 2L)\ng <- function() c(\"a\", \"b\")\nh <- function(type = g()) switch(type, a = 1L, b = 2L)";
     {
         let (diagnostics, _) = check_with_scope(source);
         assert!(

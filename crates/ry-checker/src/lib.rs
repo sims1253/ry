@@ -1451,7 +1451,9 @@ pub struct Checker {
     // (`expect_error(<probe>)`, `try(<probe>)`, ...; issue #344). A
     // diagnostic whose span lies inside one is demoted one confidence
     // tier at emit time, the same down-weight non-source paths receive
-    // in post-processing. Balanced by `infer_call`; empty between calls.
+    // in post-processing. Demotion is once per diagnostic, however
+    // many probes nest around its span. Balanced by `infer_call`;
+    // empty between calls.
     error_probe_spans: Vec<Span>,
     // User-defined functions collected in pass 1. Stored behind an `Arc`
     // so the multi-file `Project` can share the refined tables across

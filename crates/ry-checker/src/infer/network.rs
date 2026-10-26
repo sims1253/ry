@@ -490,15 +490,21 @@ fn equality_established(
     } else {
         return false;
     };
-    // If the probe's own fallback equals the compared literal, the
-    // equality already holds with the setting absent
-    // (`Sys.getenv("X", "true") == "true"`), so the equality arm is
-    // not an opt-in. The inequality arm still proves the value
-    // differs from the fallback.
-    if eq_holds
-        && probe_fallback(probe_expr, probe).is_some_and(|default| literals_equal(default, literal))
+    // A literal fallback of the compared literal's kind decides
+    // both polarities: if the arm's outcome already occurs with
+    // the fallback value (`Sys.getenv("X", "true") == "true"`, or
+    // `!= ""` over a non-empty fallback), the arm runs with the
+    // setting absent and establishes nothing; if the outcome
+    // cannot occur with the fallback (`!= "offline"` over an
+    // `"offline"` fallback, the else arm of `== "offline"`), taking
+    // the arm proves the value was set explicitly.
+    if let Some(default) = probe_fallback(probe_expr, probe)
+        && matches!(
+            (default, literal),
+            (Expr::Logical(..), Expr::Logical(..)) | (Expr::String(..), Expr::String(..))
+        )
     {
-        return false;
+        return literals_equal(default, literal) != eq_holds;
     }
     match literal {
         Expr::Logical(true, _) => eq_holds,
@@ -543,7 +549,11 @@ fn probe_established(expr: &Expr, when_true: bool, masked: &dyn Fn(&str, Span) -
         } => equality_established(lhs, rhs, !when_true, masked),
         Expr::Call { func, args, .. } => {
             if let Some(probe) = probe_call_name(expr, masked) {
-                return when_true && !fallback_passes(expr, probe, ProbeShape::Direct);
+                // Symmetric in the fallback: a truthy fallback
+                // defeats the positive arm (it runs unset) and
+                // establishes the negated one (it runs only when
+                // the value was explicitly set falsy).
+                return when_true != fallback_passes(expr, probe, ProbeShape::Direct);
             }
             // A bare wrapper head masked by a local binding is not
             // base's predicate and establishes nothing.
@@ -554,21 +564,16 @@ fn probe_established(expr: &Expr, when_true: bool, masked: &dyn Fn(&str, Span) -
                 return false;
             }
             match base_call_member(func) {
-                Some("isTRUE") => {
-                    when_true
-                        && args.first().is_some_and(|arg| {
-                            probe_call_name(&arg.value, masked).is_some_and(|probe| {
-                                !fallback_passes(&arg.value, probe, ProbeShape::IsTrue)
-                            })
-                        })
-                }
-                Some("nzchar") => {
-                    when_true
-                        && args.first().is_some_and(|arg| {
-                            probe_call_name(&arg.value, masked) == Some("Sys.getenv")
-                                && !fallback_passes(&arg.value, "Sys.getenv", ProbeShape::Nzchar)
-                        })
-                }
+                Some("isTRUE") => args.first().is_some_and(|arg| {
+                    probe_call_name(&arg.value, masked).is_some_and(|probe| {
+                        when_true != fallback_passes(&arg.value, probe, ProbeShape::IsTrue)
+                    })
+                }),
+                Some("nzchar") => args.first().is_some_and(|arg| {
+                    probe_call_name(&arg.value, masked) == Some("Sys.getenv")
+                        && when_true
+                            != fallback_passes(&arg.value, "Sys.getenv", ProbeShape::Nzchar)
+                }),
                 Some("identical") => {
                     args.len() >= 2
                         && equality_established(&args[0].value, &args[1].value, when_true, masked)

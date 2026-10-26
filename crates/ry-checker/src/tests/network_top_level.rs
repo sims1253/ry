@@ -398,6 +398,7 @@ fn enabling_probe_fallbacks_do_not_guard() {
         "if (Sys.getenv('MYPKG_DOWNLOAD', 'true') == 'true') utils::download.file('https://example.invalid/x', tempfile())",
         "if (getOption('mypkg.download', default = TRUE)) utils::download.file('https://example.invalid/x', tempfile())",
         "if (Sys.getenv('MYPKG_DOWNLOAD', unset = 'true') != 'true') 1L else utils::download.file('https://example.invalid/x', tempfile())",
+        "if (Sys.getenv('MYPKG_DOWNLOAD', 'true') != '') utils::download.file('https://example.invalid/x', tempfile())",
     ] {
         assert_eq!(network_warnings(source), 1, "{source}");
     }
@@ -408,6 +409,14 @@ fn enabling_probe_fallbacks_do_not_guard() {
         "if (nzchar(Sys.getenv('MYPKG_DOWNLOAD', ''))) utils::download.file('https://example.invalid/x', tempfile())",
         "if (Sys.getenv('MYPKG_DOWNLOAD', 'false') == 'true') utils::download.file('https://example.invalid/x', tempfile())",
         "if (Sys.getenv('MYPKG_DOWNLOAD', '') != '') utils::download.file('https://example.invalid/x', tempfile())",
+        // Mirrored polarity: these arms run only when the value
+        // differs from the fallback, which proves explicit
+        // configuration.
+        "if (Sys.getenv('MYPKG_DOWNLOAD', 'offline') != 'offline') utils::download.file('https://example.invalid/x', tempfile())",
+        "if (getOption('mypkg.download', 'offline') == 'offline') 1L else utils::download.file('https://example.invalid/x', tempfile())",
+        "if (!getOption('mypkg.disabled', TRUE)) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (!isTRUE(getOption('mypkg.disabled', TRUE))) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (!nzchar(Sys.getenv('MYPKG_DISABLED', 'yes'))) utils::download.file('https://example.invalid/x', tempfile())",
     ] {
         assert_eq!(network_warnings(source), 0, "{source}");
     }

@@ -33,6 +33,13 @@ pub struct DeclarationFinding {
     pub path: String,
     pub span: Span,
     pub message: String,
+    /// The finding was produced inside an error-assertion probe
+    /// (#344), so its diagnostic view is demoted one confidence tier
+    /// like an ordinary emit inside the probe. Captured at creation:
+    /// conversion runs after the probe stack is gone. Every finding
+    /// kind maps to Warning/Info severity, so containment alone
+    /// decides — no severity distinction is needed here.
+    pub probe_demoted: bool,
 }
 
 /// Append the public diagnostic view of structured declaration findings.
@@ -58,13 +65,17 @@ pub fn append_diagnostics(
                     ("RY117", crate::Severity::Warning)
                 }
             };
-            diagnostics.push(crate::Diagnostic::new(
+            let mut diagnostic = crate::Diagnostic::new(
                 severity,
                 record.span,
                 &record.path,
                 code,
                 record.message.clone(),
-            ));
+            );
+            if record.probe_demoted {
+                diagnostic.confidence = diagnostic.confidence.demote();
+            }
+            diagnostics.push(diagnostic);
         }
     }
 }
@@ -81,6 +92,7 @@ impl DeclarationFinding {
             path: path.into(),
             span,
             message: message.into(),
+            probe_demoted: false,
         }
     }
 }
@@ -520,7 +532,11 @@ impl crate::Checker {
         span: Span,
         message: impl Into<String>,
     ) {
-        let finding = DeclarationFinding::new(kind, &self.path, span, message);
+        let mut finding = DeclarationFinding::new(kind, &self.path, span, message);
+        finding.probe_demoted = self
+            .error_probe_spans
+            .iter()
+            .any(|(probe, _)| probe.start <= span.start && span.end <= probe.end);
         self.declaration_findings.push(finding);
     }
 

@@ -661,6 +661,19 @@ impl Checker {
     }
 
     /// [`Checker::emit`] with secondary locations the caller has proven.
+    /// Whether a finding at `span` with `severity` sits inside an
+    /// assertion probe that demotes it (#344): any containing
+    /// error-assertion probe, or a warning-assertion probe for a
+    /// non-error finding (a warning assertion does not catch an
+    /// error, so a proven error inside it stays full confidence).
+    pub(crate) fn probe_demotes(&self, span: Span, severity: Severity) -> bool {
+        self.error_probe_spans.iter().any(|(probe, kind)| {
+            probe.start <= span.start
+                && span.end <= probe.end
+                && (*kind == ProbeKind::Error || severity != Severity::Error)
+        })
+    }
+
     pub(crate) fn emit_related(
         &mut self,
         severity: Severity,
@@ -687,11 +700,7 @@ impl Checker {
         // visible until a `--min-confidence` threshold filters it. Only
         // a span inside the probe argument counts; the wrapper call
         // itself and its other arguments keep full confidence.
-        if self
-            .error_probe_spans
-            .iter()
-            .any(|probe| probe.start <= diagnostic.span.start && diagnostic.span.end <= probe.end)
-        {
+        if self.probe_demotes(diagnostic.span, severity) {
             diagnostic.confidence = diagnostic.confidence.demote();
         }
         self.diagnostics.push(diagnostic);

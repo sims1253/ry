@@ -219,7 +219,8 @@ error probe -- `expect_error()`, `expect_warning()`,
 (a high-confidence probe finding demotes to medium and stays visible). Only the
 probe argument is demoted; the wrapper's other arguments and code around it
 keep full confidence, and a locally defined `expect_error()` is never treated
-as testthat's.
+as testthat's. `expect_warning()` demotes only non-error findings: it does
+not catch errors, so a proven error inside it keeps full confidence.
 
 ## Confidence tiers and baselines
 

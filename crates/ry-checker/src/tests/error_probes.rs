@@ -23,8 +23,6 @@ fn recognized_error_wrappers_demote_the_probe_one_tier() {
     for source in [
         "expect_error(1 + \"\")\n",
         "testthat::expect_error(1 + \"\")\n",
-        "expect_warning(1 + \"\")\n",
-        "testthat::expect_warning(object = 1 + \"\")\n",
         "expect_error(object = 1 + \"\")\n",
         "expect_snapshot(error = TRUE, { 1 + \"\" })\n",
         "expect_snapshot(1 + \"\", error = TRUE)\n",
@@ -59,6 +57,10 @@ fn identical_code_outside_a_wrapper_is_unchanged() {
 #[test]
 fn non_error_wrappers_and_missing_handlers_stay_full_strength() {
     for source in [
+        // `expect_warning` does not catch errors: a proven error
+        // inside it is a genuine defect at full confidence.
+        "expect_warning(1 + \"\")\n",
+        "testthat::expect_warning(object = 1 + \"\")\n",
         "expect_snapshot(1 + \"\")\n",
         "expect_snapshot(1 + \"\", error = FALSE)\n",
         "ea <- TRUE\nexpect_snapshot(1 + \"\", error = ea)\n",
@@ -189,4 +191,38 @@ fn nested_wrappers_demote_only_once() {
         confidences("expect_snapshot(error = TRUE, {\n  x <- 1L\n  x + \"\"\n})\n"),
         [Confidence::Low]
     );
+}
+
+#[test]
+fn warning_assertion_demotes_only_non_error_findings() {
+    // RY119 is warning-severity: inside `expect_warning` it is the
+    // asserted behavior and demotes; the bare cast stays Medium.
+    let bare = check("x <- as.integer(1e10)\n");
+    let bare_hit = bare.iter().find(|d| d.code == "RY119").unwrap();
+    assert_eq!(bare_hit.confidence, Confidence::Medium);
+    let inside = check("expect_warning(as.integer(1e10))\n");
+    let hit = inside.iter().find(|d| d.code == "RY119").unwrap();
+    assert_eq!(hit.confidence, Confidence::Low);
+    // An error-severity finding inside the same wrapper does not demote.
+    assert_eq!(
+        confidences("expect_warning(1 + \"\")\n"),
+        [Confidence::Medium]
+    );
+}
+
+#[test]
+fn declaration_finding_probe_demotion_survives_conversion() {
+    use crate::declaration_check::{
+        DeclarationFinding, DeclarationFindingKind, append_diagnostics,
+    };
+    let span = Span::new(0, 1, 0, 0);
+    let mut demoted =
+        DeclarationFinding::new(DeclarationFindingKind::Mismatch, "R/x.R", span, "mismatch");
+    demoted.probe_demoted = true;
+    let plain =
+        DeclarationFinding::new(DeclarationFindingKind::Mismatch, "R/x.R", span, "mismatch");
+    let mut output = vec![("R/x.R".to_string(), Vec::new())];
+    append_diagnostics(&mut output, &[("R/x.R".to_string(), vec![demoted, plain])]);
+    let confidences: Vec<_> = output[0].1.iter().map(|d| d.confidence).collect();
+    assert_eq!(confidences, [Confidence::Low, Confidence::Medium]);
 }

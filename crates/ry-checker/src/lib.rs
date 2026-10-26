@@ -1403,6 +1403,14 @@ pub(crate) struct EnclosingFormals {
     pub(crate) function_span: Span,
 }
 
+/// Which condition an assertion wrapper proves about its probe
+/// argument (#344): an error it catches, or a warning it expects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbeKind {
+    Error,
+    Warning,
+}
+
 pub struct Checker {
     journal_delta_cache: scope_journal::BranchChanges,
     /// See [`infer::HeldCast`].
@@ -1452,9 +1460,11 @@ pub struct Checker {
     // diagnostic whose span lies inside one is demoted one confidence
     // tier at emit time, the same down-weight non-source paths receive
     // in post-processing. Demotion is once per diagnostic, however
-    // many probes nest around its span. Balanced by `infer_call`;
-    // empty between calls.
-    error_probe_spans: Vec<Span>,
+    // many probes nest around its span. A warning-assertion probe
+    // (`expect_warning`) demotes only non-error findings: it does not
+    // catch errors, so a proven error inside it is a genuine defect.
+    // Balanced by `infer_call`; empty between calls.
+    error_probe_spans: Vec<(Span, ProbeKind)>,
     // User-defined functions collected in pass 1. Stored behind an `Arc`
     // so the multi-file `Project` can share the refined tables across
     // per-file pass-3 emitters without deep-cloning them.

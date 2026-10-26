@@ -73,7 +73,12 @@ impl Checker {
     /// follows R, so named and partial forms bind the same probe as the
     /// positional one. `expect_snapshot` asserts an error only with a
     /// literal `error = TRUE`; any other value may be false at runtime.
-    fn error_probe_span(&self, func: &Expr, args: &[Arg], scope: &Scope) -> Option<Span> {
+    fn error_probe_span(
+        &self,
+        func: &Expr,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Option<(Span, ProbeKind)> {
         let name = callee_name(func)?;
         let lookup_name = crate::semantic_lists::bare_name(&name);
         if !matches!(
@@ -159,7 +164,12 @@ impl Checker {
             return None;
         }
         let probe = matched.arg_for_param(0)?;
-        Some(span_of(&args[probe].value))
+        let kind = if lookup_name == "expect_warning" {
+            ProbeKind::Warning
+        } else {
+            ProbeKind::Error
+        };
+        Some((span_of(&args[probe].value), kind))
     }
 
     /// Whether the callee is the real testthat/base wrapper rather than

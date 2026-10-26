@@ -235,6 +235,7 @@ impl Checker {
         {
             return RType::unknown();
         }
+        self.check_mixed_sign_sequence_index(&bt, kind, args, scope);
         match kind {
             IndexKind::Slot => {
                 // `.Data` access can be valid even for atomic receivers.
@@ -422,6 +423,266 @@ impl Checker {
                 merge_subscript_assignments(scope, &mask, args, &bt);
                 result
             }
+        }
+    }
+
+    /// RY126: a sequence subscript proven to mix positive and negative
+    /// values. `x[1:-1]` is `x[c(1, 0, -1)]`, and base `[` always
+    /// errors on such an index ("only 0's may be mixed with negative
+    /// subscripts", R 4.6.1-verified for plain atomic and list
+    /// receivers, reads and `[<-` assignments alike). Descending
+    /// sequences that stay on one side of zero (`x[3:1]`) are a
+    /// legitimate idiom and never fire: only whole-number endpoints
+    /// proven to straddle zero count.
+    ///
+    /// The receiver must be proven to use base subsetting — a plain
+    /// (classless) atomic vector or list for `[`. An unknown or
+    /// classed receiver may dispatch to a `[` method that accepts the
+    /// index, and `NULL[...]` is a silent no-op, so both stay silent.
+    /// `[[` is narrower still: recursive indexing into a list can
+    /// consume a negative step without error (`lst[[-1]]` succeeds),
+    /// so only an atomic receiver counts, where `[[` rejects every
+    /// index that is not one positive subscript. Masked `:`/`seq`
+    /// definitions, computed endpoints, and `length.out` /
+    /// `along.with` sequence forms are all outside the proof.
+    pub(crate) fn check_mixed_sign_sequence_index(
+        &mut self,
+        receiver: &RType,
+        kind: IndexKind,
+        args: &[Arg],
+        scope: &Scope,
+    ) {
+        for (span, message) in self.mixed_sign_sequence_findings(receiver, kind, args, scope) {
+            self.emit(Severity::Error, span, "RY126", message);
+        }
+    }
+
+    /// The RY126 findings for one index expression, without emitting
+    /// them. The assignment path computes these against the receiver
+    /// type before its precise handlers run and emits them only when
+    /// one of those handlers claims the target; the read fallback
+    /// goes through `infer_index` and would otherwise double-report.
+    pub(crate) fn mixed_sign_sequence_findings(
+        &self,
+        receiver: &RType,
+        kind: IndexKind,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Vec<(Span, String)> {
+        let plain_atomic = receiver.class.is_classless()
+            && receiver.mode.is_atomic()
+            && receiver.columns.is_none();
+        let receiver_ok = match kind {
+            IndexKind::Single => {
+                (plain_atomic || (receiver.class.is_classless() && receiver.mode == Mode::List))
+                    && !super::ops_chooser::operator_rebound(self, "[", scope)
+                    && !super::ops_chooser::operator_rebound(self, "[<-", scope)
+            }
+            IndexKind::Double => {
+                plain_atomic
+                    && !super::ops_chooser::operator_rebound(self, "[[", scope)
+                    && !super::ops_chooser::operator_rebound(self, "[[<-", scope)
+            }
+            IndexKind::Dollar | IndexKind::Slot => false,
+        };
+        if !receiver_ok {
+            return Vec::new();
+        }
+        let mut findings = Vec::new();
+        for (position, arg) in args.iter().enumerate() {
+            if arg.name.is_some() || matches!(arg.value, Expr::Missing(_)) {
+                continue;
+            }
+            // Endpoint facts are read before any subscript is
+            // inferred, so an earlier subscript that assigns or calls
+            // could already have changed a binding a later sequence
+            // endpoint reads. Identifier endpoints therefore count
+            // only in the first subscript; literal endpoints are
+            // unaffected by evaluation order.
+            let Some((first, last)) =
+                self.proven_mixed_sign_sequence(&arg.value, scope, position == 0)
+            else {
+                continue;
+            };
+            let span = span_of(&arg.value);
+            let spelling = self
+                .source_text(span)
+                .map_or_else(|| "this sequence".to_string(), |text| format!("`{text}`"));
+            let message = match kind {
+                IndexKind::Double => format!(
+                    "sequence index {spelling} runs from {first} to {last}; `[[` on an atomic vector takes one positive subscript, so this always errors"
+                ),
+                _ => format!(
+                    "sequence index {spelling} runs from {first} to {last}, mixing positive and negative subscripts; `[` errors with \"only 0's may be mixed with negative subscripts\""
+                ),
+            };
+            findings.push((span, message));
+        }
+        findings
+    }
+
+    /// The first and last terms of `expr` when it is a sequence
+    /// expression proven to contain both a positive and a negative
+    /// whole number: a `:` with straddling endpoints, a base
+    /// `seq()`/`seq.int()` over straddling endpoints (a proven `by`
+    /// is walked to its actual last term, so `seq(2, -1, by = -2)`,
+    /// which is `c(2, 0)`, stays silent), or `rlang::seq2()` from a
+    /// negative start to a positive end. `seq2` returns `integer(0)`
+    /// when `from > to` (verified against rlang in R 4.6.1), so its
+    /// descending form `seq2(1, -1)` is empty, not mixed.
+    fn proven_mixed_sign_sequence(
+        &self,
+        expr: &Expr,
+        scope: &Scope,
+        allow_ident_endpoints: bool,
+    ) -> Option<(i64, i64)> {
+        match expr {
+            Expr::BinOp {
+                op: BinOpKind::Colon,
+                lhs,
+                rhs,
+                ..
+            } => {
+                if self.has_explicit_operator_mask(":", "`:`", scope) {
+                    return None;
+                }
+                let from = self.proven_integral_endpoint(lhs, scope, allow_ident_endpoints)?;
+                let to = self.proven_integral_endpoint(rhs, scope, allow_ident_endpoints)?;
+                sequence_straddles_zero(from, to).then_some((from, to))
+            }
+            Expr::Call { func, args, .. } => {
+                let name = super::call::callee_name(func)?;
+                let lookup = crate::semantic_lists::bare_name(&name);
+                match lookup {
+                    "seq" | "seq.int" => {
+                        if !matches!(
+                            self.special_call_provenance(&name, func, &name, lookup, "base", scope),
+                            crate::resolve::SpecialCallProvenance::Proven
+                        ) {
+                            return None;
+                        }
+                        let matched = match_arguments(
+                            &["from", "to", "by", "length.out", "along.with", "..."],
+                            args,
+                        );
+                        if !matched.is_one_to_one()
+                            || matched.arg_for_param(3).is_some()
+                            || matched.arg_for_param(4).is_some()
+                        {
+                            return None;
+                        }
+                        let from = self.proven_integral_endpoint(
+                            &args[matched.arg_for_param(0)?].value,
+                            scope,
+                            allow_ident_endpoints,
+                        )?;
+                        let to = self.proven_integral_endpoint(
+                            &args[matched.arg_for_param(1)?].value,
+                            scope,
+                            allow_ident_endpoints,
+                        )?;
+                        let last = match matched.arg_for_param(2) {
+                            Some(by_arg) => {
+                                let by = self.proven_integral_endpoint(
+                                    &args[by_arg].value,
+                                    scope,
+                                    allow_ident_endpoints,
+                                )?;
+                                sequence_last_term(from, to, by)?
+                            }
+                            None => to,
+                        };
+                        sequence_straddles_zero(from, last).then_some((from, last))
+                    }
+                    "seq2" => {
+                        if !matches!(
+                            self.special_call_provenance(
+                                &name, func, &name, lookup, "rlang", scope
+                            ),
+                            crate::resolve::SpecialCallProvenance::Proven
+                        ) {
+                            return None;
+                        }
+                        let matched = match_arguments(&["from", "to"], args);
+                        if !matched.is_one_to_one() {
+                            return None;
+                        }
+                        let from = self.proven_integral_endpoint(
+                            &args[matched.arg_for_param(0)?].value,
+                            scope,
+                            allow_ident_endpoints,
+                        )?;
+                        let to = self.proven_integral_endpoint(
+                            &args[matched.arg_for_param(1)?].value,
+                            scope,
+                            allow_ident_endpoints,
+                        )?;
+                        (from < 0 && to > 0).then_some((from, to))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// A whole number in R's integer range that `expr` is proven to
+    /// evaluate to, as a sequence endpoint: an integer or whole-number
+    /// double literal, a base-`-` negation of one, or — where the
+    /// caller allows it — a local binding whose exact value facts
+    /// (the same evidence RY119 consumes) pin a single number.
+    /// Parameters, defaults, and flow-narrowed bindings never count:
+    /// their stored type describes one call shape, not every value.
+    fn proven_integral_endpoint(
+        &self,
+        expr: &Expr,
+        scope: &Scope,
+        allow_ident: bool,
+    ) -> Option<i64> {
+        match expr {
+            Expr::Integer(value, _) => whole_in_int_range(*value as f64),
+            Expr::Double(value, _) => whole_in_int_range(*value),
+            Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr,
+                ..
+            } => {
+                // The negation must be base `-`: a rebound operator
+                // can return anything. `operator_rebound` is the
+                // package-aware check RY122's negated literals use;
+                // the stricter search-path guard would silence every
+                // endpoint inside a function body.
+                if super::ops_chooser::operator_rebound(self, "-", scope)
+                    || self.has_explicit_operator_mask("-", "`-`", scope)
+                {
+                    return None;
+                }
+                self.proven_integral_endpoint(expr, scope, allow_ident)
+                    .and_then(i64::checked_neg)
+            }
+            Expr::Ident { name, .. } if allow_ident => {
+                if scope.parameter_bindings.contains(name)
+                    || scope.default_parameter_bindings.contains(name)
+                    || scope.narrowed_bindings.contains(name)
+                {
+                    return None;
+                }
+                let ty = scope.get(name)?;
+                if !matches!(ty.length, Length::One | Length::Known(1))
+                    || !matches!(ty.mode, Mode::Integer | Mode::Double)
+                    || !ty.class.is_classless()
+                    || !ty.value_facts.all_values_known
+                    || ty.value_facts.prior_na
+                    || ty.value_facts.new_na != ry_core::types::NewNaProvenance::None
+                {
+                    return None;
+                }
+                let (low, high) = ty.value_facts.numeric_bounds?;
+                (low == high)
+                    .then(|| whole_in_int_range(f64::from_bits(low)))
+                    .flatten()
+            }
+            _ => None,
         }
     }
 
@@ -999,6 +1260,36 @@ pub(crate) fn known_null_arithmetic_operand(expr: &Expr, other: &RType, scope: &
 /// R finds at runtime may accept it, so a primitive miss proves nothing.
 pub(crate) fn dispatchable_null_operand(expr: &Expr, other: &RType) -> bool {
     matches!(expr, Expr::Null(_)) && !other.class.is_classless()
+}
+
+/// Whether a monotone whole-number sequence from `first` to `last`
+/// contains terms of both signs. Zero itself mixes with either side
+/// freely, so only a strictly positive term together with a strictly
+/// negative one counts.
+fn sequence_straddles_zero(first: i64, last: i64) -> bool {
+    (first > 0 && last < 0) || (first < 0 && last > 0)
+}
+
+/// The last term `seq(from, to, by)` actually reaches, or `None` when
+/// `by` is zero or runs away from `to` (R errors on both, with a
+/// different message than RY126's claim). Computed in `i128` so the
+/// step count cannot overflow before it is bounded by the endpoints.
+fn sequence_last_term(from: i64, to: i64, by: i64) -> Option<i64> {
+    if by == 0 {
+        return None;
+    }
+    let steps = (i128::from(to) - i128::from(from)) / i128::from(by);
+    if steps < 0 {
+        return None;
+    }
+    i64::try_from(i128::from(from) + steps * i128::from(by)).ok()
+}
+
+/// A finite whole number inside R's integer range, as `i64`. The
+/// float-to-int cast is exact inside this bound.
+fn whole_in_int_range(value: f64) -> Option<i64> {
+    (value.is_finite() && value.fract() == 0.0 && value.abs() <= f64::from(i32::MAX))
+        .then_some(value as i64)
 }
 
 /// Extract an integer value from a literal expression. Returns

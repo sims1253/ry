@@ -364,6 +364,12 @@ static PROBES: &[Probe] = &[
         negative: "f <- function(data) cli::cli_abort(\"{ncol(data)}\")\nf <- function(x) cli::cli_abort(\"loader: {data}\")\nf <- function(x) cli::cli_abort(\"{ncol(data)}\", .envir = x)\n",
     },
     Probe {
+        code: "RY126",
+        note: "sequence subscript proven to straddle zero on a plain receiver; one-sided descending sequences and computed endpoints stay silent",
+        positive: "x <- 1:10\nx[1:-1]\nx[seq(1, -1)]\nx[seq.int(2, -3)]\nx[rlang::seq2(-1, 2)]\nn <- -2L\nx[1:n]\nx[[1:-1]]\nx[1:-1] <- 0L\n",
+        negative: "x <- 1:10\nx[3:1]\nx[-3:-1]\nx[1:0]\nx[seq(3, 1)]\nx[seq(2, -1, by = -2)]\nx[rlang::seq2(1, -1)]\nx[seq_len(3)]\nfor (i in 1:-1) print(i)\nf <- function(v, n) v[1:n]\ng <- function(n) x[seq2(1, n - 1)]\nlst <- list(1, 2)\nlst[[1:-1]]\nmasked <- function() {\n  seq <- function(a, b) 1L\n  y <- c(1, 2, 3)\n  y[seq(1, -1)]\n}\n",
+    },
+    Probe {
         code: "RY127",
         note: "list(rep(v, n)) nested in c()/append() whose sibling elements are proven flat values of v's classless atomic type; correct, classed, count-1, and unknown forms stay silent",
         positive: "cols <- list(1L, 2L)\nspec <- list(cols = cols)\nspec$cols <- c(spec$cols, list(rep(3L, 2L)))\nmore <- append(cols, list(rep(3L, 2L)))\n",

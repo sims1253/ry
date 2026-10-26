@@ -3020,10 +3020,26 @@ impl Checker {
                 args,
                 span,
             } => {
-                if self.assign_nested_record_path(target, vt.clone(), scope) {
-                    return;
-                }
-                if self.assign_index_target(base, *kind, args, vt, *span, scope) {
+                // RY126 assignment findings need the receiver type from
+                // before the precise handlers rewrite it; they are
+                // emitted only when a handler claims the target, since
+                // the `infer` fallback below reports through
+                // `infer_index` instead.
+                let findings = match base.as_ref() {
+                    Expr::Ident { name, .. } => scope
+                        .get(name)
+                        .map(|receiver| {
+                            self.mixed_sign_sequence_findings(receiver, *kind, args, scope)
+                        })
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                if self.assign_nested_record_path(target, vt.clone(), scope)
+                    || self.assign_index_target(base, *kind, args, vt, *span, scope)
+                {
+                    for (span, message) in findings {
+                        self.emit(Severity::Error, span, "RY126", message);
+                    }
                     return;
                 }
                 // Other indexed assignments `x[i] <- v` etc. are too

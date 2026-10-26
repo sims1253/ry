@@ -88,10 +88,19 @@ impl Checker {
             return None;
         }
         let (package, formals): (&str, &[&str]) = match lookup_name {
-            "expect_error" => ("testthat", &["object", "regexp", "...", "info", "label"]),
+            // Real testthat 3.x formals (R/expect-condition.R), `class`
+            // and `inherit` included so partial names bind as in R.
+            "expect_error" => (
+                "testthat",
+                &[
+                    "object", "regexp", "class", "...", "inherit", "info", "label",
+                ],
+            ),
             "expect_warning" => (
                 "testthat",
-                &["object", "regexp", "...", "all", "info", "label"],
+                &[
+                    "object", "regexp", "class", "...", "inherit", "all", "info", "label",
+                ],
             ),
             // The real signature: `x` is the captured code; there is
             // no `...`, so partial names bind post-`x` formals as in R.
@@ -121,13 +130,11 @@ impl Checker {
                 None => true,
                 Some(arg) => !matches!(args[arg].value, Expr::Na(..)),
             },
-            // R coerces a non-zero numeric literal in the `error`
-            // condition to TRUE, so `error = 1` asserts like TRUE.
-            "expect_snapshot" => arg_named("error").is_some_and(|arg| {
-                matches!(args[arg].value, Expr::Logical(true, _))
-                    || matches!(args[arg].value, Expr::Integer(n, _) if n != 0)
-                    || matches!(args[arg].value, Expr::Double(x, _) if x != 0.0)
-            }),
+            // Only literal TRUE asserts: current testthat opens with
+            // `check_bool(error)`, so a numeric `error` is rejected
+            // before the probe is evaluated and asserts nothing.
+            "expect_snapshot" => arg_named("error")
+                .is_some_and(|arg| matches!(args[arg].value, Expr::Logical(true, _))),
             // `error` reaches tryCatch via `...`, so R requires the
             // exact name — partial matching only binds real formals. A
             // literal non-function handler (`NULL`, `NA`, `"x"`, `1`,

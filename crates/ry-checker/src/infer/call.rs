@@ -15,6 +15,8 @@ impl Checker {
     ) -> RType {
         // R fixes the call head before promises can mutate its binding,
         // so an error-assertion wrapper (#344) is recognized here too.
+        // Invariant: the push below is balanced by the pop at the end of
+        // this function — keep the body free of early returns.
         let probe = self.error_probe_span(func, args, scope);
         if let Some(probe) = probe {
             self.error_probe_spans.push(probe);
@@ -62,12 +64,18 @@ impl Checker {
     /// literal `error = TRUE`; any other value may be false at runtime.
     fn error_probe_span(&self, func: &Expr, args: &[Arg], scope: &Scope) -> Option<Span> {
         let name = callee_name(func)?;
-        let semantic_name = scope.function_alias(&name).unwrap_or(&name).to_string();
-        // An alias cannot prove the captured callable is the wrapper.
-        if name != semantic_name || is_user_infix_name(&semantic_name) {
+        let lookup_name = crate::semantic_lists::bare_name(&name);
+        if !matches!(
+            lookup_name,
+            "expect_error" | "expect_warning" | "expect_snapshot" | "tryCatch" | "try"
+        ) {
             return None;
         }
-        let lookup_name = crate::semantic_lists::bare_name(&semantic_name);
+        let semantic_name: &str = scope.function_alias(&name).unwrap_or(&name);
+        // An alias cannot prove the captured callable is the wrapper.
+        if name != semantic_name || is_user_infix_name(semantic_name) {
+            return None;
+        }
         let (package, formals): (&str, &[&str]) = match lookup_name {
             "expect_error" => ("testthat", &["object", "regexp", "...", "info", "label"]),
             "expect_warning" => (
@@ -82,15 +90,23 @@ impl Checker {
             "try" => ("base", &["expr", "silent", "outFile"]),
             _ => return None,
         };
-        if !self.error_wrapper_recognized(&name, func, &semantic_name, lookup_name, package, scope)
-        {
+        if !self.error_wrapper_recognized(&name, func, semantic_name, lookup_name, package, scope) {
             return None;
         }
         let matched = match_arguments(formals, args);
         let asserts = match lookup_name {
+            // `regexp = NA` asserts that NO error/warning occurs, the
+            // opposite probe; a proven-`NA` regexp refuses, anything
+            // else (absent/`NULL`/string/dynamic) keeps the probe.
+            "expect_error" | "expect_warning" => match matched.arg_for_param(1) {
+                None => true,
+                Some(arg) => !matches!(args[arg].value, Expr::Na(..)),
+            },
             "expect_snapshot" => matched
                 .arg_for_param(2)
                 .is_some_and(|arg| matches!(args[arg].value, Expr::Logical(true, _))),
+            // `error` reaches tryCatch via `...`, so R requires the
+            // exact name — partial matching only binds real formals.
             "tryCatch" => args.iter().any(|arg| {
                 arg.name.as_deref() == Some("error") && !matches!(arg.value, Expr::Missing(_))
             }),
@@ -125,29 +141,17 @@ impl Checker {
         scope: &Scope,
     ) -> bool {
         use crate::resolve::SpecialCallProvenance;
-        use ry_core::types::Mode;
         match self.special_call_provenance(name, func, semantic_name, lookup_name, package, scope) {
             SpecialCallProvenance::Proven => true,
             SpecialCallProvenance::Ordinary => false,
             SpecialCallProvenance::AmbientUncertainty | SpecialCallProvenance::Unknown => {
                 // R's function-mode lookup skips a binding known to hold
                 // data, so only a possibly-function binding can mask.
-                let binding_may_be_function = scope.get(semantic_name).is_some_and(|ty| {
-                    ty.fn_sig.is_some()
-                        || !matches!(
-                            ty.mode,
-                            Mode::Logical
-                                | Mode::Integer
-                                | Mode::Double
-                                | Mode::Complex
-                                | Mode::Character
-                                | Mode::Raw
-                                | Mode::List
-                                | Mode::Null
-                                | Mode::Environment
-                                | Mode::Language
-                        )
-                });
+                // Positive match on the possibly-function modes, so a
+                // future data mode does not silently count as callable.
+                let binding_may_be_function = scope
+                    .get(semantic_name)
+                    .is_some_and(|ty| ty.fn_sig.is_some() || ty.mode.may_be_function());
                 !semantic_name.contains("::")
                     && !scope.data_mask_unknown
                     && !scope.is_parameter(semantic_name)

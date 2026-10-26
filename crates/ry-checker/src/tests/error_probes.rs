@@ -125,6 +125,42 @@ fn attached_testthat_still_recognizes_bare_wrappers() {
             .collect::<Vec<_>>(),
         [Confidence::Low]
     );
+    // Refusal direction: a different attached package is not testthat.
+    let diagnostics = check_with("expect_error(1 + \"\")\n", |c| {
+        c.set_bare_loaded(std::collections::HashSet::from(["dplyr".to_string()]));
+    });
+    assert_eq!(
+        arith_from(diagnostics)
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect::<Vec<_>>(),
+        [Confidence::Medium]
+    );
+}
+
+#[test]
+fn no_error_assertions_and_deferred_bodies_keep_full_strength() {
+    for source in [
+        // `regexp = NA` asserts that NO error/warning occurs.
+        "expect_error(1 + \"\", regexp = NA)\n",
+        "expect_error(1 + \"\", NA)\n",
+        "expect_warning(1 + \"\", regexp = NA)\n",
+        // The probe catches creating the closure, not calling it later.
+        "testthat::expect_error({ f <- function() { 1 + \"\" }; stop(\"x\") })\n",
+    ] {
+        assert_eq!(
+            confidences(source),
+            [Confidence::Medium],
+            "genuine defect must keep full strength: {source}"
+        );
+    }
+    // A probe inside the deferred body still demotes its own probe.
+    assert_eq!(
+        confidences(
+            "testthat::expect_error({ f <- function() expect_error(1 + \"\"); stop(\"x\") })\n"
+        ),
+        [Confidence::Low]
+    );
 }
 
 #[test]

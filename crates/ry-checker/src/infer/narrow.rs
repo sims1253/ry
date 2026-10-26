@@ -1333,6 +1333,7 @@ impl Checker {
     ) {
         if scope.failed_namespaces.is_empty()
             || !name.contains("::")
+            || super::call::is_user_infix_name(name)
             || self.qualified_name_bound_locally(name, scope)
         {
             return;

@@ -227,3 +227,12 @@ fn condition_handler_probes_and_literal_handlers_do_not() {
         "page <- if (!requireNamespace(\"pkgx\")) tryCatch(pkgx::thing, error = NULL) else 2L\n"
     ));
 }
+
+#[test]
+fn user_infix_spelling_is_not_a_namespace_access() {
+    // `%::%` is a user infix operator, never a namespace access,
+    // even when a fact exists for the literal package "%".
+    assert!(!warns_ry123(
+        "`%::%` <- function(a, b) a\nif (!requireNamespace(\"%\")) { y <- 1L %::% 2L } else { y <- 1L }\n"
+    ));
+}

@@ -2377,7 +2377,7 @@ struct CallResolution {
     locally_shadows_stub: bool,
 }
 
-fn is_user_infix_name(name: &str) -> bool {
+pub(crate) fn is_user_infix_name(name: &str) -> bool {
     name.len() > 2 && name.starts_with('%') && name.ends_with('%')
 }
 

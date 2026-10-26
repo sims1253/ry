@@ -361,6 +361,14 @@ pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyen
 /// environment, and never dispatches to project code (fact creation refuses
 /// projects that define a method for any of these names). Every other call
 /// may install an active or delayed binding in the caller's frame.
+/// Base numeric math functions recognized by RY100 (comparison inside
+/// a math call) and RY122 (deterministic operand inside a self-
+/// comparison): the single-argument `Math`-group primitives plus
+/// `round`, which take a numeric first argument.
+pub const BASE_MATH_FNS: &[&str] = &[
+    "abs", "sqrt", "exp", "log", "log2", "log10", "log1p", "floor", "ceiling", "round", "trunc",
+];
+
 pub const SCALAR_FACT_SAFE_CALLS: &[&str] = &[
     "stopifnot",
     "length",
@@ -454,6 +462,12 @@ pub fn registry() -> Vec<SemanticList> {
             items: FRAME_REFLECTION,
             check: CheckKind::ROracle,
             claim: "base, methods, or rlang functions that can reach a frame's promises without naming the formal",
+        },
+        SemanticList {
+            name: "BASE_MATH_FNS",
+            items: BASE_MATH_FNS,
+            check: CheckKind::TypeshedAgreement,
+            claim: "base single-argument numeric math functions recognized by RY100 and RY122",
         },
         SemanticList {
             name: "SCALAR_FACT_SAFE_CALLS",

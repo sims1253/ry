@@ -1118,18 +1118,13 @@ impl Checker {
         matches!(grep_args[value_index].value, Expr::Logical(false, _))
     }
 
-    /// Base numeric math functions RY100 and RY122 both recognize.
-    const BASE_MATH_FNS: &[&str] = &[
-        "abs", "sqrt", "exp", "log", "log2", "log10", "log1p", "floor", "ceiling", "round", "trunc",
-    ];
-
     /// RY100: numeric math functions coerce logical comparisons to 0/1,
     /// which is almost always a misplaced parenthesis (`abs(x > y)` rather
     /// than `abs(x) > y`). Extra parentheses do not change the parsed
     /// argument, so deliberately parenthesized comparisons remain visible
     /// here.
     fn check_comparison_inside_math_fn(&mut self, lookup_name: &str, args: &[Arg]) {
-        if Self::BASE_MATH_FNS.contains(&lookup_name)
+        if crate::semantic_lists::BASE_MATH_FNS.contains(&lookup_name)
             && let Some(Expr::BinOp {
                 op,
                 span: comparison_span,
@@ -1295,7 +1290,8 @@ impl Checker {
                 // search path ry cannot prove, and the strict variant
                 // would silence the rule exactly where it applies. A
                 // lexical or project redefinition still stays silent.
-                Self::BASE_MATH_FNS.contains(&crate::semantic_lists::bare_name(name))
+                crate::semantic_lists::BASE_MATH_FNS
+                    .contains(&crate::semantic_lists::bare_name(name))
                     && self.resolves_to_base_lenient(name, scope)
                     && args
                         .iter()

@@ -1510,9 +1510,7 @@ impl Checker {
                 // but the decision is the parse, so prose like
                 // `"use x <- 1"` does not count.
                 let candidate = ["ncol", "nrow", "dim"].iter().any(|n| region.contains(n));
-                let may_rebind = ["<-", "=", "assign", "for"]
-                    .iter()
-                    .any(|n| region.contains(n));
+                let may_rebind = region_may_rebind_textually(region);
                 if !candidate && !may_rebind {
                     continue;
                 }
@@ -1616,9 +1614,7 @@ impl Checker {
         collect_hits: bool,
         hits: &mut Vec<(String, String, Span)>,
     ) -> bool {
-        let may_rebind_textually = ["<-", "=", "assign", "for"]
-            .iter()
-            .any(|hint| region.contains(hint));
+        let may_rebind_textually = region_may_rebind_textually(region);
         let Ok(file) = parser.parse("<cli-template>", region) else {
             return may_rebind_textually;
         };
@@ -2963,6 +2959,15 @@ fn dimensional_argument(args: &[Arg]) -> Option<&Arg> {
 /// their nested interpolations (their own content is literal text),
 /// and pluralization markers (`{?s}`, `{?a/b}`) are not expressions.
 /// An unbalanced group ends the scan silently.
+/// Cheap textual pre-filter for "this region might rebind a name":
+/// an assignment operator (either spelling), an `assign()` call, or
+/// a `for` loop variable. The parse decides; this only gates it.
+fn region_may_rebind_textually(region: &str) -> bool {
+    ["<-", "=", "assign", "for"]
+        .iter()
+        .any(|hint| region.contains(hint))
+}
+
 fn cli_template_regions(text: &str) -> Vec<(usize, usize)> {
     let mut regions = Vec::new();
     collect_template_regions(text, 0, &mut regions);

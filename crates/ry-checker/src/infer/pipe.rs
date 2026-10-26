@@ -411,11 +411,9 @@ impl Checker {
                 // not fact removal, so guards installed inside `expr`
                 // are covered too.
                 if has_error_handler {
-                    self.caught_namespace_probe_depth += 1;
-                }
-                types.push(self.infer(&a.value, scope));
-                if has_error_handler {
-                    self.caught_namespace_probe_depth -= 1;
+                    types.push(self.infer_caught_namespace_probe(&a.value, scope));
+                } else {
+                    types.push(self.infer(&a.value, scope));
                 }
             } else if a.name.is_some() && matched.param_for_arg[i].is_none() {
                 if let Some(rt) = self.callback_return_type(&a.value, &[RType::unknown()], scope) {

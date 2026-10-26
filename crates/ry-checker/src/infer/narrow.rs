@@ -723,6 +723,9 @@ pub(crate) fn join_failed_namespaces(
     then_diverges: bool,
     else_diverges: bool,
 ) -> crate::FxSet<String> {
+    if base.is_empty() && then_set.is_empty() && else_set.is_empty() {
+        return base.clone();
+    }
     base.iter()
         .chain(then_set.iter())
         .chain(else_set.iter())
@@ -1325,17 +1328,20 @@ impl Checker {
         if scope.failed_namespaces.is_empty() || self.caught_namespace_probe_depth > 0 {
             return;
         }
-        let clean = name
-            .strip_prefix('`')
-            .and_then(|rest| rest.strip_suffix('`'))
-            .unwrap_or(name);
-        let Some((package, _)) = crate::resolve::split_qualified(clean) else {
+        // A fully backticked `` `pkg::f` `` is one lexical symbol, not
+        // an access; the parser keeps its ticks (a real access arrives
+        // decoded, e.g. `` `my::pkg`::f `` as `my::pkg::f`, which
+        // `split_qualified` keys on the literal `my::pkg`).
+        if name.starts_with('`') && name.ends_with('`') && name.len() >= 2 {
+            return;
+        }
+        let Some((package, _)) = crate::resolve::split_qualified(name) else {
             return;
         };
+        let operator = if name.contains(":::") { ":::" } else { "::" };
         if !scope.failed_namespaces.contains(package) {
             return;
         }
-        let operator = if clean.contains(":::") { ":::" } else { "::" };
         if ops_chooser::operator_rebound(self, operator, scope) {
             return;
         }
@@ -1347,6 +1353,16 @@ impl Checker {
                 "`{name}` needs the `{package}` namespace, but `requireNamespace(\"{package}\")` returned `FALSE` on this branch"
             ),
         );
+    }
+
+    /// Infer a caught `tryCatch` probe expression with RY122 silenced:
+    /// the depth inc/dec pairing lives in this one small function so
+    /// early returns inside inference cannot unbalance it.
+    pub(crate) fn infer_caught_namespace_probe(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
+        self.caught_namespace_probe_depth += 1;
+        let result = self.infer(expr, scope);
+        self.caught_namespace_probe_depth -= 1;
+        result
     }
 
     /// The narrowing for a condition that selects code: an `if` test, the

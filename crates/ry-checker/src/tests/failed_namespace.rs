@@ -157,6 +157,20 @@ fn caller_code_and_known_values() {
     assert!(!warns_ry122(
         "`pkgx::thing` <- 1L\nif (!requireNamespace(\"pkgx\")) { y <- `pkgx::thing` } else { y <- 1L }\n"
     ));
+    // Same for a backticked call head.
+    assert!(!warns_ry122(
+        "`pkgx::thing` <- function() 1L\nif (!requireNamespace(\"pkgx\")) { y <- `pkgx::thing`() } else { y <- 1L }\n"
+    ));
+    // A quoted package segment containing `::` keys on the literal
+    // package name the guard recorded.
+    assert!(warns_ry122(
+        "if (!requireNamespace(\"my::pkg\")) { y <- `my::pkg`::thing } else { y <- 1L }\n"
+    ));
+    // An exactly identified user function with only `<<-` writes
+    // cannot load the namespace, so the fact survives it.
+    assert!(warns_ry122(
+        "setup <- function() { z <<- 1L }\nif (!requireNamespace(\"pkgx\")) { setup(); y <- pkgx::thing } else { y <- 1L }\n"
+    ));
 }
 
 #[test]

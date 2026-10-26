@@ -27,6 +27,6 @@ j <- if (complex(real = 1)) 1 else 2
 k <- if (vector("complex", 1)) 1 else 2
 l <- if (vector("raw", 1)) 1 else 2
 m <- if (complex(real = 0, imaginary = 1)) 1 else 2
-# NA_complex_ is complex<len=1>; R errors on it at runtime (value, not
-# mode, decides). Silence is the uncertainty policy; NA policy is #354.
-n <- if (NA_complex_) 1 else 2
+# A literal NA_complex_ condition is a proven NA and reports RY001
+# (issue #354, covered in cases/na_conditions.R); an untracked complex
+# scalar above keeps this file's uncertainty silence.

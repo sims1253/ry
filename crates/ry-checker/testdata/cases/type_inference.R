@@ -367,11 +367,11 @@ if (0+1i) print(1)
 # no-diag
 if (0+0i) print(1)
 
-## case: NA_complex_ condition stays silent
-# no-diag
+## case: NA_complex_ condition is a proven NA
+# expect: RY001
 # R errors at runtime here ("argument is not interpretable as logical").
-# The value decides, not the mode, and ry does not track NA values, so
-# silence is uncertainty, not a validity claim.
+# The mode alone does not decide, but the literal is a proven scalar NA
+# (issue #354); an untracked complex condition stays silent above.
 if (NA_complex_) print(1)
 
 ## case: length-2 logical if condition is an error

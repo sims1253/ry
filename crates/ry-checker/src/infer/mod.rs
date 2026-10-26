@@ -414,13 +414,70 @@ pub(crate) fn merging_arms(
 /// boundary, not a validity claim: the untracked value may equally be a
 /// runtime error (non-literal character text, or NA values such as
 /// `NA_complex_`, which `if` rejects in the "not interpretable" family;
-/// the logical-`NA` condition error is #354 and stays out of scope).
+/// a syntactically proven `NA` re-establishes the diagnostic in
+/// `emit_condition_diagnostics`, while an untracked one stays silent).
 /// Proven-wrong lengths stay wrong regardless of mode: a zero-length
 /// condition errors ("argument is of length zero") and a known length
 /// above one errors ("the condition has length > 1").
 fn is_coercible_scalar_condition_mode(t: &RType) -> bool {
     matches!(t.mode, Mode::Character | Mode::Complex | Mode::Raw)
         && matches!(t.length, Length::One | Length::Unknown | Length::Nonempty)
+}
+
+/// Whether the expression syntactically contains an `NA` literal: the
+/// cheap, scope-free precondition for the proven-NA proof.
+fn contains_na_literal(expr: &Expr) -> bool {
+    use std::ops::ControlFlow;
+    ry_core::walk::walk_expr(expr, ry_core::walk::Walk::ALL, |node, _| match node {
+        ry_core::walk::AstNode::Expr(Expr::Na(..)) => ControlFlow::Break(()),
+        _ => ControlFlow::Continue(ry_core::walk::Descend::Into),
+    })
+    .is_break()
+}
+
+/// A scalar literal with no class and no evaluation beyond itself, so
+/// an operator over it cannot dispatch to an `Ops` method. A negated
+/// numeric literal keeps that property through the primitive `-`.
+fn plain_scalar_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Logical(..) | Expr::Integer(..) | Expr::Double(..) | Expr::String(..) => true,
+        Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr: inner,
+            ..
+        } => matches!(inner.as_ref(), Expr::Integer(..) | Expr::Double(..)),
+        _ => false,
+    }
+}
+
+/// A plain double literal, optionally negated (finite or not; callers
+/// that need finiteness check it separately).
+fn plain_double_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Double(..) => true,
+        Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr: inner,
+            ..
+        } => matches!(inner.as_ref(), Expr::Double(..)),
+        _ => false,
+    }
+}
+
+/// A finite numeric scalar literal, for arithmetic that must propagate
+/// a proven `NA` exactly: an infinite operand can turn `NA * Inf`
+/// into `NaN` instead.
+fn plain_numeric_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Logical(..) | Expr::Integer(..) => true,
+        Expr::Double(value, _) => value.is_finite(),
+        Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr: inner,
+            ..
+        } => plain_numeric_literal(inner),
+        _ => false,
+    }
 }
 
 /// Decoded character text from a literal or a binding with a known value.
@@ -439,10 +496,10 @@ fn condition_string_literal<'a>(cond: &'a Expr, scope: &'a Scope) -> Option<&'a 
 /// variants — errors with "argument is not interpretable as logical".
 /// Note the `"NA"` boundary: `as.logical("NA")` itself returns `NA`
 /// without error, and it is USING that logical `NA` as a condition that
-/// errors with "missing value where TRUE/FALSE needed" (#354, out of
-/// scope here). The `if`/`while` coercion path rejects the `"NA"`
-/// string before any of that happens, so it stays in this rule's
-/// proven-invalid set.
+/// errors with "missing value where TRUE/FALSE needed" (the proven-NA
+/// arm of `emit_condition_diagnostics`). The `if`/`while` coercion path
+/// rejects the `"NA"` string before any of that happens, so it stays in
+/// this rule's proven-invalid set.
 fn r_condition_string_is_accepted(value: &str) -> bool {
     matches!(
         value,
@@ -1314,12 +1371,19 @@ impl Checker {
     /// three condition contexts (`if` statements, loop conditions, `if`
     /// expressions) route through here so they cannot drift apart.
     fn infer_condition(&mut self, cond: &Expr, scope: &mut Scope, ctx: ConditionContext) {
+        // The proven-NA proof reads the scope as it is before the
+        // condition evaluates: inferring the condition itself
+        // invalidates the ops environment its operators are checked
+        // against. The scope-free NA-leaf scan keeps the common
+        // non-NA condition off the proof's scope lookups entirely.
+        let proven_na =
+            contains_na_literal(cond) && self.proven_na_scalar_mode(cond, scope).is_some();
         self.check_class_equality_operand(cond, scope);
         let diagnostic_start = self.diagnostics.len();
         let previous_boolean_context = self.boolean_context_span.replace(span_of(cond));
         let ct = self.infer(cond, scope);
         self.boolean_context_span = previous_boolean_context;
-        self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, ctx);
+        self.emit_condition_diagnostics(cond, ct, scope, diagnostic_start, proven_na, ctx);
         if matches!(ctx, ConditionContext::If) {
             self.mark_condition_scalar_fact(cond, scope);
         }
@@ -1389,6 +1453,198 @@ impl Checker {
         })
     }
 
+    /// The mode of the scalar `NA` this expression provably evaluates
+    /// to, read from syntax alone (issue #354): an `NA` literal, a
+    /// unary `!`/`-` over one, a comparison or `+`/`-`/`*` between one
+    /// and a plain scalar literal, and the base reductions and
+    /// coercions (`c`, `any`, `all`, `sum`, `as.*`) over one. Every
+    /// operand that could dispatch (`Ops` methods, a rebound operator)
+    /// or read a binding is excluded: ry's binding value facts can be
+    /// invalidated by replacement and subsetting, which is why the
+    /// earlier fact-based slice was dropped. `^` is excluded because
+    /// `NA^0` and `1^NA` are `1`, and `&`/`|` because `NA & FALSE` and
+    /// `NA | TRUE` are not `NA`. The mode is load-bearing inside the
+    /// recursion (the character and complex exclusions, the coercion
+    /// ladder); the condition caller only needs its presence.
+    fn proven_na_scalar_mode(&self, expr: &Expr, scope: &Scope) -> Option<Mode> {
+        self.proven_na_scalar_mode_at(expr, scope, 0)
+    }
+
+    fn proven_na_scalar_mode_at(&self, expr: &Expr, scope: &Scope, depth: usize) -> Option<Mode> {
+        // The proof runs before inference's stack-grown walk, so cap
+        // its own recursion; deeper conditions simply go unproven.
+        const PROVEN_NA_PROOF_MAX_DEPTH: usize = 128;
+        if depth > PROVEN_NA_PROOF_MAX_DEPTH {
+            return None;
+        }
+        match expr {
+            Expr::Na(ty, _) => match ty.mode {
+                Mode::Logical | Mode::Integer | Mode::Double | Mode::Character | Mode::Complex => {
+                    Some(ty.mode)
+                }
+                _ => None,
+            },
+            Expr::UnaryOp {
+                op, expr: inner, ..
+            } => {
+                let mode = self.proven_na_scalar_mode_at(inner, scope, depth + 1)?;
+                let symbol = match op {
+                    UnaryOpKind::Not => "!",
+                    UnaryOpKind::Neg => "-",
+                };
+                if scope.uncertainty.ops_environment
+                    || ops_chooser::operator_rebound(self, symbol, scope)
+                {
+                    return None;
+                }
+                match op {
+                    UnaryOpKind::Not
+                        if matches!(mode, Mode::Logical | Mode::Integer | Mode::Double) =>
+                    {
+                        Some(Mode::Logical)
+                    }
+                    UnaryOpKind::Neg
+                        if matches!(
+                            mode,
+                            Mode::Logical | Mode::Integer | Mode::Double | Mode::Complex
+                        ) =>
+                    {
+                        Some(if mode == Mode::Logical {
+                            Mode::Integer
+                        } else {
+                            mode
+                        })
+                    }
+                    _ => None,
+                }
+            }
+            Expr::BinOp { op, lhs, rhs, .. } => {
+                let symbol = match op {
+                    BinOpKind::Lt => "<",
+                    BinOpKind::Le => "<=",
+                    BinOpKind::Gt => ">",
+                    BinOpKind::Ge => ">=",
+                    BinOpKind::Eq => "==",
+                    BinOpKind::Ne => "!=",
+                    BinOpKind::Add => "+",
+                    BinOpKind::Sub => "-",
+                    BinOpKind::Mul => "*",
+                    _ => return None,
+                };
+                if scope.uncertainty.ops_environment
+                    || ops_chooser::operator_rebound(self, symbol, scope)
+                {
+                    return None;
+                }
+                let left_na = self.proven_na_scalar_mode_at(lhs, scope, depth + 1);
+                let right_na = self.proven_na_scalar_mode_at(rhs, scope, depth + 1);
+                // A negated literal is only plain when unary `-` itself
+                // is not rebound: `` `-` <- function(e1) ... `` can turn
+                // `-1` into a classed value whose `Ops` method decides
+                // the comparison or arithmetic.
+                let neg_rebound = ops_chooser::operator_rebound(self, "-", scope);
+                let neg_ok = |operand: &Expr| {
+                    !matches!(
+                        operand,
+                        Expr::UnaryOp {
+                            op: UnaryOpKind::Neg,
+                            ..
+                        }
+                    ) || !neg_rebound
+                };
+                if is_comparison(*op) {
+                    // Ordering a complex NA errors in the comparison
+                    // itself ("invalid comparison with complex values");
+                    // it never evaluates to NA. Equality is fine.
+                    if !matches!(op, BinOpKind::Eq | BinOpKind::Ne)
+                        && (left_na == Some(Mode::Complex) || right_na == Some(Mode::Complex))
+                    {
+                        return None;
+                    }
+                    // Reuse the modes just computed: re-descending an
+                    // operand here would multiply work per nesting level.
+                    let plain = |operand: &Expr, operand_na: Option<Mode>| {
+                        (plain_scalar_literal(operand) && neg_ok(operand)) || operand_na.is_some()
+                    };
+                    if (left_na.is_some() && plain(rhs, right_na))
+                        || (right_na.is_some() && plain(lhs, left_na))
+                    {
+                        return Some(Mode::Logical);
+                    }
+                    return None;
+                }
+                let na_mode = left_na.or(right_na)?;
+                if na_mode == Mode::Character {
+                    return None;
+                }
+                let (other, other_na) = if left_na.is_some() {
+                    (rhs, right_na)
+                } else {
+                    (lhs, left_na)
+                };
+                let other_is_plain = plain_numeric_literal(other) && neg_ok(other);
+                // Admit a plain literal or another proven NA of any
+                // numeric mode (complex included, for the ladder
+                // below); a character NA proves nothing here.
+                let other_admissible = other_is_plain
+                    || matches!(
+                        other_na,
+                        Some(Mode::Logical | Mode::Integer | Mode::Double | Mode::Complex)
+                    );
+                if !other_admissible {
+                    return None;
+                }
+                // R's arithmetic coercion ladder, counting a plain
+                // double literal other operand (`1.5 * NA_integer_` is
+                // a double NA).
+                let other_is_double = other_is_plain && plain_double_literal(other);
+                Some(match (left_na, right_na) {
+                    (Some(Mode::Complex), _) | (_, Some(Mode::Complex)) => Mode::Complex,
+                    (Some(Mode::Double), _) | (_, Some(Mode::Double)) => Mode::Double,
+                    _ if other_is_double => Mode::Double,
+                    _ => Mode::Integer,
+                })
+            }
+            Expr::Call { func, args, .. } => {
+                let name = ident_name(func)?;
+                let [arg] = args.as_slice() else {
+                    return None;
+                };
+                if arg.name.is_some() || !self.resolves_to_base(name, scope) {
+                    return None;
+                }
+                let mode = self.proven_na_scalar_mode_at(&arg.value, scope, depth + 1)?;
+                match crate::semantic_lists::bare_name(name) {
+                    "c" => Some(mode),
+                    "any" | "all"
+                        if matches!(mode, Mode::Logical | Mode::Integer | Mode::Double) =>
+                    {
+                        Some(Mode::Logical)
+                    }
+                    "sum"
+                        if matches!(
+                            mode,
+                            Mode::Logical | Mode::Integer | Mode::Double | Mode::Complex
+                        ) =>
+                    {
+                        Some(match mode {
+                            Mode::Double => Mode::Double,
+                            Mode::Complex => Mode::Complex,
+                            _ => Mode::Integer,
+                        })
+                    }
+                    "as.logical" => Some(Mode::Logical),
+                    "as.integer" => Some(Mode::Integer),
+                    "as.numeric" | "as.double" => Some(Mode::Double),
+                    "as.character" => Some(Mode::Character),
+                    "as.complex" => Some(Mode::Complex),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Emit RY001/RY003/RY002 for a condition already inferred as `ct`.
     ///
     /// `diagnostic_start` is the `diagnostics` length captured before that
@@ -1404,6 +1660,7 @@ impl Checker {
         ct: RType,
         scope: &Scope,
         diagnostic_start: usize,
+        proven_na_syntax: bool,
         ctx: ConditionContext,
     ) {
         let has_ry100 = self.diagnostics[diagnostic_start..]
@@ -1420,6 +1677,35 @@ impl Checker {
             && matches!(ct.length, Length::One)
             && condition_string_literal(cond, scope)
                 .is_some_and(|value| !r_condition_string_is_accepted(value));
+        // A proven scalar `NA` condition (issue #354) is decidable from
+        // syntax where the mode alone is not: a logical `NA` has the
+        // valid condition mode, and the typed NAs look like ordinary
+        // numeric or character scalars. The whole condition being a
+        // definite RY119 cast is the same proof through the cast's own
+        // range evidence: RY119 is emitted only by
+        // `emit_integer_range_loss`, exclusively for proven out-of-range
+        // `as.integer()` casts, so a scalar result carrying one at the
+        // condition's own span is `NA_integer_`. A longer cast result
+        // (`as.integer(c(1, 1e10))`) is a length error instead, so the
+        // scalar length is part of the proof.
+        // Structural as well as diagnostic: the condition itself must
+        // be an `as.integer()` call, so reusing the RY119 code at some
+        // other span in the future cannot forge this proof.
+        let is_as_integer_call = matches!(
+            cond,
+            Expr::Call { func, .. }
+                if ident_name(func).is_some_and(|name| {
+                    crate::semantic_lists::bare_name(name) == "as.integer"
+                })
+        );
+        let proven_na = proven_na_syntax
+            || (matches!(ct.length, Length::One)
+                && is_as_integer_call
+                && self.diagnostics[diagnostic_start..]
+                    .iter()
+                    .any(|diagnostic| {
+                        diagnostic.code == "RY119" && diagnostic.span == span_of(cond)
+                    }));
         // Preserve the established if-only logical-vector RY002 rule.
         // Other proven multi-value conditions use RY001, never RY003.
         if ctx.allows_length_rule()
@@ -1437,18 +1723,26 @@ impl Checker {
                 ),
             );
         } else if (matches!(condition, Some(ConditionDiagnostic::Invalid))
-            || invalid_string_literal)
+            || invalid_string_literal
+            || proven_na)
             && !has_ry100
         {
             self.emit(
                 Severity::Warning,
                 span_of(cond),
                 "RY001",
-                format!(
-                    "{} condition is `{}`, expected length-1 logical (or a value R coerces to logical)",
-                    ctx.noun(),
-                    ct
-                ),
+                if proven_na {
+                    format!(
+                        "{} condition is always `NA`; R errors on an `NA` condition",
+                        ctx.noun()
+                    )
+                } else {
+                    format!(
+                        "{} condition is `{}`, expected length-1 logical (or a value R coerces to logical)",
+                        ctx.noun(),
+                        ct
+                    )
+                },
             );
         } else if matches!(condition, Some(ConditionDiagnostic::Numeric))
             && !has_ry100

@@ -2429,6 +2429,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_multi_assign.R
 - diagnostics: []
+  fixture: ok_na_guard_conditions.R
+- diagnostics: []
   fixture: ok_named_args_match.R
 - diagnostics: []
   fixture: ok_named_args_mixed.R

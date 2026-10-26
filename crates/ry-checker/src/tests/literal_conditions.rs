@@ -167,6 +167,109 @@ fn null_union_return_components_reach_condition_analysis() {
     }
 }
 
+// Issue #354: a condition that is syntactically a proven scalar `NA`
+// always errors in R ("missing value where TRUE/FALSE needed" for a
+// logical NA, "argument is not interpretable as logical" for the typed
+// NAs). Only closed literal shapes count as proof here; bindings and
+// possibly-NA values stay with the follow-up work recorded on #354.
+#[test]
+fn proven_na_literal_conditions_are_checked() {
+    for source in [
+        "if (NA) 1L",
+        "while (NA) break",
+        "if (NA_integer_) 1L",
+        "if (NA_real_) 1L",
+        "if (NA_character_) 1L",
+        "if (NA_complex_) 1L",
+        "if (!NA) 1L",
+        "if (-NA_real_) 1L",
+        "x <- if (NA) 1L else 2L",
+        // Mixed-type comparisons coerce in R and still yield NA.
+        "if (NA_integer_ < \"x\") 1L",
+        "if (NA_character_ < TRUE) 1L",
+        "if (NA_complex_ == 1) 1L",
+        "if (NA_integer_ > 1L) 1L",
+        "if (1L < NA_integer_) 1L",
+        "if (NA + 1L) 1L",
+        "if (any(NA)) 1L",
+        "if (all(NA)) 1L",
+        "if (sum(NA_integer_)) 1L",
+        "if (c(NA)) 1L",
+        "if (as.logical(NA_integer_)) 1L",
+        "if (as.integer(1e10)) 1L",
+        "f <- function() { if (NA) 1L }; f()",
+    ] {
+        let diagnostics = check(source);
+        let count = diagnostics.iter().filter(|d| d.code == "RY001").count();
+        assert_eq!(count, 1, "{source}: {diagnostics:?}");
+    }
+    // Separate from the loop so the message assertion stands alone
+    // (the loop's count assertion already covers this shape).
+    let diagnostics = check("if (NA) 1L");
+    let message = diagnostics
+        .iter()
+        .find(|d| d.code == "RY001")
+        .map(|d| d.message.as_str())
+        .unwrap_or_default();
+    assert!(
+        message.contains("always `NA`"),
+        "the message must identify the proven-NA condition: {diagnostics:?}"
+    );
+    // A longer out-of-range cast is a length error, not a scalar NA:
+    // RY119 fires, but the message must not claim an always-NA scalar.
+    let diagnostics = check("if (as.integer(c(1, 1e10))) 1L");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY119"),
+        "the cast itself must still be diagnosed: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != "RY001" || !d.message.contains("always `NA`")),
+        "{diagnostics:?}"
+    );
+}
+
+// The counterexamples that dropped the earlier value-fact slice on
+// #354, plus the guarded and possibly-NA idioms, must stay silent: a
+// binding's recorded NA fact can be invalidated by replacement,
+// subsetting, `Ops` dispatch, character coercion of `NaN`, or an
+// argument supplied over a default.
+#[test]
+fn guarded_and_unproven_na_conditions_stay_silent() {
+    for source in [
+        "if (!is.na(x)) 1L",
+        "if (isTRUE(x)) 1L",
+        "if (x) 1L",
+        "if (sum(x)) 1L",
+        "if (any(x)) 1L",
+        "x <- NA; if (x) 1L",
+        "x <- NA; x[1L] <- TRUE; if (x) 1L",
+        "x <- c(NA_real_, 1); if (x[2L]) 1L",
+        "if (NaN == \"NaN\") 1L",
+        "Ops.foo <- function(e1, e2) TRUE; x <- if (flag) base::structure(1, class = \"foo\") else 1; if (x > NA_real_) 1L",
+        "f <- function(x = NA) x; if (f(TRUE)) 1L",
+        "if (any(NA, na.rm = TRUE)) 1L",
+        "if (NA & FALSE) 1L",
+        "if (NA^0) 1L",
+        "any <- function(x, ...) TRUE; if (any(NA)) 1L",
+        "if (NA == x) 1L",
+        // Ordering a complex NA errors in the comparison, not as an NA.
+        "if (NA_complex_ > 1) 1L",
+        "if (1 < NA_complex_) 1L",
+        // A rebound unary `-` can make `-1` a classed value whose Ops
+        // method decides the comparison (the branch runs fine in R).
+        "`-` <- function(e1) base::structure(1, class = \"foo\"); Ops.foo <- function(e1, e2) TRUE; if (NA == -1) 1L",
+        "`-` <- function(e1) base::structure(1, class = \"foo\"); Ops.foo <- function(e1, e2) TRUE; if (NA + -1.5) 1L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
 // The same unions without a NULL member, and non-condition uses of a
 // NULL-carrying union, stay silent: the rule is about condition
 // positions on the possibly-NULL value, nothing else.
@@ -197,5 +300,61 @@ fn null_free_unions_and_non_condition_uses_stay_silent() {
     assert!(
         diagnostics.iter().all(|d| d.code != "RY001"),
         "non-condition uses must stay silent: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn operator_rebound_inside_the_condition_stays_silent() {
+    // The proven-NA proof reads the pre-inference scope, but its
+    // closed grammar (NA literals, unary/binary ops over plain
+    // literals, single-argument base calls) never descends into a
+    // block or an assignment, so an operator rebound inside the
+    // condition itself cannot be proven over: R runs the custom
+    // `+` and the condition is 1L, not NA.
+    for source in [
+        "if ({ `+` <- function(e1, e2) 1L; NA + 1L }) 1L",
+        "if ({ `!` <- function(x) TRUE; !NA }) 1L",
+        "if ({ x <- NA; x }) 1L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| !(d.code == "RY001" && d.message.contains("always `NA`"))),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn proven_na_mode_ladder_composes() {
+    // The mode the ladder assigns decides what the proof admits
+    // next: `!` accepts integer/double NA but not complex NA.
+    for source in [
+        // integer NA + double literal -> double NA, still `!`-able.
+        "if (!(NA_integer_ + 1.5)) 1L",
+        // logical NA + logical literal -> integer NA.
+        "if (!(NA + TRUE)) 1L",
+        // double NA on either side -> double NA.
+        "if (!(NA_real_ + 1L)) 1L",
+        "if (!(1L + NA_real_)) 1L",
+        // complex NA through equality -> logical NA.
+        "if (!(NA_complex_ == 1)) 1L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "RY001" && d.message.contains("always `NA`")),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // Complex NA itself is not `!`-able in the proof.
+    let diagnostics = check("if (!NA_complex_) 1L");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == "RY001" && d.message.contains("always `NA`"))),
+        "{diagnostics:?}"
     );
 }

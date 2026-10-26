@@ -3,7 +3,7 @@
 # Hide every non-base library so dplyr's namespace cannot load in this
 # process: `requireNamespace(..., quietly = TRUE)` then returns FALSE,
 # and a `dplyr::` access on that branch errors instead of falling back.
-empty_lib <- tempfile("ry122lib")
+empty_lib <- tempfile("ry123lib")
 dir.create(empty_lib)
 .libPaths(empty_lib, include.site = FALSE)
 stopifnot(identical(requireNamespace("dplyr", quietly = TRUE), FALSE))

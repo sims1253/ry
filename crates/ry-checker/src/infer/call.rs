@@ -2135,14 +2135,27 @@ impl Checker {
                     // Zero/negative indices (R's dropping semantics)
                     // are deliberately unproven here.
                     Expr::Integer(index, _) if *index >= 1 => {
-                        schema.get(&format!("[[{index}]]")).or_else(|| {
-                            // Width-checked: an index beyond usize
-                            // is unproven, never truncated.
-                            usize::try_from(*index)
-                                .ok()
-                                .and_then(|index| schema.columns.get(index - 1))
-                                .map(|(_, ty)| ty.clone())
-                        })
+                        // `build_named_schema` keys positional
+                        // elements "[[i]]"; compare the key's digits
+                        // with the index instead of formatting one.
+                        schema
+                            .columns
+                            .iter()
+                            .find(|(key, _)| {
+                                key.strip_prefix("[[")
+                                    .and_then(|rest| rest.strip_suffix("]]"))
+                                    .and_then(|digits| digits.parse::<i64>().ok())
+                                    == Some(*index)
+                            })
+                            .map(|(_, ty)| ty.clone())
+                            .or_else(|| {
+                                // Width-checked: an index beyond usize
+                                // is unproven, never truncated.
+                                usize::try_from(*index)
+                                    .ok()
+                                    .and_then(|index| schema.columns.get(index - 1))
+                                    .map(|(_, ty)| ty.clone())
+                            })
                     }
                     _ => None,
                 }

@@ -2022,22 +2022,20 @@ impl Checker {
                         _ => return None,
                     }
                 }
-                if matched.is_one_to_one()
-                    && let Some(listed) = matched
-                        .arg_for_param(0)
-                        .map(|index| &args[index].value)
-                        .filter(|value| {
-                            matches!(value, Expr::Call { func, .. }
+                if let Some(listed) = matched
+                    .arg_for_param(0)
+                    .map(|index| &args[index].value)
+                    .filter(|value| {
+                        matches!(value, Expr::Call { func, .. }
                                 if self.is_base_call(func, "list", scope))
-                        })
+                    })
                 {
                     return self.contributed_element_types(listed, scope);
                 }
                 // A plain atomic `rep(v, n)` sibling splices flat
                 // scalars of `v`'s type, like the generic atomic arm
                 // below (which the early return here used to shadow).
-                if matched.is_one_to_one()
-                    && let Some(value) = matched.arg_for_param(0).map(|index| &args[index].value)
+                if let Some(value) = matched.arg_for_param(0).map(|index| &args[index].value)
                     && let Some(value_type) = self.peek_type(value, scope)
                     && value_type.mode.is_atomic()
                 {

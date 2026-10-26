@@ -1304,14 +1304,15 @@ impl Checker {
         }
     }
 
-    /// A `$` receiver with list shape and no proven class, so `$` is
-    /// base list access rather than a known `$.foo` method. A proven
-    /// class (`structure(list(...), class = "foo")`) refuses; an
-    /// unknown class keeps list-origin evidence, the same accepted
-    /// uncertainty as an unknown-class parameter.
+    /// A `$` receiver proven to be a plain (unclassed) list, so `$`
+    /// is base list access rather than a possible `$.foo` method.
+    /// Both a proven class and an unknown one (`structure(list(...),
+    /// class = cl)`) refuse: unlike a bare binding read, `$` on an
+    /// unknown class can dispatch.
     fn plain_list_receiver(&self, name: &str, scope: &Scope) -> bool {
         scope.get(name).is_some_and(|ty| {
-            !ty.class.has_known_class()
+            ty.class.known
+                && ty.class.len == 0
                 && (matches!(ty.mode, Mode::List) || scope.has_list_origin(name))
         })
     }
@@ -2415,6 +2416,8 @@ fn exprs_equivalent(lhs: &Expr, rhs: &Expr) -> bool {
         (Expr::Double(a, _), Expr::Double(b, _)) => a.to_bits() == b.to_bits(),
         (Expr::String(a, _), Expr::String(b, _)) => a == b,
         (Expr::Null(_), Expr::Null(_)) => true,
+        // Unreachable via RY122 (deterministic_operand excludes `Na`);
+        // kept so this helper stays a faithful structural equivalence.
         (Expr::Na(a, _), Expr::Na(b, _)) => a == b,
         (Expr::Ident { name: a, .. }, Expr::Ident { name: b, .. }) => a == b,
         (
@@ -2514,6 +2517,10 @@ fn proven_classed_element(base: &Expr, kind: IndexKind, args: &[Arg], scope: &Sc
         (IndexKind::Double, [arg]) => match &arg.value {
             Expr::String(field, _) => schema.get(field),
             Expr::Integer(index, _) => schema.get(&format!("[[{index}]]")),
+            // `[[1]]` spelled with a double is R's default spelling.
+            Expr::Double(value, _) if value.is_finite() && value.fract() == 0.0 => {
+                schema.get(&format!("[[{}]]", *value as i64))
+            }
             _ => None,
         },
         _ => None,

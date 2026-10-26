@@ -356,11 +356,6 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
 /// Checked by R oracle: `is.environment()` holds for each zero-argument call.
 pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyenv", "baseenv"];
 
-/// Base calls that keep a `stopifnot()` scalar fact. Each one only reads
-/// its evaluated arguments: it takes no callback, quoted expression, or
-/// environment, and never dispatches to project code (fact creation refuses
-/// projects that define a method for any of these names). Every other call
-/// may install an active or delayed binding in the caller's frame.
 /// Base numeric math functions recognized by RY100 (comparison inside
 /// a math call) and RY122 (deterministic operand inside a self-
 /// comparison): the single-argument `Math`-group primitives plus
@@ -369,6 +364,11 @@ pub const BASE_MATH_FNS: &[&str] = &[
     "abs", "sqrt", "exp", "log", "log2", "log10", "log1p", "floor", "ceiling", "round", "trunc",
 ];
 
+/// Base calls that keep a `stopifnot()` scalar fact. Each one only reads
+/// its evaluated arguments: it takes no callback, quoted expression, or
+/// environment, and never dispatches to project code (fact creation refuses
+/// projects that define a method for any of these names). Every other call
+/// may install an active or delayed binding in the caller's frame.
 pub const SCALAR_FACT_SAFE_CALLS: &[&str] = &[
     "stopifnot",
     "length",

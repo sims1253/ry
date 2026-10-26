@@ -990,6 +990,7 @@ impl Checker {
                     scope,
                 );
                 let narrowing = self.extract_branch_narrowing(cond, scope);
+                let failed_ns = self.failed_namespace_guard(cond, scope);
                 let literal_cond = match cond {
                     Expr::Logical(value, _) => Some(*value),
                     _ => None,
@@ -999,6 +1000,7 @@ impl Checker {
                     self.walk_cloned_if(
                         scope,
                         &narrowing,
+                        &failed_ns,
                         literal_cond,
                         then,
                         else_.as_deref(),
@@ -1009,6 +1011,7 @@ impl Checker {
                 self.walk_journal_if(
                     scope,
                     &narrowing,
+                    &failed_ns,
                     literal_cond,
                     IfArm::Statements(then),
                     else_.as_deref().map(IfArm::Statements),
@@ -1963,10 +1966,12 @@ impl Checker {
     /// `literal_cond` is the value of a literal `TRUE`/`FALSE` condition;
     /// the arm it never takes contributes no loop-vector alternative and
     /// is walked without diagnostics.
+    #[allow(clippy::too_many_arguments)]
     fn walk_journal_if(
         &mut self,
         scope: &mut Scope,
         narrowing: &Narrowing,
+        failed_ns: &Option<(String, bool)>,
         literal_cond: Option<bool>,
         then: IfArm<'_>,
         else_: Option<IfArm<'_>>,
@@ -1977,18 +1982,25 @@ impl Checker {
         for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
             narrowed.insert(name.to_string());
         }
+        apply_failed_namespace_branch(scope, failed_ns, NarrowingBranch::Then);
         let then_value = self.walk_journal_arm(then, literal_cond == Some(false), scope, &mut walk);
+        // Moved out, not cloned: `finish_snapshot` restores the
+        // field wholesale from the mark, so the taken set is the
+        // arm-final state and the restore is unaffected.
+        let then_failed_namespaces = std::mem::take(&mut scope.failed_namespaces);
         let mut then_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let mark = scope.begin_snapshot();
         for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Else) {
             narrowed.insert(name.to_string());
         }
+        apply_failed_namespace_branch(scope, failed_ns, NarrowingBranch::Else);
         // Without an `else`, R returns NULL on the FALSE path.
         let else_value = match else_ {
             Some(arm) => self.walk_journal_arm(arm, literal_cond == Some(true), scope, &mut walk),
             None => RType::new(Mode::Null, Length::Zero),
         };
+        let else_failed_namespaces = std::mem::take(&mut scope.failed_namespaces);
         let mut else_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let has_else = else_.is_some();
@@ -2070,6 +2082,20 @@ impl Checker {
         for name in lost_scalar_assertions {
             scope.clear_scalar_asserted(&name);
         }
+        // A failed-namespace fact reaches the join only if every
+        // continuing arm still holds it: an arm-local clear (a call that
+        // may have loaded the namespace) must not be undone by the
+        // snapshot restore, and an arm-local install escapes only when
+        // its sibling diverges. The base set read here is the pre-`if`
+        // state again: each arm's `finish_snapshot` restored it (the
+        // else mark was taken after the then restore).
+        scope.failed_namespaces = join_failed_namespaces(
+            &scope.failed_namespaces,
+            &then_failed_namespaces,
+            &else_failed_namespaces,
+            then_diverges,
+            else_diverges,
+        );
         // A proven vector alternative survives the join when any continuing
         // arm still carries it.
         let mut vector_candidates: HashSet<String> =
@@ -3525,6 +3551,12 @@ impl Checker {
     // Keep reference observation after every exit from the existing value
     // lookup ladder. Calls retain their distinct function-lookup path.
     fn infer_identifier(&mut self, name: &str, span: &Span, scope: &mut Scope) -> RType {
+        // RY123 before the lookup ladder: a qualified access performs a
+        // namespace load at runtime even when an import/typeshed entry
+        // surfaces it as a bound name. A backticked `` `pkg::f` `` or a
+        // lexical definition under that spelling is an ordinary local
+        // binding instead.
+        self.maybe_check_failed_namespace_access(name, *span, scope);
         let mut found_lexical = false;
         let mut unresolved = false;
         if scope.is_parameter(name) || scope.get(name).is_none() {

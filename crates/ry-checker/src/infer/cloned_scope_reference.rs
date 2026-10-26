@@ -2,10 +2,12 @@
 use super::*;
 
 impl Checker {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn walk_cloned_if(
         &mut self,
         scope: &mut Scope,
         narrowing: &Narrowing,
+        failed_ns: &Option<(String, bool)>,
         literal_cond: Option<bool>,
         then: &[Stmt],
         else_: Option<&[Stmt]>,
@@ -14,6 +16,8 @@ impl Checker {
         let has_else = else_.is_some();
         let base_loop_vectors = scope.loop_vector_bindings.clone();
         let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, narrowing);
+        apply_failed_namespace_branch(&mut then_scope, failed_ns, NarrowingBranch::Then);
+        apply_failed_namespace_branch(&mut else_scope, failed_ns, NarrowingBranch::Else);
         // Pre-`if` views of the guard-narrowed names, captured before the
         // merge below replaces them: the union-guard refinement compares
         // against the original parent types, never the merged ones.
@@ -88,6 +92,13 @@ impl Checker {
                     || else_diverges
                     || else_scope.scalar_asserted_bindings.contains(name))
         });
+        scope.failed_namespaces = join_failed_namespaces(
+            &scope.failed_namespaces,
+            &then_scope.failed_namespaces,
+            &else_scope.failed_namespaces,
+            then_diverges,
+            else_diverges,
+        );
         scope.uncertainty |= then_scope.uncertainty.continuing(then_diverges)
             | else_scope.uncertainty.continuing(else_diverges);
         let mut loop_vectors_after = FxSet::default();

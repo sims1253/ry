@@ -330,12 +330,21 @@ impl Checker {
         // length-1 logical condition.
         self.infer_condition(cond, scope, ConditionContext::If);
         let narrowing = self.extract_branch_narrowing(cond, scope);
+        let failed_ns = self.failed_namespace_guard(cond, scope);
         // The arm a literal condition never takes is inferred silently.
         let literal_cond = match cond {
             Expr::Logical(value, _) => Some(*value),
             _ => None,
         };
-        self.walk_journal_if(scope, &narrowing, literal_cond, then, else_, IfWalk::Value)
+        self.walk_journal_if(
+            scope,
+            &narrowing,
+            &failed_ns,
+            literal_cond,
+            then,
+            else_,
+            IfWalk::Value,
+        )
     }
 
     /// Infer the result type of `switch(EXPR, ...)`. Both forms are
@@ -381,10 +390,50 @@ impl Checker {
     pub(crate) fn infer_trycatch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         let matched = match_arguments(&["expr", "...", "finally"], args);
         let expr_index = matched.arg_for_param(0);
+        // RY123: an `error` handler deliberately probes failure, so a
+        // proven-failed namespace access inside `expr` is the caught
+        // error, not a missed fallback. A `condition` handler catches
+        // errors too (the parent class). Without either handler the
+        // error still propagates and the fact stays live. Only base
+        // `tryCatch` installs handlers; a user function of that name
+        // catches nothing. (A positional unnamed handler is not one:
+        // R errors "condition handlers must be specified with a
+        // condition class"; a literal non-function handler errors as
+        // "attempt to apply non-function" and catches nothing.)
+        let has_error_handler = self.resolves_to_base("tryCatch", scope)
+            && args.iter().enumerate().any(|(i, a)| {
+                matches!(a.name.as_deref(), Some("error" | "condition"))
+                    && matched.param_for_arg[i].is_none()
+                    && !matches!(
+                        a.value,
+                        Expr::Missing(_)
+                            | Expr::Null(_)
+                            | Expr::Na(..)
+                            | Expr::Logical(..)
+                            | Expr::Integer(..)
+                            | Expr::Double(..)
+                            | Expr::String(..)
+                    )
+                    // An identifier bound to a proven non-function
+                    // value is the same non-handler as a literal one.
+                    && !matches!(&a.value, Expr::Ident { name, .. }
+                        if scope.get(name).is_some_and(|ty| {
+                            !ty.mode.may_be_function()
+                        }))
+            });
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {
             if Some(i) == expr_index {
-                types.push(self.infer(&a.value, scope));
+                // Only `expr` is protected by the handler; `finally` and
+                // handler bodies keep the surrounding fact (function
+                // bodies discard it on entry regardless). Probe depth,
+                // not fact removal, so guards installed inside `expr`
+                // are covered too.
+                if has_error_handler {
+                    types.push(self.infer_caught_namespace_probe(&a.value, scope));
+                } else {
+                    types.push(self.infer(&a.value, scope));
+                }
             } else if a.name.is_some() && matched.param_for_arg[i].is_none() {
                 if let Some(rt) = self.callback_return_type(&a.value, &[RType::unknown()], scope) {
                     types.push(rt);

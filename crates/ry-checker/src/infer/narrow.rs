@@ -688,6 +688,55 @@ fn type_is_exactly_tested_family(existing: &RType, target: &RType) -> bool {
     }
 }
 
+/// Install the selected branch's failed-namespace fact (RY123): the
+/// `FALSE` branch gains the package, the `TRUE` branch loses it (a nested
+/// positive guard proves the namespace loaded).
+pub(crate) fn apply_failed_namespace_branch(
+    scope: &mut Scope,
+    guard: &Option<(String, bool)>,
+    branch: NarrowingBranch,
+) {
+    let Some((package, failed_then)) = guard else {
+        return;
+    };
+    let failed = matches!(
+        (branch, failed_then),
+        (NarrowingBranch::Then, true) | (NarrowingBranch::Else, false)
+    );
+    if failed {
+        scope.failed_namespaces.insert(package.clone());
+    } else {
+        scope.failed_namespaces.remove(package);
+    }
+}
+
+/// The if-join for failed-namespace facts (RY123): a fact reaches the
+/// continuation only if every continuing arm still holds it — an
+/// arm-local clear (a call that may have loaded the namespace) is not
+/// undone, and an arm-local install escapes only when its sibling
+/// diverges. Shared by the journal and cloned-scope walkers so their
+/// joins cannot drift.
+pub(crate) fn join_failed_namespaces(
+    base: &crate::FxSet<String>,
+    then_set: &crate::FxSet<String>,
+    else_set: &crate::FxSet<String>,
+    then_diverges: bool,
+    else_diverges: bool,
+) -> crate::FxSet<String> {
+    if base.is_empty() && then_set.is_empty() && else_set.is_empty() {
+        return crate::FxSet::default();
+    }
+    base.iter()
+        .chain(then_set.iter())
+        .chain(else_set.iter())
+        .filter(|package| {
+            (then_diverges || then_set.contains(*package))
+                && (else_diverges || else_set.contains(*package))
+        })
+        .cloned()
+        .collect()
+}
+
 /// Apply all facts proved by the selected branch and return their binding names.
 pub(crate) fn apply_narrowing_branch<'a>(
     scope: &mut Scope,
@@ -1208,6 +1257,140 @@ impl Checker {
             var: var.clone(),
             target: guard_target(json_rtype_to_rtype(&predicate.target)),
         }
+    }
+
+    /// A literal-package `requireNamespace` test whose result selects a
+    /// branch (RY123): the package and whether the `then` branch is the
+    /// one where loading failed. Base `requireNamespace` returns `FALSE`
+    /// on a failed load with or without `quietly = TRUE` (it wraps
+    /// `loadNamespace` in `tryCatch`; `quietly` only suppresses the
+    /// message), so no `quietly` shape is required. A masked
+    /// `requireNamespace` (anything [`Checker::resolves_to_base`]
+    /// rejects) and a dynamic package name prove nothing.
+    pub(crate) fn failed_namespace_guard(
+        &self,
+        cond: &Expr,
+        scope: &Scope,
+    ) -> Option<(String, bool)> {
+        // Rebound-ness of `!` cannot change while unrolling it.
+        if ops_chooser::operator_rebound(self, "!", scope) {
+            return None;
+        }
+        let mut negated = false;
+        let mut test = cond;
+        while let Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } = test
+        {
+            negated = !negated;
+            test = expr;
+        }
+        let Expr::Call { func, args, .. } = test else {
+            return None;
+        };
+        let name = ident_name(func)?;
+        if crate::semantic_lists::bare_name(name) != "requireNamespace"
+            || !self.resolves_to_base(name, scope)
+            || scope.data_mask_unknown
+        {
+            return None;
+        }
+        let mut named_package = args
+            .iter()
+            .filter(|arg| arg.name.as_deref() == Some("package"));
+        let named_package = [named_package.next(), named_package.next()];
+        let package_arg = match named_package {
+            [Some(arg), None] => {
+                // A named `package` plus an unnamed first argument is a
+                // duplicate match in R, not a guard.
+                if args.first().is_some_and(|first| first.name.is_none()) {
+                    return None;
+                }
+                arg
+            }
+            [None, None] => args.first().filter(|first| first.name.is_none())?,
+            _ => return None,
+        };
+        let Expr::String(package, _) = &package_arg.value else {
+            return None;
+        };
+        if package.is_empty() {
+            return None;
+        }
+        Some((package.clone(), negated))
+    }
+
+    /// The shared RY123 access gate for value and call-head positions:
+    /// the cheap empty-fact check runs first (the set is empty in
+    /// almost all inference), then the qualified spelling must not be
+    /// bound locally under either position's rule.
+    pub(crate) fn maybe_check_failed_namespace_access(
+        &mut self,
+        name: &str,
+        span: Span,
+        scope: &Scope,
+    ) {
+        if scope.failed_namespaces.is_empty()
+            || !name.contains("::")
+            || super::call::is_user_infix_name(name)
+            || self.qualified_name_bound_locally(name, scope)
+        {
+            return;
+        }
+        self.check_failed_namespace_access(name, span, scope);
+    }
+
+    /// RY123: a `pkg::name` / `pkg:::name` access whose package is proven
+    /// unloaded on this branch. A rebound `::`/`:::` operator runs instead
+    /// of the namespace lookup, so it proves nothing.
+    pub(crate) fn check_failed_namespace_access(&mut self, name: &str, span: Span, scope: &Scope) {
+        if scope.failed_namespaces.is_empty() || self.caught_namespace_probe_depth > 0 {
+            return;
+        }
+        // A fully backticked `` `pkg::f` `` is one lexical symbol, not
+        // an access; the parser keeps its ticks (a real access arrives
+        // decoded, e.g. `` `my::pkg`::f `` as `my::pkg::f`, which
+        // `split_qualified` keys on the literal `my::pkg`).
+        if name.starts_with('`') && name.ends_with('`') && name.len() >= 2 {
+            return;
+        }
+        let Some((package, _)) = crate::resolve::split_qualified(name) else {
+            return;
+        };
+        if !scope.failed_namespaces.contains(package) {
+            return;
+        }
+        // The operator is the split `split_qualified` made: `:::`
+        // only when the raw package part ends in a third colon, so a
+        // quoted package containing `:::` (`` `a:::b`::c ``) still
+        // keys the rebound test on `::`.
+        let operator = match name.rsplit_once("::") {
+            Some((pkg_raw, _)) if pkg_raw.ends_with(':') => ":::",
+            _ => "::",
+        };
+        if ops_chooser::operator_rebound(self, operator, scope) {
+            return;
+        }
+        self.emit(
+            Severity::Warning,
+            span,
+            "RY123",
+            format!(
+                "`{name}` needs the `{package}` namespace, but `requireNamespace(\"{package}\")` returned `FALSE` on this branch"
+            ),
+        );
+    }
+
+    /// Infer a caught `tryCatch` probe expression with RY123 silenced:
+    /// the depth inc/dec pairing lives in this one small function so
+    /// early returns inside inference cannot unbalance it.
+    pub(crate) fn infer_caught_namespace_probe(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
+        self.caught_namespace_probe_depth += 1;
+        let result = self.infer(expr, scope);
+        self.caught_namespace_probe_depth -= 1;
+        result
     }
 
     /// The narrowing for a condition that selects code: an `if` test, the

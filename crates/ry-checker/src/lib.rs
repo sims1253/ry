@@ -523,6 +523,11 @@ pub struct Scope {
     /// only possible, so a call head of that name keeps its stub (#722).
     /// Monotone: a stale entry only restores the stub fallback.
     pub(crate) possible_block_writes: FxSet<String>,
+    /// Literal packages whose `base::requireNamespace(pkg)`
+    /// returned `FALSE` on the branch dominating this point (RY123). A
+    /// branch-local fact: journal snapshots restore it, unknown calls and
+    /// fresh execution frames clear it.
+    pub(crate) failed_namespaces: FxSet<String>,
     pub data_mask_unknown: bool,
     pub(crate) data_mask: Option<Arc<DataMaskFrame>>,
     pub(crate) tidy_injection: Option<InjectionMode>,
@@ -546,6 +551,9 @@ impl Scope {
         scope.uncertainty.dynamic_bindings = false;
         scope.uncertainty.unseen_rebinds = true;
         scope.scalar_asserted_bindings.clear();
+        // A closure may run after the namespace loads, so a failed-load
+        // branch fact from the defining frame proves nothing inside it.
+        scope.failed_namespaces.clear();
         scope.loop_vector_bindings.clear();
         scope.known_strings.clear();
         scope.condition_aliases.clear();
@@ -634,6 +642,7 @@ impl Scope {
                 self.journal_binding(&name);
             }
         }
+        self.failed_namespaces.clear();
         self.clear_reference_bindings();
         for (_, ty) in self.bindings.iter_mut() {
             *ty = RType::unknown();
@@ -1430,6 +1439,10 @@ pub struct Checker {
     journal_delta_cache: scope_journal::BranchChanges,
     /// See [`infer::HeldCast`].
     pub(crate) held_cast: Option<infer::HeldCast>,
+    /// Depth inside a base `tryCatch` `expr` guarded by an `error`
+    /// handler: failed-namespace accesses there are deliberate probes
+    /// (RY123 stays silent), including guards installed inside `expr`.
+    pub(crate) caught_namespace_probe_depth: usize,
     #[cfg(test)]
     journal_branches: bool,
     pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
@@ -1789,6 +1802,7 @@ impl Checker {
             loop_frames: Vec::new(),
             journal_delta_cache: scope_journal::BranchChanges::default(),
             held_cast: None,
+            caught_namespace_probe_depth: 0,
             #[cfg(test)]
             journal_branches: true,
             pipe_argument_types: HashMap::new(),

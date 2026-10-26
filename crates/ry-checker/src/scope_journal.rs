@@ -228,6 +228,7 @@ pub(crate) struct Mark {
     provenance: Option<(Span, bool, Option<ReferenceBlocker>)>,
     loop_frame: Option<usize>,
     uncertainty: Uncertainty,
+    failed_namespaces: FxSet<String>,
 }
 
 pub(crate) type BranchChanges =
@@ -517,6 +518,7 @@ impl Scope {
                 .reference_provenance
                 .as_ref()
                 .map(|p| (p.owner, p.after_unsafe_read, p.unsafe_read_blocker)),
+            failed_namespaces: self.failed_namespaces.clone(),
         }
     }
 
@@ -640,6 +642,7 @@ impl Scope {
         self.data_mask = mark.data_mask;
         self.tidy_injection = mark.tidy_injection;
         self.search_path_unknown = mark.search_path_unknown;
+        self.failed_namespaces = mark.failed_namespaces;
         self.unreachable = mark.unreachable;
         match mark.provenance {
             None => self.reference_provenance = None,
@@ -849,6 +852,7 @@ mod tests {
             right.scalar_asserted_bindings
         );
         assert_eq!(left.loop_vector_bindings, right.loop_vector_bindings);
+        assert_eq!(left.failed_namespaces, right.failed_namespaces);
         assert_eq!(
             left.default_parameter_bindings,
             right.default_parameter_bindings

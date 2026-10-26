@@ -98,6 +98,20 @@ impl Checker {
             }
             _ => scope.clear_condition_aliases(),
         }
+        // A failed-namespace fact (RY123) dies with any call that could
+        // load a namespace, including one that runs caller code (a
+        // callback may itself load the package); only inert calls keep it.
+        match effect {
+            CallEffect::None => {}
+            // An exactly identified user function with a non-opaque
+            // write set cannot load a namespace: `function_outward_writes`
+            // marks any call (and any non-formal read, including a
+            // qualified access) opaque, so a surviving body is call-free
+            // and only performs its recorded `<<-` writes. `None` is the
+            // empty-write case of the same classification.
+            CallEffect::Writes(writes) if !writes.opaque => {}
+            _ => scope.failed_namespaces.clear(),
+        }
         match effect {
             CallEffect::None => {}
             CallEffect::Writes(writes) => {

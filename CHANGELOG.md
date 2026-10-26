@@ -6,6 +6,9 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Add RY123 for a `pkg::name` access on the branch where
+  `requireNamespace("pkg", quietly = TRUE)` returned `FALSE`, where the
+  access errors instead of selecting the fallback (#571).
 - RY090 and RY091 on calls to a project function point at the formal they
   name when the call site provably reaches that definition in the same file:
   an optional `related` array in JSON output, a `note:` line in `full`

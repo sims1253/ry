@@ -503,6 +503,15 @@ impl Checker {
             || self.fn_table.functions.binds(name)
     }
 
+    /// Whether any local or project binding under a qualified spelling
+    /// (`` `pkg::f` ``) may be what an access selects instead of the
+    /// namespace member, in value or call position alike (RY123): the
+    /// union of the lexical-definition and call-head rules, so both
+    /// syntactic positions suppress on the same evidence.
+    pub(crate) fn qualified_name_bound_locally(&self, name: &str, scope: &Scope) -> bool {
+        scope.lexical_definition(name).is_some() || self.call_head_bound_locally(name, scope)
+    }
+
     /// Shared body of the two base-resolution predicates. `guard_search_path`
     /// toggles step 8 of the documented lookup order: the strict variant
     /// refuses to conclude base resolution while an attached package may

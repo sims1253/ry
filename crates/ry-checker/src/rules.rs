@@ -376,6 +376,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "`list(rep(v, n))` inside a proven base `c()`/`append()` contributes one element holding the whole repeated vector, not `n` flat elements, when every sibling element is proven to be the same classless atomic type as `v`. Write `rep(list(v), n)`. Silent for standalone `list(rep(...))`, the `rep(list(v), n)` form, `n` proven at most 1, list, classed, or unknown element types, and masked `c`/`append`/`list`/`rep` callees.",
     },
+    Rule {
+        code: "RY128",
+        name: "invalid-diag-dimension",
+        default_severity: Severity::Error,
+        summary: "A proven base `diag()` whose matrix dimension is proven invalid: a negative or `NA` `nrow`/`ncol`, or, with neither supplied, a length-one numeric `x` proven negative or `NA`, which `diag` reads as the dimension rather than a diagonal entry, so R errors (\"invalid 'nrow' value\"). Silent for vector `x` (diagonal entries), non-negative scalars, entries mode (a scalar `x` with any second argument supplied), classed `x` that may dispatch to a `diag` method, and computed values ry cannot prove.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

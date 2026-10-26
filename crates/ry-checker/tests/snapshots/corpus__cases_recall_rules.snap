@@ -534,3 +534,17 @@ expression: rows
       line: 695
       message: "`list(rep(...))` inside `c()` contributes one element holding the whole repeated vector, not one flat element per repetition; write `rep(list(...), n)` for flat elements"
       severity: warning
+- case: "RY128: a proven negative scalar diag() dimension errors"
+  diagnostics:
+    - code: RY128
+      line: 699
+      message: "`diag()` treats a length-one numeric `x` as a matrix dimension, and this `x` is proven negative, so R errors with \"invalid 'nrow' value (< 0)\"; pass `nrow=` to use it as a diagonal entry"
+      severity: error
+- case: "RY128: an explicit negative nrow errors"
+  diagnostics:
+    - code: RY128
+      line: 703
+      message: "`nrow` is proven negative, so `diag()` errors with \"invalid 'nrow' value (< 0)\" before any matrix is built"
+      severity: error
+- case: "RY128: entries mode and vector diagonals stay silent"
+  diagnostics: []

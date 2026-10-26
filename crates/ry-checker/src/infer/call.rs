@@ -370,6 +370,7 @@ impl Checker {
         self.check_identical_list_subset(&lookup_name, args, scope);
         self.check_testthat_self_comparison(&name, func, &semantic_name, &lookup_name, args, scope);
         self.check_dimensional_on_function(func, args, scope);
+        self.check_diag_dimension(&name, func, &semantic_name, &lookup_name, args, scope);
         self.check_cli_template(&name, func, &semantic_name, &lookup_name, args, scope);
         self.check_nested_list_rep(&name, &lookup_name, args, scope);
 
@@ -1447,6 +1448,137 @@ impl Checker {
                 dimensional_message(&callee, &subject),
             );
         }
+    }
+
+    /// RY128: a proven base `diag()` whose matrix dimension is
+    /// proven invalid — a negative or `NA` `nrow`/`ncol`, or (with
+    /// neither supplied) a length-one numeric `x` proven negative
+    /// or `NA`, which `diag` reads as the dimension rather than a
+    /// diagonal entry (the GPArotation `diag(d)` shape with scalar
+    /// negative `d`). R errors ("invalid 'nrow' value") before any
+    /// matrix exists. Silent for vector `x` (diagonal entries),
+    /// non-negative scalars, entries mode (`nrow=`/`ncol=`
+    /// supplied makes a scalar `x` an entry), classed `x` (a
+    /// `diag` method may apply), and unproven values; value proof
+    /// is peeked from literals and scope facts only, like RY127,
+    /// so computed signs (`diag(sign(...))`) stay silent.
+    fn check_diag_dimension(
+        &mut self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) {
+        if lookup_name != "diag"
+            || scope.data_mask_unknown
+            || !matches!(
+                self.special_call_provenance(name, func, semantic_name, lookup_name, "base", scope),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+        {
+            return;
+        }
+        let matched = match_arguments(&["x", "nrow", "ncol", "names"], args);
+        if !matched.is_one_to_one() {
+            return;
+        }
+        let arg_for = |param: usize| matched.arg_for_param(param).map(|index| &args[index]);
+        // A proven classed `x` may dispatch to a `diag` method
+        // and suppresses the check; an unpeekable `x` falls
+        // through, since dimension validation in base `diag`
+        // does not depend on `x`.
+        if let Some(x) = arg_for(0)
+            && let Some(ty) = self.peek_type(&x.value, scope)
+            && !ty.class.is_classless()
+        {
+            return;
+        }
+        // R validates `nrow` before `ncol`, and a missing-`nrow`
+        // error precedes `ncol` validation when neither `x` nor
+        // `nrow` is supplied, so report at most the first invalid
+        // dimension in that order.
+        for (param, formal) in [(1usize, "nrow"), (2usize, "ncol")] {
+            let Some(arg) = arg_for(param) else { continue };
+            if formal == "ncol" && arg_for(0).is_none() && arg_for(1).is_none() {
+                continue;
+            }
+            if let Some(kind) = self.proven_invalid_dimension(&arg.value, scope) {
+                self.emit(
+                    Severity::Error,
+                    arg.span,
+                    "RY128",
+                    format!(
+                        "`{formal}` is proven {}, so `diag()` errors with \"invalid '{formal}' value ({})\" before any matrix is built",
+                        kind.describe(),
+                        kind.r_reason(),
+                    ),
+                );
+                return;
+            }
+        }
+        // R reads a length-one `x` as the dimension only when
+        // `nargs() == 1L`: any second actual (`names=` included,
+        // empty actuals retained) takes the entries path.
+        if args.len() == 1
+            && let Some(x) = arg_for(0)
+            && let Some(kind) = self.proven_invalid_dimension(&x.value, scope)
+        {
+            self.emit(
+                Severity::Error,
+                x.span,
+                "RY128",
+                format!(
+                    "`diag()` treats a length-one numeric `x` as a matrix dimension, and this `x` is proven {}, so R errors with \"invalid 'nrow' value ({})\"; pass `nrow=` to use it as a diagonal entry",
+                    kind.describe(),
+                    kind.r_reason(),
+                ),
+            );
+        }
+    }
+
+    /// A dimension value proven (from literals or scope value
+    /// facts, via `proven_count`/bounds) to be a scalar R rejects
+    /// as a `diag()` dimension. Scalar-ness is part of the proof:
+    /// a longer all-negative vector is diagonal entries, not a
+    /// dimension.
+    fn proven_invalid_dimension(&self, expr: &Expr, scope: &Scope) -> Option<InvalidDimension> {
+        if matches!(expr, Expr::Na(..)) {
+            return Some(InvalidDimension::Na);
+        }
+        let scalar = match expr {
+            Expr::Integer(..) | Expr::Double(..) => true,
+            Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr: inner,
+                ..
+            } => matches!(inner.as_ref(), Expr::Integer(..) | Expr::Double(..)),
+            _ => matches!(
+                self.peek_type(expr, scope),
+                Some(ty) if ty.length == Length::One
+            ),
+        };
+        if !scalar {
+            return None;
+        }
+        // R converts the dimension with `as.integer` (truncation
+        // toward zero) before the negative check, so only values
+        // at or below -1 are invalid: `diag(-0.5)` is a valid
+        // 0x0 matrix.
+        if proven_count(expr, scope).is_some_and(|value| value <= -1.0) {
+            return Some(InvalidDimension::Negative);
+        }
+        // Not a single proven value, but every observed value
+        // truncates to a negative integer: the dimension is
+        // invalid whatever it holds.
+        if let Expr::Ident { name, .. } = expr
+            && let Some((_, high)) = scope.get(name).and_then(|ty| ty.value_facts.numeric_bounds)
+            && f64::from_bits(high) <= -1.0
+        {
+            return Some(InvalidDimension::Negative);
+        }
+        None
     }
 
     /// RY125 in cli templates (#570): literal template arguments to a
@@ -3410,6 +3542,30 @@ pub(crate) fn callee_name(func: &Expr) -> Option<String> {
 /// cli-template entry points so the claim cannot drift.
 fn dimensional_message(callee: &str, subject: &str) -> String {
     format!("`{callee}()` of {subject} is always `NULL`; a function has no dimensions")
+}
+
+/// Why a proven scalar cannot serve as a `diag()` dimension.
+#[derive(Clone, Copy)]
+enum InvalidDimension {
+    Negative,
+    Na,
+}
+
+impl InvalidDimension {
+    fn describe(self) -> &'static str {
+        match self {
+            InvalidDimension::Negative => "negative",
+            InvalidDimension::Na => "`NA`",
+        }
+    }
+
+    /// The parenthetical in R's "invalid 'nrow' value (...)" error.
+    fn r_reason(self) -> &'static str {
+        match self {
+            InvalidDimension::Negative => "< 0",
+            InvalidDimension::Na => "too large or NA",
+        }
+    }
 }
 
 /// The argument bound to the single `x` formal of a dimensional call,

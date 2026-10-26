@@ -3252,7 +3252,7 @@ impl Checker {
         // surfaces it as a bound name. A backticked `` `pkg::f` `` or a
         // lexical definition under that spelling is an ordinary local
         // binding instead.
-        if name.contains("::") && scope.lexical_definition(name).is_none() {
+        if name.contains("::") && !self.qualified_name_bound_locally(name, scope) {
             self.check_failed_namespace_access(name, *span, scope);
         }
         let mut found_lexical = false;

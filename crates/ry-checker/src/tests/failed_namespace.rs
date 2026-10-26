@@ -179,3 +179,25 @@ fn nested_positive_guard_clears_the_fact() {
         "if (!requireNamespace(\"pkgx\", quietly = TRUE)) { if (requireNamespace(\"pkgx\", quietly = TRUE)) pkgx::thing else 1L } else 2L\n"
     ));
 }
+
+#[test]
+fn loader_function_between_guard_and_access_is_silent() {
+    // The identified loader's body contains a call, so its write set
+    // is opaque and the failed fact dies at the call.
+    assert!(!warns_ry122(
+        "load_pkg <- function() requireNamespace(\"pkgx\")\nif (!requireNamespace(\"pkgx\")) { load_pkg(); y <- pkgx::thing } else { y <- 1L }\n"
+    ));
+    assert!(!warns_ry122(
+        "load_pkg <- function() { z <<- 1L; requireNamespace(\"pkgx\") }\nif (!requireNamespace(\"pkgx\")) { load_pkg(); y <- pkgx::thing } else { y <- 1L }\n"
+    ));
+}
+
+#[test]
+fn backticked_data_binding_suppresses_both_positions() {
+    // One shared predicate: a local definition under the qualified
+    // spelling suppresses the warning as a call head too, not only
+    // as a value, whatever its type.
+    assert!(!warns_ry122(
+        "`pkgx::thing` <- 1L\nif (!requireNamespace(\"pkgx\")) { y <- `pkgx::thing`() } else { y <- 1L }\n"
+    ));
+}

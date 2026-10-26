@@ -103,7 +103,7 @@ impl Checker {
         // RY123: the head itself is a namespace access. A same-spelled
         // local or project function is selected instead (call-head rule),
         // so only an unshadowed qualified head reaches the namespace.
-        if name.contains("::") && !self.call_head_bound_locally(&name, scope) {
+        if name.contains("::") && !self.qualified_name_bound_locally(&name, scope) {
             self.check_failed_namespace_access(&name, span_of(func), scope);
         }
 

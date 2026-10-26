@@ -103,8 +103,12 @@ impl Checker {
         // callback may itself load the package); only inert calls keep it.
         match effect {
             CallEffect::None => {}
-            // An exactly identified user function with a known write
-            // set cannot load a namespace beyond those writes.
+            // An exactly identified user function with a non-opaque
+            // write set cannot load a namespace: `function_outward_writes`
+            // marks any call (and any non-formal read, including a
+            // qualified access) opaque, so a surviving body is call-free
+            // and only performs its recorded `<<-` writes. `None` is the
+            // empty-write case of the same classification.
             CallEffect::Writes(writes) if !writes.opaque => {}
             _ => scope.failed_namespaces.clear(),
         }

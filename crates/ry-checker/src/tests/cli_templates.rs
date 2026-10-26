@@ -269,3 +269,22 @@ fn multiline_template_hit_span_maps_line_and_column() {
     assert_eq!(slice, "{ncol(data)}");
     assert_eq!((hit.span.line, hit.span.col), (1, 7));
 }
+
+#[test]
+fn rightward_and_eval_rebindings_shadow_later_regions() {
+    for source in [
+        "f <- function(x) cli::cli_abort(\"{'v' -> dim} {ncol(dim)}\")\n",
+        "f <- function(x) cli::cli_abort(\"{evalq(dim <- 'v')} {ncol(dim)}\")\n",
+        // Second positional on cli_h1 binds `id`, not a template.
+        "f <- function(x) cli::cli_h1(\"t\", \"{ncol(data)}\")\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY125"),
+            "{source}: {diags:?}"
+        );
+    }
+    // cli_text is variadic: later positional strings interpolate.
+    let diags = check("f <- function(x) cli::cli_text(\"a\", \"{ncol(data)}\")\n");
+    assert!(diags.iter().any(|d| d.code == "RY125"), "{diags:?}");
+}

@@ -1430,7 +1430,7 @@ impl Checker {
                 Severity::Warning,
                 arg_span,
                 "RY125",
-                format!("`{callee}()` of {subject} is always `NULL`; a function has no dimensions"),
+                dimensional_message(&callee, &subject),
             );
         }
     }
@@ -1472,13 +1472,14 @@ impl Checker {
                 continue;
             }
             if arg.name.is_none() {
-                // On the rlang-backed message functions a second
-                // positional string is not a template: it falls into
-                // `...` and is forwarded un-interpolated (binding
-                // `class` in `rlang::abort`); the multi-bullet form
-                // is the `c(...)` vector in the first position.
-                if positional > 0 && matches!(lookup_name, "cli_abort" | "cli_warn" | "cli_inform")
-                {
+                // A second positional string is not a template on
+                // these functions: on the rlang-backed trio it falls
+                // into `...` un-interpolated (binding `class` in
+                // `rlang::abort`), and on the rest it binds a
+                // non-text formal (`id`, `after`, ...). The
+                // multi-bullet form is the `c(...)` vector in the
+                // first position; `cli_text` alone is variadic text.
+                if positional > 0 && lookup_name != "cli_text" {
                     continue;
                 }
                 positional += 1;
@@ -1533,7 +1534,7 @@ impl Checker {
                 Severity::Warning,
                 span,
                 "RY125",
-                format!("`{callee}()` of {subject} is always `NULL`; a function has no dimensions"),
+                dimensional_message(&callee, &subject),
             );
         }
     }
@@ -1652,9 +1653,16 @@ impl Checker {
                     // Quoted code never runs here, and data-mask calls
                     // resolve names against their mask, not this
                     // scope: neither subtree is checked.
-                    if let Expr::Ident { name, .. } = func.as_ref()
-                        && matches!(
-                            crate::semantic_lists::bare_name(semantic_argument_name(name)),
+                    if let Expr::Ident { name, .. } = func.as_ref() {
+                        let bare = crate::semantic_lists::bare_name(semantic_argument_name(name));
+                        if matches!(bare, "eval" | "evalq") {
+                            // Evaluation in the caller's environment
+                            // (the default) can rebind anything.
+                            rebinds = true;
+                            return ControlFlow::Continue(Descend::Skip);
+                        }
+                        if matches!(
+                            bare,
                             "quote"
                                 | "substitute"
                                 | "expression"
@@ -1662,11 +1670,9 @@ impl Checker {
                                 | "within"
                                 | "transform"
                                 | "subset"
-                                | "eval"
-                                | "evalq"
-                        )
-                    {
-                        return ControlFlow::Continue(Descend::Skip);
+                        ) {
+                            return ControlFlow::Continue(Descend::Skip);
+                        }
                     }
                     // Package verbs whose stub declares data-mask or
                     // quoted evaluation (dplyr::mutate and kin)
@@ -2945,6 +2951,12 @@ pub(crate) fn callee_name(func: &Expr) -> Option<String> {
     }
 }
 
+/// The RY125 diagnostic message, shared by the plain and
+/// cli-template entry points so the claim cannot drift.
+fn dimensional_message(callee: &str, subject: &str) -> String {
+    format!("`{callee}()` of {subject} is always `NULL`; a function has no dimensions")
+}
+
 /// The argument bound to the single `x` formal of a dimensional call,
 /// under R's exact/partial/positional matching (RY125).
 fn dimensional_argument(args: &[Arg]) -> Option<&Arg> {
@@ -2963,7 +2975,7 @@ fn dimensional_argument(args: &[Arg]) -> Option<&Arg> {
 /// an assignment operator (either spelling), an `assign()` call, or
 /// a `for` loop variable. The parse decides; this only gates it.
 fn region_may_rebind_textually(region: &str) -> bool {
-    ["<-", "=", "assign", "for"]
+    ["<-", "->", "%<>%", "=", "assign", "for"]
         .iter()
         .any(|hint| region.contains(hint))
 }

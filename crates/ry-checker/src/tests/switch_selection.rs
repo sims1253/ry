@@ -275,3 +275,60 @@ fn switch_expr_unproven_lengths_stay_silent() {
         );
     }
 }
+
+#[test]
+fn authored_vector_default_selector_warns() {
+    // The no-argument call path forces the default, so a vector
+    // default without match.arg() errors in R (#323).
+    let (diagnostics, _) =
+        check_with_scope("f <- function(type = c(\"a\", \"b\")) switch(type, a = 1L, b = 2L)");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn guarded_or_scalar_default_selector_stays_quiet() {
+    for source in [
+        // match.arg() rebinds the formal before the selector read.
+        "f <- function(type = c(\"a\", \"b\")) { type <- match.arg(type); switch(type, a = 1L, b = 2L) }",
+        // A branch-local guard rebind replaces the default.
+        "f <- function(type = c(\"a\", \"b\")) { if (length(type) != 1L) type <- type[1L]; switch(type, a = 1L, b = 2L) }",
+        // A scalar default is a legal selector.
+        "f <- function(type = \"a\") switch(type, a = 1L, b = 2L)",
+        // No default: nothing is proven about the selector.
+        "f <- function(type) switch(type, a = 1L, b = 2L)",
+    ] {
+        let (diagnostics, _) = check_with_scope(source);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn authored_default_selector_shadowing_and_captures() {
+    // The outer frame writes its own `type`; the inner formal
+    // shadows it, so the inner default still errors.
+    let source = "outer <- function(type = \"a\") { type <- \"a\"; inner <- function(type = c(\"a\", \"b\")) switch(type, a = 1L, b = 2L); inner() }";
+    {
+        let (diagnostics, _) = check_with_scope(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // A default reading a captured binding evaluates whatever
+    // it holds at call time, not its definition-time value; a
+    // zero-argument call is a callee read with the same hazard.
+    let source = "x <- c(\"a\", \"b\")\nf <- function(type = x) switch(type, a = 1L, b = 2L)\ng <- function() c(\"a\", \"b\")\nh <- function(type = g()) switch(type, a = 1L, b = 2L)";
+    {
+        let (diagnostics, _) = check_with_scope(source);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

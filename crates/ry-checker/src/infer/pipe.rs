@@ -356,11 +356,16 @@ impl Checker {
     /// alternative is also walked for diagnostics. The EXPR selector is
     /// a condition position: a provably non-length-1 selector (NULL
     /// unions included, issue #362) emits RY001 through
-    /// [`Checker::emit_switch_expr_diagnostic`].
+    /// [`Checker::emit_switch_expr_diagnostic`] from the inferred
+    /// selector type, and a still-defaulted formal whose authored
+    /// default is not length 1 emits it through
+    /// [`Checker::check_switch_authored_default_selector`] from the
+    /// default's type (issue #323).
     pub(crate) fn infer_switch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         if let Some(first) = args.first() {
             let selector = self.infer(&first.value, scope);
             self.emit_switch_expr_diagnostic(span_of(&first.value), &selector);
+            self.check_switch_authored_default_selector(&first.value, &selector, scope);
         }
         let mut alt_types: Vec<RType> = Vec::new();
         for a in args.iter().skip(1) {

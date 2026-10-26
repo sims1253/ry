@@ -1410,6 +1410,20 @@ pub(crate) struct EnclosingFormals {
     /// The function's own span, keying [`Checker::formal_reads`] for
     /// RY111's dead-formal gate.
     pub(crate) function_span: Span,
+    /// Each defaulted formal's authored default type, inferred in
+    /// the default scope at body entry. Independent evidence about
+    /// the no-argument call path (like `authored_default` for
+    /// declarations): the binding's own type must also cover
+    /// supplied arguments, so it cannot carry this. Read by the
+    /// `switch` selector check (#323); empty for injected
+    /// literals, whose formals were never authored here.
+    pub(crate) authored_defaults: FxMap<String, RType>,
+    /// Names this frame's body may write (the `frame_writes`
+    /// entry pushed with it, cloned at body entry so the two
+    /// stacks cannot drift apart at injected-literal frames).
+    /// The switch default check scopes its write guard to the
+    /// frames from the read through the formal's owner.
+    pub(crate) body_writes: collect::WriteSet,
 }
 
 /// Which condition an assertion wrapper proves about its probe

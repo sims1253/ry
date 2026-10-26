@@ -616,6 +616,37 @@ pub(crate) fn switch_expr_length_rejected(t: &RType) -> bool {
     }
 }
 
+/// Whether a formal's default expression is closed over value
+/// bindings: literals composed with unary/binary operators and
+/// `c()`/`list()` constructor calls whose arguments are all
+/// closed. R forces defaults lazily at call time in the
+/// function's evaluation environment, so a default reading an
+/// enclosing binding (`type = x`, or any other call — the callee
+/// is itself a binding read resolved at forcing time) evaluates
+/// whatever those bindings hold then; its definition-time type
+/// is not evidence about the no-argument call path. Anything
+/// else (indexing, blocks, conditionals, bare identifiers) is
+/// conservatively open.
+fn closed_default_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Logical(..)
+        | Expr::Integer(..)
+        | Expr::Double(..)
+        | Expr::String(..)
+        | Expr::Null(..)
+        | Expr::Na(..) => true,
+        Expr::UnaryOp { expr, .. } => closed_default_expr(expr),
+        Expr::BinOp { lhs, rhs, .. } => closed_default_expr(lhs) && closed_default_expr(rhs),
+        Expr::Call { func, args, .. } => {
+            matches!(
+                ident_name(func).map(semantic_argument_name),
+                Some("c" | "list" | "base::c" | "base:::c" | "base::list" | "base:::list")
+            ) && args.iter().all(|arg| closed_default_expr(&arg.value))
+        }
+        _ => false,
+    }
+}
+
 /// Whether this type carries a proven zero-length leaf — directly, or
 /// inside nested union members. Union construction flattens
 /// (`union_of`), but `RType::union` keeps exactly the members it is
@@ -1265,10 +1296,23 @@ impl Checker {
         // argument and the body reads it: they are not load-time
         // execution for RY124, even at the top level of a file.
         self.lazy_context_depth += 1;
+        // The inferred default types are retained as authored
+        // evidence for the no-argument call path (see
+        // `EnclosingFormals::authored_defaults`); the binding
+        // types below must also cover supplied arguments.
+        let mut authored_defaults: FxMap<String, RType> = FxMap::default();
         for p in params {
             let t = match &p.default {
                 Some(e) => {
-                    let _ = self.infer(e, &mut default_scope);
+                    let inferred = self.infer(e, &mut default_scope);
+                    // Only a closed default (no captured value
+                    // bindings) still holds its definition-time
+                    // value when forced at call time: a default
+                    // reading an enclosing binding evaluates
+                    // whatever that binding holds then.
+                    if closed_default_expr(e) {
+                        authored_defaults.insert(p.name.clone(), inferred);
+                    }
                     function_name
                         .map(|function| {
                             self.diagnostic_parameter_type(function, span, p, params, e)
@@ -1316,6 +1360,14 @@ impl Checker {
             .push(index::nested_superassignment_writes(body));
         self.lazy_context_depth -= 1;
         self.push_enclosing_formals(params, span);
+        if let Some(frame) = self.enclosing_formals.last_mut() {
+            frame.authored_defaults = authored_defaults;
+            frame.body_writes = self
+                .frame_writes
+                .last()
+                .cloned()
+                .expect("frame_writes entry pushed with the function frame");
+        }
         // RY124: only a top-level `.onLoad`/`.onAttach` binding is a
         // package load hook; R calls those two names from the finished
         // namespace, so their bodies are load-time execution.
@@ -1814,6 +1866,73 @@ impl Checker {
                 format!(
                     "`switch` EXPR is `{}`, which is not a length-1 vector; R errors with \"EXPR must be a length 1 vector\"",
                     selector_type
+                ),
+            );
+        }
+    }
+
+    /// The authored-default half of the `switch` selector check
+    /// (#323): a selector that is still the enclosing function's
+    /// defaulted formal (`scope.is_default_parameter` — a rebind,
+    /// `match.arg` included, clears that marker) takes the
+    /// default's value on the no-argument call path, so a default
+    /// whose length is proven not one errors there even though
+    /// supplied arguments keep the binding's own type opaque. A
+    /// selector already narrowed to length one needs no second
+    /// say. The frame lookup stops at the innermost function
+    /// whose formals contain the name, so an inner formal shadows
+    /// an outer default. Scope: body reads only — a selector read
+    /// inside a sibling formal's default is reached through the
+    /// ordinary dynamic path, not this check. The write guard is
+    /// flow-insensitive over each frame's whole body, so a write
+    /// after the read (or a closure-local write in a nested
+    /// frame) also suppresses the warning: conservative misses,
+    /// never false positives.
+    fn check_switch_authored_default_selector(
+        &mut self,
+        selector_expr: &Expr,
+        selector_type: &RType,
+        scope: &Scope,
+    ) {
+        let Expr::Ident { name, .. } = selector_expr else {
+            return;
+        };
+        if selector_type.length == Length::One
+            || switch_expr_length_rejected(selector_type)
+            || !scope.is_default_parameter(name)
+        {
+            return;
+        }
+        // The innermost frame whose formals contain the name owns
+        // the default. A write in any frame from this read
+        // through that owner may have replaced the default before
+        // the read (a branch-local `type <- type[1L]` guard
+        // rejoins with the marker intact); writes further out
+        // bind a different variable the owner shadows.
+        let Some(owner) = self
+            .enclosing_formals
+            .iter()
+            .rposition(|frame| frame.names.contains(name))
+        else {
+            return;
+        };
+        if self.enclosing_formals[owner..]
+            .iter()
+            .any(|frame| frame.body_writes.may_write(semantic_argument_name(name)))
+        {
+            return;
+        }
+        let Some(default_type) = self.enclosing_formals[owner].authored_defaults.get(name) else {
+            return;
+        };
+        if switch_expr_length_rejected(default_type) {
+            let name = semantic_argument_name(name);
+            self.emit(
+                Severity::Warning,
+                span_of(selector_expr),
+                "RY001",
+                format!(
+                    "`switch` EXPR is formal `{name}`, whose default is `{default_type}`, which is not a length-1 vector; calling without `{name}` errors with \"EXPR must be a length 1 vector\" (use `match.arg()` to select from the default)"
                 ),
             );
         }
@@ -4258,6 +4377,8 @@ impl Checker {
                 .all(|parameter| parameter.default.as_ref().is_none_or(is_scalar_literal)),
             possible_default_writes,
             function_span,
+            authored_defaults: FxMap::default(),
+            body_writes: crate::collect::WriteSet::default(),
         });
     }
 }

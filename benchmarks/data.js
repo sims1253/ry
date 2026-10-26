@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793030351463,
+  "lastUpdate": 1793031561746,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -59283,6 +59283,219 @@ window.BENCHMARK_DATA = {
           {
             "name": "server/unrelated-file/p95",
             "value": 182.161903,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e60e46b5f8e2f406f0dde64c212671f57abd5dd8",
+          "message": "feat(checker): flag list(rep(v, n)) nested in flat c()/append() construction (#831)\n\n* feat(checker): flag list(rep(v, n)) nested in flat c()/append() construction\n\nAdd RY127 (nested-rep-in-concat): warn when an exact list(rep(v, n)) argument of a base c() (or the values argument of a base append()) sits beside sibling elements all proven, from scope bindings and literal constructions, to be flat values of v's classless atomic type. The nested shape contributes one element holding the whole repeated vector; rep(list(v), n) is the flat form -- the readr col_spec_standardise defect shape. Standalone list(rep(...)), the flat form, a count proven at most 1, list/classed/unknown element types, recursive c(), and masked c/append/list/rep callees stay silent. Element evidence is peeked from scope and syntax only, never re-inferred. Classed elements such as readr's collectors remain outside this slice.\n\nRefs #359\n\n* fix(checker): proven invalid rep counts stay silent; rep(list,0) contributes nothing\n\nRefs #359\n\n* fix(checker): classed receivers do not prove RY127 element types\n\nRefs #359\n\n* fix(checker): width-checked positional schema index in RY127 peeking\n\nRefs #359\n\n* fix(checker): plain atomic rep() siblings contribute flat elements\n\nRefs #359\n\n* fix(checker): classed first sibling may dispatch c() for RY127\n\nRefs #359\n\n* fix(checker): sibling rep claims need proven positive count; Nonempty counts stay silent\n\nRefs #359\n\n* fix(checker): length.out governs sibling rep contribution proof\n\nRefs #359\n\n* refactor(checker): drop redundant one-to-one conjuncts after governing-count guard\n\nRefs #359\n\n* docs(checker): explain named-slot guard covering c() but not append() values\n\nRefs #359\n\n* perf(checker): match positional schema keys without allocating\n\nRefs #359\n\n* fix(checker): canonical positional schema keys; double-spelled [[N]] peeks\n\nRefs #359\n\n* fix(checker): numeric [[ ]] peek selects by position on complete schemas\n\nRefs #359",
+          "timestamp": "2026-10-26T17:11:49+01:00",
+          "tree_id": "d713d7cf1ea0a33a0347ea9d90a50d4fd551c529",
+          "url": "https://github.com/sims1253/ry/commit/e60e46b5f8e2f406f0dde64c212671f57abd5dd8"
+        },
+        "date": 1793031561630,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 3695656.0576425395,
+            "range": "3687563.84–3704923.96",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 939271.3934481321,
+            "range": "936620.64–943793.67",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 3165101.7091966225,
+            "range": "3152647.34–3181763.55",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 450014.1111176292,
+            "range": "447349.76–453313.47",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 3139798.130492735,
+            "range": "3134420.63–3145599.60",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 451959.20623200515,
+            "range": "451710.86–452204.99",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 16395734.580748469,
+            "range": "16292438.46–16536810.90",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 68728401.76666665,
+            "range": "68598096.90–68852476.21",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 10994280.551759485,
+            "range": "10947520.49–11067318.73",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 68736484.91666667,
+            "range": "68594946.84–68883147.98",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 11379179.21207172,
+            "range": "11347333.50–11415939.68",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 67975735.6,
+            "range": "67857317.22–68100552.52",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 10731560.824054254,
+            "range": "10711088.92–10757289.80",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 201859379.2,
+            "range": "200393450.73–203187585.25",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 15263947.354101533,
+            "range": "15185974.08–15356318.89",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 5206512.957823311,
+            "range": "5197007.84–5216251.49",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 15863197.56774218,
+            "range": "15763545.60–15966735.63",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 6550100.357276263,
+            "range": "6499389.27–6597500.98",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 17238258.811383408,
+            "range": "17066246.37–17485521.60",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 1083310.9681952726,
+            "range": "1073325.87–1097234.71",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 11308456,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 366343,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 220172,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 318570,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 88.65611499996157,
+            "range": "61.64–102.34",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 61.643452000047546, 75.87263200001325, 88.65611499996157, 90.29769499995746, 102.33526800002437"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 435.6442850000458,
+            "range": "422.96–506.45",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 422.95619599998463, 435.48299399996176, 435.6442850000458, 440.8609099999885, 506.4509620000026"
+          },
+          {
+            "name": "server/startup-median",
+            "value": 195.234446,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/median",
+            "value": 181.998193,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/p95",
+            "value": 182.128719,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/median",
+            "value": 181.838476,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/p95",
+            "value": 181.949346,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/median",
+            "value": 181.885643,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/p95",
+            "value": 181.947456,
             "unit": "ms"
           }
         ]

@@ -93,9 +93,21 @@ impl Checker {
                 "testthat",
                 &["object", "regexp", "...", "all", "info", "label"],
             ),
+            // `x` is synthetic: the real signature starts with `...`
+            // (the captured code), so a leading slot is needed for
+            // positional probe binding; the real `...` stays next so
+            // post-`...` formals keep R's exact-name matching.
             "expect_snapshot" => (
                 "testthat",
-                &["x", "cran", "error", "transform", "variant", "cnd_class"],
+                &[
+                    "x",
+                    "...",
+                    "cran",
+                    "error",
+                    "transform",
+                    "variant",
+                    "cnd_class",
+                ],
             ),
             "tryCatch" => ("base", &["expr", "...", "finally"]),
             "try" => ("base", &["expr", "silent", "outFile"]),
@@ -114,7 +126,7 @@ impl Checker {
                 Some(arg) => !matches!(args[arg].value, Expr::Na(..)),
             },
             "expect_snapshot" => matched
-                .arg_for_param(2)
+                .arg_for_param(3)
                 .is_some_and(|arg| matches!(args[arg].value, Expr::Logical(true, _))),
             // `error` reaches tryCatch via `...`, so R requires the
             // exact name — partial matching only binds real formals.

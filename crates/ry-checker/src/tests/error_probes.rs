@@ -59,6 +59,8 @@ fn non_error_wrappers_and_missing_handlers_stay_full_strength() {
         "expect_snapshot(1 + \"\")\n",
         "expect_snapshot(1 + \"\", error = FALSE)\n",
         "ea <- TRUE\nexpect_snapshot(1 + \"\", error = ea)\n",
+        // Post-`...` formals match by exact name only in R.
+        "expect_snapshot(1 + \"\", erro = TRUE)\n",
         "tryCatch(1 + \"\", warning = function(w) NULL)\n",
         "tryCatch(1 + \"\", finally = NULL)\n",
         "expect_equal(1 + \"\", 1)\n",

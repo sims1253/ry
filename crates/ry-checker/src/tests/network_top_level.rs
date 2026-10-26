@@ -94,9 +94,20 @@ fn guarded_calls_stay_quiet() {
         "if (isTRUE(getOption('mypkg.download'))) utils::download.file('https://example.invalid/x', tempfile())",
         "if (nzchar(Sys.getenv('MYPKG_DOWNLOAD'))) utils::download.file('https://example.invalid/x', tempfile())",
         ".onLoad <- function(libname, pkgname) { if (!interactive()) return(invisible()); utils::download.file('https://example.invalid/x', tempfile()) }",
+        // Every disjunct is an opt-in probe: whichever one holds, the
+        // then-arm is guarded.
+        "if (getOption('mypkg.download') || interactive()) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (Sys.getenv('MYPKG_DL') != '' || interactive()) utils::download.file('https://example.invalid/x', tempfile())",
     ] {
         assert_eq!(network_warnings(source), 0, "{source}");
     }
+    // A non-probe disjunct may be the true one: not guarded.
+    assert_eq!(
+        network_warnings(
+            "if (file.exists('x') || interactive()) utils::download.file('https://example.invalid/x', tempfile())"
+        ),
+        1
+    );
     // The arm that runs when the probe failed is the unguarded one.
     assert_eq!(
         network_warnings(

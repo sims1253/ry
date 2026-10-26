@@ -356,7 +356,7 @@ pub const RULES: &[Rule] = &[
         code: "RY124",
         name: "top-level-network",
         default_severity: Severity::Warning,
-        summary: "A proven network/download call (`utils::download.file`, an opened `base::url`/`base::socketConnection`/`curl::curl`, `curl::curl_download`, `curl::curl_fetch_memory`, `httr::GET`/`httr::POST`, `httr2::req_perform`, or a project wrapper around one) is evaluated while package code loads: at the top level of package or `data-raw` code, or in `.onLoad`/`.onAttach`. Package loading must not use the network unguarded; move the call behind an explicit opt-in or into a function the user calls. Silent inside ordinary functions, in lazily forced defaults, for connections R has not opened, under an `interactive()`/`getOption()`/`Sys.getenv()` guard, and for masked or dynamic callees.",
+        summary: "A proven network/download call (`utils::download.file`, an opened `base::url`/`base::socketConnection`/`curl::curl`, `curl::curl_download`, `curl::curl_fetch_memory`, `httr::GET`/`httr::POST`, `httr2::req_perform`, or a same-file project wrapper around one) is evaluated while package code loads: at the top level of package or `data-raw` code, or in `.onLoad`/`.onAttach`. Package loading must not use the network unguarded; move the call behind an explicit opt-in or into a function the user calls. Silent inside ordinary functions, in lazily forced defaults, for connections R has not opened, under an `interactive()`/`getOption()`/`Sys.getenv()` guard, and for masked or dynamic callees.",
     },
     Rule {
         code: "RY125",

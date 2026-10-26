@@ -136,10 +136,13 @@ pub(crate) fn load_context_file(path: &str, is_package_r: bool) -> bool {
             .filter_map(|component| component.as_os_str().to_str())
             .any(|component| component == needle)
     };
-    if is_component("data-raw") {
-        return true;
+    // A non-load tree wins over a nested `data-raw` component
+    // (`tests/data-raw/` is test code, not a load-time script).
+    if NON_LOAD_TREES.iter().any(|tree| is_component(tree)) {
+        return false;
     }
-    !NON_LOAD_TREES.iter().any(|tree| is_component(tree))
+    // `data-raw` scripts and files of unknown provenance run as written.
+    true
 }
 
 impl Checker {
@@ -228,9 +231,8 @@ impl Checker {
         // of base. A bare head from another package is instead proven
         // by the import or attachment that puts it in scope at all,
         // provided nothing local binds the name first.
-        let proven = if Callee::parse(semantic_name).is_qualified()
-            || crate::resolve::BASE_DATABASE_PACKAGES.contains(&package)
-        {
+        let qualified = Callee::parse(semantic_name).is_qualified();
+        let proven = if qualified || crate::resolve::BASE_DATABASE_PACKAGES.contains(&package) {
             matches!(
                 self.special_call_provenance(
                     original_name,
@@ -241,8 +243,7 @@ impl Checker {
                     scope,
                 ),
                 crate::resolve::SpecialCallProvenance::Proven
-            ) && (Callee::parse(semantic_name).is_qualified()
-                || self.bare_package_in_scope(lookup_name, package))
+            ) && (qualified || self.bare_package_in_scope(lookup_name, package))
         } else {
             self.bare_package_in_scope(lookup_name, package)
                 && !self.call_head_bound_locally(lookup_name, scope)
@@ -263,17 +264,25 @@ impl Checker {
         }
     }
 
-    /// Memoized [`body_performs_network_call`]: the same wrapper body
-    /// is scanned at most once per pass, however many load-time call
-    /// sites reach it. The cache is cleared with the guarded spans it
-    /// depends on (see `lib.rs` pass-3 setup).
+    /// Memoized [`body_performs_network_call`], positives only: the
+    /// scan reads mutable provenance state (`bare_loaded` grows when
+    /// a top-level `library()` runs), so a negative result can flip
+    /// later in the same pass and must be recomputed, while a
+    /// positive can only gain provenance support. The cache is
+    /// cleared with the guarded spans it depends on (see `lib.rs`
+    /// pass-3 setup).
     fn wrapper_performs_network_call(&mut self, function: &UserFn) -> bool {
-        if let Some(cached) = self.network_wrapper_cache.get(&function.definition_span) {
-            return *cached;
+        if self
+            .network_wrapper_cache
+            .contains_key(&function.definition_span)
+        {
+            return true;
         }
         let result = self.body_performs_network_call(function);
-        self.network_wrapper_cache
-            .insert(function.definition_span, result);
+        if result {
+            self.network_wrapper_cache
+                .insert(function.definition_span, true);
+        }
         result
     }
 
@@ -534,7 +543,14 @@ fn condition_implies_guard(cond: &Expr, when_true: bool) -> bool {
             rhs,
             ..
         } => {
-            when_true && (condition_implies_guard(lhs, true) || condition_implies_guard(rhs, true))
+            // True: every conjunct held, so one establishing conjunct
+            // suffices. False: only some conjunct failed, so each
+            // conjunct must establish the probe by failing.
+            if when_true {
+                condition_implies_guard(lhs, true) || condition_implies_guard(rhs, true)
+            } else {
+                condition_implies_guard(lhs, false) && condition_implies_guard(rhs, false)
+            }
         }
         Expr::BinOp {
             op: BinOpKind::OrOr | BinOpKind::Or,
@@ -542,8 +558,15 @@ fn condition_implies_guard(cond: &Expr, when_true: bool) -> bool {
             rhs,
             ..
         } => {
-            !when_true
-                && (condition_implies_guard(lhs, false) || condition_implies_guard(rhs, false))
+            // False: every disjunct failed, so one establishing
+            // disjunct suffices. True: only some disjunct held, so
+            // each disjunct must establish the probe by holding —
+            // a non-probe disjunct may be the true one.
+            if when_true {
+                condition_implies_guard(lhs, true) && condition_implies_guard(rhs, true)
+            } else {
+                condition_implies_guard(lhs, false) || condition_implies_guard(rhs, false)
+            }
         }
         _ => probe_established(cond, when_true),
     }

@@ -103,9 +103,7 @@ impl Checker {
         // RY123: the head itself is a namespace access. A same-spelled
         // local or project function is selected instead (call-head rule),
         // so only an unshadowed qualified head reaches the namespace.
-        if name.contains("::") && !self.qualified_name_bound_locally(&name, scope) {
-            self.check_failed_namespace_access(&name, span_of(func), scope);
-        }
+        self.maybe_check_failed_namespace_access(&name, span_of(func), scope);
 
         // An explicitly qualified typed package value is known not to be
         // callable. Bare names wait until after lexical callable lookup below,

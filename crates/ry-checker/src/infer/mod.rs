@@ -1685,7 +1685,10 @@ impl Checker {
         }
         apply_failed_namespace_branch(scope, failed_ns, NarrowingBranch::Then);
         let then_value = self.walk_journal_arm(then, literal_cond == Some(false), scope, &mut walk);
-        let then_failed_namespaces = scope.failed_namespaces.clone();
+        // Moved out, not cloned: `finish_snapshot` restores the
+        // field wholesale from the mark, so the taken set is the
+        // arm-final state and the restore is unaffected.
+        let then_failed_namespaces = std::mem::take(&mut scope.failed_namespaces);
         let mut then_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let mark = scope.begin_snapshot();
@@ -1698,7 +1701,7 @@ impl Checker {
             Some(arm) => self.walk_journal_arm(arm, literal_cond == Some(true), scope, &mut walk),
             None => RType::new(Mode::Null, Length::Zero),
         };
-        let else_failed_namespaces = scope.failed_namespaces.clone();
+        let else_failed_namespaces = std::mem::take(&mut scope.failed_namespaces);
         let mut else_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let has_else = else_.is_some();
@@ -1782,9 +1785,11 @@ impl Checker {
         }
         // A failed-namespace fact reaches the join only if every
         // continuing arm still holds it: an arm-local clear (a call that
-        // may have loaded the namespace) must not be undone by restoring
-        // the pre-`if` snapshot, and an arm-local install escapes only
-        // when its sibling diverges.
+        // may have loaded the namespace) must not be undone by the
+        // snapshot restore, and an arm-local install escapes only when
+        // its sibling diverges. The base set read here is the pre-`if`
+        // state again: each arm's `finish_snapshot` restored it (the
+        // else mark was taken after the then restore).
         scope.failed_namespaces = join_failed_namespaces(
             &scope.failed_namespaces,
             &then_failed_namespaces,
@@ -3252,9 +3257,7 @@ impl Checker {
         // surfaces it as a bound name. A backticked `` `pkg::f` `` or a
         // lexical definition under that spelling is an ordinary local
         // binding instead.
-        if name.contains("::") && !self.qualified_name_bound_locally(name, scope) {
-            self.check_failed_namespace_access(name, *span, scope);
-        }
+        self.maybe_check_failed_namespace_access(name, *span, scope);
         let mut found_lexical = false;
         let mut unresolved = false;
         if scope.is_parameter(name) || scope.get(name).is_none() {

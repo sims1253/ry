@@ -724,7 +724,7 @@ pub(crate) fn join_failed_namespaces(
     else_diverges: bool,
 ) -> crate::FxSet<String> {
     if base.is_empty() && then_set.is_empty() && else_set.is_empty() {
-        return base.clone();
+        return crate::FxSet::default();
     }
     base.iter()
         .chain(then_set.iter())
@@ -1319,6 +1319,25 @@ impl Checker {
             return None;
         }
         Some((package.clone(), negated))
+    }
+
+    /// The shared RY123 access gate for value and call-head positions:
+    /// the cheap empty-fact check runs first (the set is empty in
+    /// almost all inference), then the qualified spelling must not be
+    /// bound locally under either position's rule.
+    pub(crate) fn maybe_check_failed_namespace_access(
+        &mut self,
+        name: &str,
+        span: Span,
+        scope: &Scope,
+    ) {
+        if scope.failed_namespaces.is_empty()
+            || !name.contains("::")
+            || self.qualified_name_bound_locally(name, scope)
+        {
+            return;
+        }
+        self.check_failed_namespace_access(name, span, scope);
     }
 
     /// RY123: a `pkg::name` / `pkg:::name` access whose package is proven

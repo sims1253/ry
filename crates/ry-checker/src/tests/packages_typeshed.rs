@@ -1144,7 +1144,13 @@ fn candidate_package_functions_load_qualified_and_attached() {
             format!("library({package})\n{function}(1L)\n"),
             format!("library({package})\nhandler <- {function}\n"),
         ] {
-            let diagnostics = check(&source);
+            // Resolution is what this test proves; RY124 is expected
+            // for curl's network representative evaluated at top level
+            // and says nothing about whether the name resolved.
+            let diagnostics: Vec<_> = check(&source)
+                .into_iter()
+                .filter(|diagnostic| diagnostic.code != "RY124")
+                .collect();
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
         }
     }

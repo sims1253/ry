@@ -487,6 +487,19 @@ impl Checker {
         // The argument-validation stage.
         self.check_call_arguments(&name, &lookup_name, &call.head, &call.arg_types, args, span);
 
+        // RY124 reads the same resolved head, so masked and dynamic
+        // callees stay silent exactly where the arity checks do.
+        self.check_top_level_network_call(
+            &name,
+            func,
+            &semantic_name,
+            &lookup_name,
+            &call.head,
+            args,
+            scope,
+            span,
+        );
+
         // The dynamic-loader stage; also records `locally_shadows_stub`
         // on the resolution for the assertion stage below.
         self.note_dynamic_loader_scope(&name, &mut call, args, scope);

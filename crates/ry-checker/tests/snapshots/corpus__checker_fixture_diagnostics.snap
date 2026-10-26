@@ -1993,6 +1993,24 @@ expression: snapshots
         start: 152
   fixture: err_tidyverse_attaches_purrr.R
 - diagnostics:
+    - code: RY124
+      message: "`utils::download.file()` performs a network transfer while package code loads; move it behind an explicit opt-in (an option, an environment variable, or an interactive check) or into a function the user calls"
+      severity: warning
+      span:
+        column: 10
+        end: 103
+        line: 1
+        start: 33
+    - code: RY124
+      message: "`curl::curl_download()` performs a network transfer while package code loads; move it behind an explicit opt-in (an option, an environment variable, or an interactive check) or into a function the user calls"
+      severity: warning
+      span:
+        column: 2
+        end: 214
+        line: 3
+        start: 146
+  fixture: err_top_level_network.R
+- diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `character` and `integer`"
       severity: error
@@ -2622,6 +2640,8 @@ expression: snapshots
   fixture: ok_tidyselect_negative_string.R
 - diagnostics: []
   fixture: ok_tidyverse_unstubbed_core.R
+- diagnostics: []
+  fixture: ok_top_level_network_controls.R
 - diagnostics: []
   fixture: ok_trycatch.R
 - diagnostics: []

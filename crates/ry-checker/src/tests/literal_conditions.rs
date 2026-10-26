@@ -200,10 +200,8 @@ fn proven_na_literal_conditions_are_checked() {
         "f <- function() { if (NA) 1L }; f()",
     ] {
         let diagnostics = check(source);
-        assert!(
-            diagnostics.iter().any(|d| d.code == "RY001"),
-            "{source}: {diagnostics:?}"
-        );
+        let count = diagnostics.iter().filter(|d| d.code == "RY001").count();
+        assert_eq!(count, 1, "{source}: {diagnostics:?}");
     }
     let diagnostics = check("if (NA) 1L");
     let invalid: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY001").collect();

@@ -1669,8 +1669,19 @@ impl Checker {
         // condition's own span is `NA_integer_`. A longer cast result
         // (`as.integer(c(1, 1e10))`) is a length error instead, so the
         // scalar length is part of the proof.
+        // Structural as well as diagnostic: the condition itself must
+        // be an `as.integer()` call, so reusing the RY119 code at some
+        // other span in the future cannot forge this proof.
+        let is_as_integer_call = matches!(
+            cond,
+            Expr::Call { func, .. }
+                if ident_name(func).is_some_and(|name| {
+                    crate::semantic_lists::bare_name(name) == "as.integer"
+                })
+        );
         let proven_na = proven_na_syntax
             || (matches!(ct.length, Length::One)
+                && is_as_integer_call
                 && self.diagnostics[diagnostic_start..]
                     .iter()
                     .any(|diagnostic| {

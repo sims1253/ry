@@ -33,6 +33,13 @@ pub struct DeclarationFinding {
     pub path: String,
     pub span: Span,
     pub message: String,
+    /// The assertion probe (#344) the finding was produced inside,
+    /// if any, so its diagnostic view is demoted one confidence tier
+    /// like an ordinary emit inside the probe. Captured at creation:
+    /// conversion runs after the probe stack is gone. The demotion
+    /// decides from the kind and the converted severity, mirroring
+    /// `Checker::probe_demotes`.
+    pub(crate) probe: Option<crate::ProbeKind>,
 }
 
 /// Append the public diagnostic view of structured declaration findings.
@@ -58,13 +65,17 @@ pub fn append_diagnostics(
                     ("RY117", crate::Severity::Warning)
                 }
             };
-            diagnostics.push(crate::Diagnostic::new(
+            let mut diagnostic = crate::Diagnostic::new(
                 severity,
                 record.span,
                 &record.path,
                 code,
                 record.message.clone(),
-            ));
+            );
+            if record.probe.is_some_and(|kind| kind.demotes(severity)) {
+                diagnostic.confidence = diagnostic.confidence.demote();
+            }
+            diagnostics.push(diagnostic);
         }
     }
 }
@@ -81,6 +92,7 @@ impl DeclarationFinding {
             path: path.into(),
             span,
             message: message.into(),
+            probe: None,
         }
     }
 }
@@ -520,7 +532,19 @@ impl crate::Checker {
         span: Span,
         message: impl Into<String>,
     ) {
-        let finding = DeclarationFinding::new(kind, &self.path, span, message);
+        let mut finding = DeclarationFinding::new(kind, &self.path, span, message);
+        // Prefer an error-catching probe when nested probes of both
+        // kinds contain the span; otherwise any containing probe.
+        let containing = self
+            .assertion_probe_spans
+            .iter()
+            .filter_map(|(probe, kind)| {
+                (probe.start <= span.start && span.end <= probe.end).then_some(*kind)
+            });
+        finding.probe = containing
+            .clone()
+            .find(|kind| kind.catches_errors())
+            .or_else(|| containing.into_iter().next());
         self.declaration_findings.push(finding);
     }
 

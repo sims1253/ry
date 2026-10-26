@@ -1403,6 +1403,29 @@ pub(crate) struct EnclosingFormals {
     pub(crate) function_span: Span,
 }
 
+/// Which condition an assertion wrapper proves about its probe
+/// argument (#344): an error it catches, or a warning it expects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbeKind {
+    Error,
+    Warning,
+}
+
+impl ProbeKind {
+    /// Whether this assertion catches errors from its probe, so even
+    /// error-severity findings inside it are the asserted behavior.
+    pub(crate) fn catches_errors(self) -> bool {
+        self == ProbeKind::Error
+    }
+
+    /// Whether a finding of `severity` inside this probe demotes:
+    /// an error-catching probe demotes everything; a
+    /// warning-assertion probe demotes only non-error findings.
+    pub(crate) fn demotes(self, severity: Severity) -> bool {
+        self.catches_errors() || severity != Severity::Error
+    }
+}
+
 pub struct Checker {
     journal_delta_cache: scope_journal::BranchChanges,
     /// See [`infer::HeldCast`].
@@ -1447,6 +1470,16 @@ pub struct Checker {
     // never takes (issue #703). Unlike `discarding`, it keeps reference
     // and scope capture, so navigation over dead code is unaffected.
     in_dead_arm: bool,
+    // Spans of error-assertion probe arguments currently being inferred
+    // (`expect_error(<probe>)`, `try(<probe>)`, ...; issue #344). A
+    // diagnostic whose span lies inside one is demoted one confidence
+    // tier at emit time, the same down-weight non-source paths receive
+    // in post-processing. Demotion is once per diagnostic, however
+    // many probes nest around its span. A warning-assertion probe
+    // (`expect_warning`) demotes only non-error findings: it does not
+    // catch errors, so a proven error inside it is a genuine defect.
+    // Balanced by `infer_call`; empty between calls.
+    assertion_probe_spans: Vec<(Span, ProbeKind)>,
     // User-defined functions collected in pass 1. Stored behind an `Arc`
     // so the multi-file `Project` can share the refined tables across
     // per-file pass-3 emitters without deep-cloning them.
@@ -1729,6 +1762,7 @@ impl Checker {
             escaped_external_bindings: false,
             discarding: false,
             in_dead_arm: false,
+            assertion_probe_spans: Vec::new(),
             fn_table,
             known_vars: Arc::new(HashSet::new()),
             namespace_superassigned: None,
@@ -1912,6 +1946,7 @@ impl Checker {
         self.stmt_continuations.clear();
         self.formal_shadows.clear();
         self.formal_reads.clear();
+        self.assertion_probe_spans.clear();
         infer::vacuous::index_statement_continuations(
             &file.stmts,
             &mut self.stmt_continuations,

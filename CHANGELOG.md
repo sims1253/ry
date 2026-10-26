@@ -49,6 +49,16 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- Demote diagnostics inside an error-assertion probe one confidence tier:
+  testthat's `expect_error()`, `expect_warning()`, and
+  `expect_snapshot(error = TRUE, ...)`, plus base `try()` and
+  `tryCatch(..., error = ...)`. Only the probe argument is demoted, only
+  when the callee resolves to the real testthat/base function
+  (`expect_warning()` demotes only non-error findings, since it does not
+  catch errors), and severity is unchanged, so an intentional
+  `expect_error(1 + "")` still
+  reports RY040 at low confidence while the same code outside a wrapper
+  keeps full confidence (#344).
 - Keep editor inlay labels short while marking hidden known fields and
   uncertainty; expanded inlay details show the represented type facts within
   a visible budget. `dump-types` keeps its historical strings (#591).

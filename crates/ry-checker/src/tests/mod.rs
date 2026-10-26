@@ -7,6 +7,7 @@ mod constructors;
 mod data_frames_s3;
 mod diagnostics;
 mod dplyr_schema_effects;
+mod error_probes;
 mod functions_classes;
 mod narrowing;
 mod operator_s3_dispatch;

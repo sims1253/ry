@@ -390,7 +390,7 @@ impl Checker {
     pub(crate) fn infer_trycatch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         let matched = match_arguments(&["expr", "...", "finally"], args);
         let expr_index = matched.arg_for_param(0);
-        // RY122: an `error` handler deliberately probes failure, so a
+        // RY123: an `error` handler deliberately probes failure, so a
         // proven-failed namespace access inside `expr` is the caught
         // error, not a missed fallback. Without an `error` handler the
         // error still propagates and the fact stays live. Only base

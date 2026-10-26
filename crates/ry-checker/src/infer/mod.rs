@@ -3247,7 +3247,7 @@ impl Checker {
     // Keep reference observation after every exit from the existing value
     // lookup ladder. Calls retain their distinct function-lookup path.
     fn infer_identifier(&mut self, name: &str, span: &Span, scope: &mut Scope) -> RType {
-        // RY122 before the lookup ladder: a qualified access performs a
+        // RY123 before the lookup ladder: a qualified access performs a
         // namespace load at runtime even when an import/typeshed entry
         // surfaces it as a bound name. A backticked `` `pkg::f` `` or a
         // lexical definition under that spelling is an ordinary local

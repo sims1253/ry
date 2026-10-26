@@ -100,7 +100,7 @@ impl Checker {
             return self.infer_opaque_callee(func, args, scope, span);
         };
 
-        // RY122: the head itself is a namespace access. A same-spelled
+        // RY123: the head itself is a namespace access. A same-spelled
         // local or project function is selected instead (call-head rule),
         // so only an unshadowed qualified head reaches the namespace.
         if name.contains("::") && !self.call_head_bound_locally(&name, scope) {

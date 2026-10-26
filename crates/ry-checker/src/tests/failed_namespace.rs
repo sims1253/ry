@@ -5,7 +5,7 @@ fn codes(src: &str) -> Vec<&'static str> {
 }
 
 fn warns_ry122(src: &str) -> bool {
-    codes(src).contains(&"RY122")
+    codes(src).contains(&"RY123")
 }
 
 #[test]

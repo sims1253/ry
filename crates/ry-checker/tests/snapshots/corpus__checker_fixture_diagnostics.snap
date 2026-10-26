@@ -383,7 +383,7 @@ expression: snapshots
         start: 2015
   fixture: err_dynamic_formals_scope_precision.R
 - diagnostics:
-    - code: RY122
+    - code: RY123
       message: "`bslib::page_fluid` needs the `bslib` namespace, but `requireNamespace(\"bslib\")` returned `FALSE` on this branch"
       severity: warning
       span:

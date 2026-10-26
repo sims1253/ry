@@ -688,7 +688,7 @@ fn type_is_exactly_tested_family(existing: &RType, target: &RType) -> bool {
     }
 }
 
-/// Install the selected branch's failed-namespace fact (RY122): the
+/// Install the selected branch's failed-namespace fact (RY123): the
 /// `FALSE` branch gains the package, the `TRUE` branch loses it (a nested
 /// positive guard proves the namespace loaded).
 pub(crate) fn apply_failed_namespace_branch(
@@ -710,7 +710,7 @@ pub(crate) fn apply_failed_namespace_branch(
     }
 }
 
-/// The if-join for failed-namespace facts (RY122): a fact reaches the
+/// The if-join for failed-namespace facts (RY123): a fact reaches the
 /// continuation only if every continuing arm still holds it — an
 /// arm-local clear (a call that may have loaded the namespace) is not
 /// undone, and an arm-local install escapes only when its sibling
@@ -1260,7 +1260,7 @@ impl Checker {
     }
 
     /// A literal-package `requireNamespace` test whose result selects a
-    /// branch (RY122): the package and whether the `then` branch is the
+    /// branch (RY123): the package and whether the `then` branch is the
     /// one where loading failed. Base `requireNamespace` returns `FALSE`
     /// on a failed load with or without `quietly = TRUE` (it wraps
     /// `loadNamespace` in `tryCatch`; `quietly` only suppresses the
@@ -1321,7 +1321,7 @@ impl Checker {
         Some((package.clone(), negated))
     }
 
-    /// RY122: a `pkg::name` / `pkg:::name` access whose package is proven
+    /// RY123: a `pkg::name` / `pkg:::name` access whose package is proven
     /// unloaded on this branch. A rebound `::`/`:::` operator runs instead
     /// of the namespace lookup, so it proves nothing.
     pub(crate) fn check_failed_namespace_access(&mut self, name: &str, span: Span, scope: &Scope) {
@@ -1348,14 +1348,14 @@ impl Checker {
         self.emit(
             Severity::Warning,
             span,
-            "RY122",
+            "RY123",
             format!(
                 "`{name}` needs the `{package}` namespace, but `requireNamespace(\"{package}\")` returned `FALSE` on this branch"
             ),
         );
     }
 
-    /// Infer a caught `tryCatch` probe expression with RY122 silenced:
+    /// Infer a caught `tryCatch` probe expression with RY123 silenced:
     /// the depth inc/dec pairing lives in this one small function so
     /// early returns inside inference cannot unbalance it.
     pub(crate) fn infer_caught_namespace_probe(&mut self, expr: &Expr, scope: &mut Scope) -> RType {

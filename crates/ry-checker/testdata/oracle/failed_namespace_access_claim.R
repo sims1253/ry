@@ -1,5 +1,5 @@
-# oracle: must-warn RY122
-# oracle-claim: RY122
+# oracle: must-warn RY123
+# oracle-claim: RY123
 # Hide every non-base library so dplyr's namespace cannot load in this
 # process: `requireNamespace(..., quietly = TRUE)` then returns FALSE,
 # and a `dplyr::` access on that branch errors instead of falling back.

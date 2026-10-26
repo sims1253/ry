@@ -524,7 +524,7 @@ pub struct Scope {
     /// Monotone: a stale entry only restores the stub fallback.
     pub(crate) possible_block_writes: FxSet<String>,
     /// Literal packages whose `base::requireNamespace(pkg)`
-    /// returned `FALSE` on the branch dominating this point (RY122). A
+    /// returned `FALSE` on the branch dominating this point (RY123). A
     /// branch-local fact: journal snapshots restore it, unknown calls and
     /// fresh execution frames clear it.
     pub(crate) failed_namespaces: FxSet<String>,
@@ -1418,7 +1418,7 @@ pub struct Checker {
     pub(crate) held_cast: Option<infer::HeldCast>,
     /// Depth inside a base `tryCatch` `expr` guarded by an `error`
     /// handler: failed-namespace accesses there are deliberate probes
-    /// (RY122 stays silent), including guards installed inside `expr`.
+    /// (RY123 stays silent), including guards installed inside `expr`.
     pub(crate) caught_namespace_probe_depth: usize,
     #[cfg(test)]
     journal_branches: bool,

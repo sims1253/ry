@@ -201,3 +201,17 @@ fn backticked_data_binding_suppresses_both_positions() {
         "`pkgx::thing` <- 1L\nif (!requireNamespace(\"pkgx\")) { y <- `pkgx::thing`() } else { y <- 1L }\n"
     ));
 }
+
+#[test]
+fn quoted_package_containing_triple_colon_keys_on_double_colon() {
+    // `` `a:::b`::thing `` is a `::` access into package `a:::b`:
+    // the rebound-operator test must key on `::`, not on the `:::`
+    // inside the quoted package part.
+    assert!(warns_ry123(
+        "if (!requireNamespace(\"a:::b\")) { y <- `a:::b`::thing } else { y <- 1L }\n"
+    ));
+    // A rebound `:::` does not mask a `::` access.
+    assert!(warns_ry123(
+        "`:::` <- function(pkg, name) 1L\nif (!requireNamespace(\"a:::b\")) { y <- `a:::b`::thing } else { y <- 1L }\n"
+    ));
+}

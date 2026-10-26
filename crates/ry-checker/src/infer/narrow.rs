@@ -1360,7 +1360,14 @@ impl Checker {
         if !scope.failed_namespaces.contains(package) {
             return;
         }
-        let operator = if name.contains(":::") { ":::" } else { "::" };
+        // The operator is the split `split_qualified` made: `:::`
+        // only when the raw package part ends in a third colon, so a
+        // quoted package containing `:::` (`` `a:::b`::c ``) still
+        // keys the rebound test on `::`.
+        let operator = match name.rsplit_once("::") {
+            Some((pkg_raw, _)) if pkg_raw.ends_with(':') => ":::",
+            _ => "::",
+        };
         if ops_chooser::operator_rebound(self, operator, scope) {
             return;
         }

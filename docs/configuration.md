@@ -213,7 +213,7 @@ For dynamic workspaces, use a rule-specific inline suppression or a `globals`
 entry. ry still reports findings inside `expect_error()`, because the code
 there can hold a real defect before the expected error. Findings inside an
 error probe -- `expect_error()`, `expect_warning()`,
-`expect_snapshot(error = TRUE, ...)`, `try()`, or `tryCatch(..., error = ...)`
+`expect_snapshot(error = TRUE, ...)`, `try()`, or `tryCatch(..., error = ...)` / `tryCatch(..., condition = ...)`
 -- are demoted one confidence tier instead (see below), so
 `--min-confidence medium` hides the ones that started at medium confidence
 (a high-confidence probe finding demotes to medium and stays visible). Only the
@@ -230,7 +230,7 @@ diagnostics from `tests/`, `data-raw/`, `demo/`, `vignettes/`, and
 `inst/` are demoted one tier, as are diagnostics inside an error-assertion
 probe (`expect_error()`, `expect_warning()`,
 `expect_snapshot(error = TRUE, ...)`, `try()`,
-`tryCatch(..., error = ...)`). Output is sorted by tier, non-medium
+`tryCatch(..., error = ...)` / `tryCatch(..., condition = ...)`). Output is sorted by tier, non-medium
 tiers are tagged in the message, and `--min-confidence high|medium|low`
 filters both output and exit code.
 

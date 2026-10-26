@@ -660,7 +660,6 @@ impl Checker {
         self.emit_related(severity, span, code, msg, Vec::new());
     }
 
-    /// [`Checker::emit`] with secondary locations the caller has proven.
     /// Whether a finding at `span` with `severity` sits inside an
     /// assertion probe that demotes it (#344): any containing
     /// error-assertion probe, or a warning-assertion probe for a
@@ -672,6 +671,7 @@ impl Checker {
         })
     }
 
+    /// [`Checker::emit`] with secondary locations the caller has proven.
     pub(crate) fn emit_related(
         &mut self,
         severity: Severity,

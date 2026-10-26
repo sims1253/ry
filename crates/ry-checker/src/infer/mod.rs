@@ -1841,19 +1841,25 @@ impl Checker {
             // replaced the default before this read (a branch-local
             // `type <- type[1L]` guard rejoins with the marker
             // intact); only a never-written formal still holds it.
-            || self.frame_writes.iter().any(|writes| writes.may_write(name))
+            || self
+                .frame_writes
+                .iter()
+                .any(|writes| writes.may_write(semantic_argument_name(name)))
         {
             return;
         }
-        let Some(default_type) = self.enclosing_formals.iter().rev().find_map(|frame| {
-            frame
-                .names
-                .contains(name)
-                .then(|| frame.authored_defaults.get(name))
-        }) else {
-            return;
-        };
-        let Some(default_type) = default_type else {
+        let Some(default_type) = self
+            .enclosing_formals
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                frame
+                    .names
+                    .contains(name)
+                    .then(|| frame.authored_defaults.get(name))
+            })
+            .flatten()
+        else {
             return;
         };
         if switch_expr_length_rejected(default_type) {

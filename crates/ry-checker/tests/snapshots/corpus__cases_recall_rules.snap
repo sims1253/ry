@@ -500,3 +500,5 @@ expression: rows
       severity: warning
 - case: "RY127: a classed first sibling may dispatch c() and is silent"
   diagnostics: []
+- case: "RY127: an unproven sibling rep count establishes nothing"
+  diagnostics: []

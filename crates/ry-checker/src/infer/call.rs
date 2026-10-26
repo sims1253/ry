@@ -1962,7 +1962,10 @@ impl Checker {
         }
         // A vector count repeats element-wise, a different operation.
         if let Some(times_type) = self.peek_type(times, scope)
-            && matches!(times_type.length, Length::Zero | Length::Known(_))
+            && matches!(
+                times_type.length,
+                Length::Zero | Length::Known(_) | Length::Nonempty
+            )
         {
             return None;
         }
@@ -1983,19 +1986,20 @@ impl Checker {
                     .collect();
             }
             // The correct flat form as a sibling: `rep(list(...), n)`
-            // contributes the listed element types repeatedly.
+            // contributes the listed element types (summarized once;
+            // multiplicity does not affect the all-flat check).
             if self.is_base_call(func, "rep", scope) {
                 let matched = match_arguments(&["x", "times", "length.out", "each"], args);
-                // A proven-zero `times` contributes no elements; a
-                // proven invalid one makes the contribution unproven.
-                if let Some(times) = matched.arg_for_param(1).map(|index| &args[index].value)
-                    && let Some(count) = proven_count(times, scope)
-                {
-                    if count == 0.0 {
-                        return Some(Vec::new());
-                    }
-                    if count < 0.0 || count.fract() != 0.0 {
-                        return None;
+                // Claiming contributed elements requires a proven
+                // positive count: a proven-zero `times` contributes
+                // nothing, and a proven invalid or unproven one
+                // (which may be zero at runtime) establishes no
+                // sibling element at all.
+                if let Some(times) = matched.arg_for_param(1).map(|index| &args[index].value) {
+                    match proven_count(times, scope) {
+                        Some(0.0) => return Some(Vec::new()),
+                        Some(count) if count > 0.0 && count.fract() == 0.0 => {}
+                        _ => return None,
                     }
                 }
                 if matched.is_one_to_one()

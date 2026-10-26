@@ -652,3 +652,7 @@ flat <- c(rep(1L, 2L), list(rep(3L, 2L)))
 c.foo <- function(...) list(1L)
 first <- structure(list(1L, 2L), class = "foo")
 dispatched <- c(first, list(rep(3L, 2L)))
+
+## case: RY127: an unproven sibling rep count establishes nothing
+# no-diag
+f <- function(k) c(rep(list(1L), k), list(rep(3L, 2L)))

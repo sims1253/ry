@@ -1467,6 +1467,15 @@ impl Checker {
     /// recursion (the character and complex exclusions, the coercion
     /// ladder); the condition caller only needs its presence.
     fn proven_na_scalar_mode(&self, expr: &Expr, scope: &Scope) -> Option<Mode> {
+        self.proven_na_scalar_mode_at(expr, scope, 0)
+    }
+
+    fn proven_na_scalar_mode_at(&self, expr: &Expr, scope: &Scope, depth: usize) -> Option<Mode> {
+        // The proof runs before inference's stack-grown walk, so cap
+        // its own recursion; deeper conditions simply go unproven.
+        if depth > 128 {
+            return None;
+        }
         match expr {
             Expr::Na(ty, _) => match ty.mode {
                 Mode::Logical | Mode::Integer | Mode::Double | Mode::Character | Mode::Complex => {
@@ -1477,7 +1486,7 @@ impl Checker {
             Expr::UnaryOp {
                 op, expr: inner, ..
             } => {
-                let mode = self.proven_na_scalar_mode(inner, scope)?;
+                let mode = self.proven_na_scalar_mode_at(inner, scope, depth + 1)?;
                 let symbol = match op {
                     UnaryOpKind::Not => "!",
                     UnaryOpKind::Neg => "-",
@@ -1526,8 +1535,8 @@ impl Checker {
                 {
                     return None;
                 }
-                let left_na = self.proven_na_scalar_mode(lhs, scope);
-                let right_na = self.proven_na_scalar_mode(rhs, scope);
+                let left_na = self.proven_na_scalar_mode_at(lhs, scope, depth + 1);
+                let right_na = self.proven_na_scalar_mode_at(rhs, scope, depth + 1);
                 // A negated literal is only plain when unary `-` itself
                 // is not rebound: `` `-` <- function(e1) ... `` can turn
                 // `-1` into a classed value whose `Ops` method decides
@@ -1594,7 +1603,7 @@ impl Checker {
                 if arg.name.is_some() || !self.resolves_to_base(name, scope) {
                     return None;
                 }
-                let mode = self.proven_na_scalar_mode(&arg.value, scope)?;
+                let mode = self.proven_na_scalar_mode_at(&arg.value, scope, depth + 1)?;
                 match crate::semantic_lists::bare_name(name) {
                     "c" => Some(mode),
                     "any" | "all"

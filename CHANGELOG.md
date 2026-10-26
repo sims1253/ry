@@ -25,8 +25,9 @@ All notable changes to ry are documented in this file.
 - RY001 now reports an `if`/`while` condition that is a proven scalar
   `NA`: an `NA` literal (including the typed `NA_*_` constants), closed
   literal shapes over one (unary `!`/`-`, a comparison or `+`/`-`/`*`
-  with a plain literal, `c()`/`any()`/`all()`/`sum()` and `as.*()`
-  coercions over one), and a definite RY119 cast used directly as the
+  with a plain literal, `c()`/`any()`/`all()`/`sum()` and
+  `as.logical()`/`as.integer()`/`as.numeric()`/`as.double()`/`as.complex()`/
+  `as.character()` coercions over one), and a definite RY119 cast used directly as the
   condition. Bindings and possibly-NA conditions stay silent; their
   value facts are not a sound always-NA proof (#354).
 - Set per-file rule severities with ordered `[[rule-overrides]]` tables in

@@ -203,11 +203,16 @@ fn proven_na_literal_conditions_are_checked() {
         let count = diagnostics.iter().filter(|d| d.code == "RY001").count();
         assert_eq!(count, 1, "{source}: {diagnostics:?}");
     }
+    // Separate from the loop so the message assertion stands alone
+    // (the loop's count assertion already covers this shape).
     let diagnostics = check("if (NA) 1L");
-    let invalid: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY001").collect();
-    assert_eq!(invalid.len(), 1, "{diagnostics:?}");
+    let message = diagnostics
+        .iter()
+        .find(|d| d.code == "RY001")
+        .map(|d| d.message.as_str())
+        .unwrap_or_default();
     assert!(
-        invalid[0].message.contains("always `NA`"),
+        message.contains("always `NA`"),
         "the message must identify the proven-NA condition: {diagnostics:?}"
     );
     // A longer out-of-range cast is a length error, not a scalar NA:

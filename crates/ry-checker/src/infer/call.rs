@@ -1999,6 +1999,18 @@ impl Checker {
                 {
                     return self.contributed_element_types(listed, scope);
                 }
+                // A plain atomic `rep(v, n)` sibling splices flat
+                // scalars of `v`'s type, like the generic atomic arm
+                // below (which the early return here used to shadow).
+                if matched.is_one_to_one()
+                    && let Some(value) = matched.arg_for_param(0).map(|index| &args[index].value)
+                    && let Some(value_type) = self.peek_type(value, scope)
+                    && value_type.mode.is_atomic()
+                {
+                    return Some(vec![
+                        RType::scalar(value_type.mode).with_class(value_type.class.clone()),
+                    ]);
+                }
                 return None;
             }
         }
@@ -2083,6 +2095,8 @@ impl Checker {
                 let schema = receiver.columns?;
                 match &args[0].value {
                     Expr::String(name, _) => schema.get(name),
+                    // Zero/negative indices (R's dropping semantics)
+                    // are deliberately unproven here.
                     Expr::Integer(index, _) if *index >= 1 => {
                         schema.get(&format!("[[{index}]]")).or_else(|| {
                             // Width-checked: an index beyond usize

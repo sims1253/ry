@@ -642,3 +642,7 @@ mixed <- c(list(1L, "a"), list(rep(3L, 2L)))
 # $.foo may dispatch and return something other than the field.
 spec <- structure(list(cols = list(1L, 2L)), class = "foo")
 spec$cols <- c(spec$cols, list(rep(3L, 2L)))
+
+## case: RY127: a plain rep() sibling still proves flat elements
+# expect: RY127
+flat <- c(rep(1L, 2L), list(rep(3L, 2L)))

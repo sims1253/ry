@@ -492,3 +492,9 @@ expression: rows
   diagnostics: []
 - case: "RY127: a classed $ receiver is silent"
   diagnostics: []
+- case: "RY127: a plain rep() sibling still proves flat elements"
+  diagnostics:
+    - code: RY127
+      line: 648
+      message: "`list(rep(...))` inside `c()` contributes one element holding the whole repeated vector, not one flat element per repetition; write `rep(list(...), n)` for flat elements"
+      severity: warning

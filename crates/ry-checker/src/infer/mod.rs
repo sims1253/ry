@@ -1062,7 +1062,12 @@ impl Checker {
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
+                // A literal-FALSE body never runs: walk it for its
+                // bindings under the same dead-arm silence as `if`.
+                let outer_dead = self.in_dead_arm;
+                self.in_dead_arm |= matches!(cond, Expr::Logical(false, _));
                 self.walk_block(body, &mut inner, returns.as_deref_mut());
+                self.in_dead_arm = outer_dead;
                 let always_true = matches!(cond, Expr::Logical(true, _));
                 self.finish_loop(scope, inner, always_true, always_true);
             }

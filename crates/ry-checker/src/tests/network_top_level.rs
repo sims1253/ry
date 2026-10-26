@@ -90,6 +90,11 @@ fn ordinary_functions_defaults_and_deferred_connections_stay_quiet() {
 #[test]
 fn guarded_calls_stay_quiet() {
     for source in [
+        // Dead bodies never run.
+        "if (FALSE) utils::download.file('https://example.invalid/x', tempfile())",
+        "while (FALSE) utils::download.file('https://example.invalid/x', tempfile())",
+        // Vectorized `&` does not short-circuit: its rhs always runs
+        // and must warn (asserted separately below).
         "if (interactive()) utils::download.file('https://example.invalid/x', tempfile())",
         "if (isTRUE(getOption('mypkg.download'))) utils::download.file('https://example.invalid/x', tempfile())",
         "if (nzchar(Sys.getenv('MYPKG_DOWNLOAD'))) utils::download.file('https://example.invalid/x', tempfile())",
@@ -271,6 +276,24 @@ fn project_wrapper_called_at_top_level_warns_at_the_call() {
     assert_eq!(
         network_warnings(
             "fetch <- function() if (interactive()) utils::download.file('https://example.invalid/x', tempfile())\nfetch()"
+        ),
+        0
+    );
+}
+
+#[test]
+fn vectorized_and_rhs_still_warns() {
+    // `&` evaluates both operands: a network call in its rhs is not
+    // guarded by the probe on its lhs. Only `&&` guards the rhs.
+    assert_eq!(
+        network_warnings(
+            "if (getOption('x', FALSE) & utils::download.file('https://example.invalid/x', tempfile())) 1L"
+        ),
+        1
+    );
+    assert_eq!(
+        network_warnings(
+            "if (getOption('x', FALSE) && utils::download.file('https://example.invalid/x', tempfile())) 1L"
         ),
         0
     );

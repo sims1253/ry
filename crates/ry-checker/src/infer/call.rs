@@ -1863,6 +1863,16 @@ impl Checker {
             }
             (vec![values], vec![x, values])
         };
+        // `c()` dispatches on its first argument: a classed first
+        // sibling may route to a `c.foo` method that flattens or
+        // reorders, so the one-nested-element claim is unproven then.
+        // (For `append`, the first sibling is the `x` receiver.)
+        if let Some(first) = siblings.first()
+            && let Some(receiver_type) = self.peek_type(&args[*first].value, scope)
+            && !receiver_type.class.is_classless()
+        {
+            return;
+        }
         for candidate in candidates {
             let arg = &args[candidate];
             // A named `c()` element is a deliberate single named slot.

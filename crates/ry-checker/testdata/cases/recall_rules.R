@@ -646,3 +646,9 @@ spec$cols <- c(spec$cols, list(rep(3L, 2L)))
 ## case: RY127: a plain rep() sibling still proves flat elements
 # expect: RY127
 flat <- c(rep(1L, 2L), list(rep(3L, 2L)))
+
+## case: RY127: a classed first sibling may dispatch c() and is silent
+# no-diag
+c.foo <- function(...) list(1L)
+first <- structure(list(1L, 2L), class = "foo")
+dispatched <- c(first, list(rep(3L, 2L)))

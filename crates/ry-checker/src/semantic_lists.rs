@@ -356,6 +356,14 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
 /// Checked by R oracle: `is.environment()` holds for each zero-argument call.
 pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyenv", "baseenv"];
 
+/// Base numeric math functions recognized by RY100 (comparison inside
+/// a math call) and RY122 (deterministic operand inside a self-
+/// comparison): the single-argument `Math`-group primitives plus
+/// `round`, which take a numeric first argument.
+pub const BASE_MATH_FNS: &[&str] = &[
+    "abs", "sqrt", "exp", "log", "log2", "log10", "log1p", "floor", "ceiling", "round", "trunc",
+];
+
 /// Base calls that keep a `stopifnot()` scalar fact. Each one only reads
 /// its evaluated arguments: it takes no callback, quoted expression, or
 /// environment, and never dispatches to project code (fact creation refuses
@@ -454,6 +462,12 @@ pub fn registry() -> Vec<SemanticList> {
             items: FRAME_REFLECTION,
             check: CheckKind::ROracle,
             claim: "base, methods, or rlang functions that can reach a frame's promises without naming the formal",
+        },
+        SemanticList {
+            name: "BASE_MATH_FNS",
+            items: BASE_MATH_FNS,
+            check: CheckKind::TypeshedAgreement,
+            claim: "base single-argument numeric math functions recognized by RY100 and RY122",
         },
         SemanticList {
             name: "SCALAR_FACT_SAFE_CALLS",

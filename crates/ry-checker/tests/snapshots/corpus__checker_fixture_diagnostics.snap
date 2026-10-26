@@ -1947,6 +1947,32 @@ expression: snapshots
         start: 216
   fixture: err_switch_mixed.R
 - diagnostics:
+    - code: RY122
+      message: "both operands of `expect_equal()` are the same deterministic expression; the assertion does not check two different values"
+      severity: warning
+      span:
+        column: 59
+        end: 358
+        line: 5
+        start: 347
+    - code: RY122
+      message: "both operands of `expect_equal()` are the same deterministic expression; the assertion does not check two different values"
+      severity: warning
+      span:
+        column: 49
+        end: 517
+        line: 8
+        start: 495
+    - code: RY122
+      message: "both operands of `expect_identical()` are the same deterministic expression; the assertion does not check two different values"
+      severity: warning
+      span:
+        column: 43
+        end: 574
+        line: 9
+        start: 562
+  fixture: err_testthat_self_comparison.R
+- diagnostics:
     - code: RY080
       message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
       severity: error
@@ -2576,6 +2602,8 @@ expression: snapshots
   fixture: ok_t6_length_inference.R
 - diagnostics: []
   fixture: ok_testthat_block_scope.R
+- diagnostics: []
+  fixture: ok_testthat_self_comparison_controls.R
 - diagnostics: []
   fixture: ok_tidyselect_negative_string.R
 - diagnostics: []

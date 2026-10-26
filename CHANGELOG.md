@@ -19,6 +19,9 @@ All notable changes to ry are documented in this file.
   a newly created integer `NA` from an input `NA`, retains that fact for
   condition analysis, and stays quiet for unknown inputs and immediately
   repaired casts (#569).
+- Add RY122 for testthat equality assertions that compare a deterministic
+  expression to itself (`expect_equal(round(breaks$major, 3),
+  round(breaks$major, 3))`), which cannot check two different values (#572).
 - Set per-file rule severities with ordered `[[rule-overrides]]` tables in
   `ry.toml`, while keeping matching files in project analysis (#583).
 - Check a source buffer with `ry check - --stdin-filename PATH`. The buffer

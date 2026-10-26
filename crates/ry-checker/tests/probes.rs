@@ -333,6 +333,12 @@ static PROBES: &[Probe] = &[
         positive: "x <- c(0, 1e10)\ny <- as.integer(x)\n",
         negative: "x <- c(0, 2147483647.9)\ny <- as.integer(x)\n",
     },
+    Probe {
+        code: "RY122",
+        note: "testthat equality assertion comparing a deterministic expression to itself; effectful same-text operands stay silent",
+        positive: "f <- function(x) testthat::expect_equal(round(x, 3), round(x, 3))\ndf <- list(a = 1)\ntestthat::expect_identical(object = df$a, expected = df$a)\ntestthat::expect_equal(df$a, expecte = df$a)\ntestthat::expect_equal(log(round(1.5, 3)), log(round(1.5, 3)))\n",
+        negative: "testthat::expect_equal(rnorm(1), rnorm(1))\ntestthat::expect_equal(1, 1, expected = 2)\nx <- structure(list(a = 1), class = \"foo\")\ntestthat::expect_identical(x$a, x$a)\ny <- list(structure(1, class = \"bar\"))\ntestthat::expect_equal(round(y[[1]], 3), round(y[[1]], 3))\nw <- structure(list(a = 1), class = cl)\ntestthat::expect_equal(w$a, w$a)\ntestthat::expect_equal(log(round(1.5, 3)), round(1.5, 3))\n",
+    },
 ];
 
 #[test]

@@ -340,6 +340,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A report execution option cannot be determined statically; analysis stops at that chunk rather than guessing which later bindings exist.",
     },
+    Rule {
+        code: "RY122",
+        name: "testthat-self-comparison",
+        default_severity: Severity::Warning,
+        summary: "A resolved testthat `expect_equal()`/`expect_identical()` compares the same conservatively deterministic expression to itself, so it cannot check two different values. Silent for differing operands, RNG/time/I/O or unknown calls, masked assertion functions, and `$`/`[[` access whose receiver is not proven plain data.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

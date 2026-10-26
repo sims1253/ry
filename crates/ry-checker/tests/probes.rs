@@ -336,8 +336,8 @@ static PROBES: &[Probe] = &[
     Probe {
         code: "RY122",
         note: "testthat equality assertion comparing a deterministic expression to itself; effectful same-text operands stay silent",
-        positive: "f <- function(x) testthat::expect_equal(round(x, 3), round(x, 3))\n",
-        negative: "testthat::expect_equal(rnorm(1), rnorm(1))\n",
+        positive: "f <- function(x) testthat::expect_equal(round(x, 3), round(x, 3))\ndf <- list(a = 1)\ntestthat::expect_identical(object = df$a, expected = df$a)\n",
+        negative: "testthat::expect_equal(rnorm(1), rnorm(1))\ntestthat::expect_equal(1, 1, expected = 2)\nx <- structure(list(a = 1), class = \"foo\")\ntestthat::expect_identical(x$a, x$a)\n",
     },
 ];
 

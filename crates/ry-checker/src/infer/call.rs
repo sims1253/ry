@@ -1118,30 +1118,23 @@ impl Checker {
         matches!(grep_args[value_index].value, Expr::Logical(false, _))
     }
 
+    /// Base numeric math functions RY100 and RY122 both recognize.
+    const BASE_MATH_FNS: &[&str] = &[
+        "abs", "sqrt", "exp", "log", "log2", "log10", "log1p", "floor", "ceiling", "round", "trunc",
+    ];
+
     /// RY100: numeric math functions coerce logical comparisons to 0/1,
     /// which is almost always a misplaced parenthesis (`abs(x > y)` rather
     /// than `abs(x) > y`). Extra parentheses do not change the parsed
     /// argument, so deliberately parenthesized comparisons remain visible
     /// here.
     fn check_comparison_inside_math_fn(&mut self, lookup_name: &str, args: &[Arg]) {
-        if matches!(
-            lookup_name,
-            "abs"
-                | "sqrt"
-                | "exp"
-                | "log"
-                | "log2"
-                | "log10"
-                | "log1p"
-                | "floor"
-                | "ceiling"
-                | "round"
-                | "trunc"
-        ) && let Some(Expr::BinOp {
-            op,
-            span: comparison_span,
-            ..
-        }) = args.first().map(|arg| &arg.value)
+        if Self::BASE_MATH_FNS.contains(&lookup_name)
+            && let Some(Expr::BinOp {
+                op,
+                span: comparison_span,
+                ..
+            }) = args.first().map(|arg| &arg.value)
             && is_comparison(*op)
         {
             let message = "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead";
@@ -1247,12 +1240,11 @@ impl Checker {
     /// effects and ambient state, within RY122's narrow set.
     fn deterministic_operand(&self, expr: &Expr, scope: &Scope) -> bool {
         match expr {
-            Expr::Logical(..)
-            | Expr::Integer(..)
-            | Expr::Double(..)
-            | Expr::String(..)
-            | Expr::Null(..)
-            | Expr::Na(..) => true,
+            // `NA`/`NaN` constants are excluded: asserting a value is NA
+            // by comparing constants is a deliberate idiom, not the
+            // duplicated-expression typo this rule targets.
+            Expr::Logical(..) | Expr::Integer(..) | Expr::String(..) | Expr::Null(..) => true,
+            Expr::Double(value, _) => value.is_finite(),
             Expr::Ident { name, .. } => scope.get(name).is_some_and(|ty| {
                 !matches!(ty.mode, Mode::Function | Mode::Environment | Mode::Language)
             }),
@@ -1261,9 +1253,11 @@ impl Checker {
                 expr,
                 ..
             } => {
-                // A rebound unary `-` can return anything, including a
-                // fresh random value per call.
-                matches!(expr.as_ref(), Expr::Integer(..) | Expr::Double(..))
+                // Rebound `-` is excluded by `operator_rebound`; limiting
+                // the operand to finite numeric literals is deliberate
+                // extra conservatism (a non-literal `-x` stays silent).
+                (matches!(expr.as_ref(), Expr::Integer(..))
+                    || matches!(expr.as_ref(), Expr::Double(v, _) if v.is_finite()))
                     && !ops_chooser::operator_rebound(self, "-", scope)
             }
             Expr::Index {
@@ -1296,24 +1290,13 @@ impl Checker {
                 let Some(name) = ident_name(func) else {
                     return false;
                 };
-                matches!(
-                    crate::semantic_lists::bare_name(name),
-                    "abs"
-                        | "sqrt"
-                        | "exp"
-                        | "log"
-                        | "log2"
-                        | "log10"
-                        | "log1p"
-                        | "floor"
-                        | "ceiling"
-                        | "round"
-                        | "trunc" // Lenient (no search-path guard), like RY100's math-fn
-                                  // recognition: package test files run under an attached
-                                  // search path ry cannot prove, and the strict variant
-                                  // would silence the rule exactly where it applies. A
-                                  // lexical or project redefinition still stays silent.
-                ) && self.resolves_to_base_lenient(name, scope)
+                // Lenient (no search-path guard), like RY100's math-fn
+                // recognition: package test files run under an attached
+                // search path ry cannot prove, and the strict variant
+                // would silence the rule exactly where it applies. A
+                // lexical or project redefinition still stays silent.
+                Self::BASE_MATH_FNS.contains(&crate::semantic_lists::bare_name(name))
+                    && self.resolves_to_base_lenient(name, scope)
                     && args
                         .iter()
                         .all(|arg| self.deterministic_operand(&arg.value, scope))
@@ -1325,13 +1308,16 @@ impl Checker {
         }
     }
 
-    /// A `$` receiver ry has proven to be a plain (unclassed) list, so
-    /// `$` is base list access rather than a possible `$.foo` method.
+    /// A `$` receiver with list shape and no proven class, so `$` is
+    /// base list access rather than a known `$.foo` method. A proven
+    /// class (`structure(list(...), class = "foo")`) refuses; an
+    /// unknown class keeps list-origin evidence, the same accepted
+    /// uncertainty as an unknown-class parameter.
     fn plain_list_receiver(&self, name: &str, scope: &Scope) -> bool {
-        scope.has_list_origin(name)
-            || scope.get(name).is_some_and(|ty| {
-                matches!(ty.mode, Mode::List) && ty.class.known && ty.class.len == 0
-            })
+        scope.get(name).is_some_and(|ty| {
+            !ty.class.has_known_class()
+                && (matches!(ty.mode, Mode::List) || scope.has_list_origin(name))
+        })
     }
 
     /// A `[`/`[[` receiver proven to be plain data: an unclassed list
@@ -2405,32 +2391,23 @@ pub(crate) fn callee_name(func: &Expr) -> Option<String> {
     }
 }
 
-/// The two operands an `expect_equal`/`expect_identical` call compares:
-/// the first two positional arguments, or the exact `object`/`expected`
-/// named pair with no positional arguments. Partial names and mixed
-/// forms stay unclaimed rather than guessed.
+/// The two operands an `expect_equal`/`expect_identical` call compares,
+/// under R's argument matching (exact, partial, then positional).
 fn testthat_compared_operands(args: &[Arg]) -> Option<(&Arg, &Arg)> {
-    let named = |target: &str| {
-        let mut found = args
-            .iter()
-            .filter(|arg| arg.name.as_deref() == Some(target));
-        match (found.next(), found.next()) {
-            (Some(arg), None) => Some(arg),
-            _ => None,
-        }
-    };
-    if let (Some(object), Some(expected)) = (named("object"), named("expected")) {
-        return args
-            .iter()
-            .all(|arg| arg.name.is_some())
-            .then_some((object, expected));
-    }
-    match args {
-        [object, expected, ..] if object.name.is_none() && expected.name.is_none() => {
-            Some((object, expected))
-        }
-        _ => None,
-    }
+    // R's own matching, so an exact or partial `expected=` claims the
+    // formal ahead of a positional argument (`expect_equal(1, 1,
+    // expected = 2)` compares 1 with 2, not 1 with 1).
+    let matched = match_arguments(&["object", "expected", "..."], args);
+    let object = &args[matched.arg_for_param(0)?];
+    let expected = &args[matched.arg_for_param(1)?];
+    // A duplicated formal is a runtime error in R, not a comparison.
+    let duplicated = ["object", "expected"].iter().any(|target| {
+        args.iter()
+            .filter(|arg| arg.name.as_deref() == Some(target))
+            .count()
+            > 1
+    });
+    (!duplicated).then_some((object, expected))
 }
 
 /// Structural equivalence for RY122 operands, ignoring spans. Only the
@@ -2507,6 +2484,7 @@ fn reads_known_classed_ident(expr: &Expr, scope: &Scope) -> bool {
             base, kind, args, ..
         } => {
             reads_known_classed_ident(base, scope)
+                || proven_classed_element(base, *kind, args, scope)
                 || (*kind != IndexKind::Dollar
                     && args
                         .iter()
@@ -2518,6 +2496,33 @@ fn reads_known_classed_ident(expr: &Expr, scope: &Scope) -> bool {
         Expr::UnaryOp { expr, .. } => reads_known_classed_ident(expr, scope),
         _ => false,
     }
+}
+
+/// Whether a schema proves the extracted element itself classed (a
+/// `Math` method can then run arbitrary code). Unknown element types
+/// keep the receiver-only verdict, the same accepted uncertainty as
+/// an unknown-class function parameter.
+fn proven_classed_element(base: &Expr, kind: IndexKind, args: &[Arg], scope: &Scope) -> bool {
+    let Expr::Ident { name, .. } = base else {
+        return false;
+    };
+    let Some(schema) = scope.get(name).and_then(|ty| ty.columns.clone()) else {
+        return false;
+    };
+    let element = match (kind, args) {
+        (IndexKind::Dollar, [arg]) => arg.name.as_deref().and_then(|field| {
+            schema
+                .get(field)
+                .or_else(|| schema.unique_prefix_match(field))
+        }),
+        (IndexKind::Double, [arg]) => match &arg.value {
+            Expr::String(field, _) => schema.get(field),
+            Expr::Integer(index, _) => schema.get(&format!("[[{index}]]")),
+            _ => None,
+        },
+        _ => None,
+    };
+    element.is_some_and(|ty| ty.class.has_known_class())
 }
 
 fn foreach_iteration_bindings(expression: &Expr) -> Option<Vec<String>> {

@@ -19,3 +19,13 @@ masked_round <- function() {
   round <- function(x, digits = 0) rnorm(1)
   testthat::expect_equal(round(1.5, 3), round(1.5, 3))
 }
+# NA/NaN constant comparisons assert NA-ness deliberately, a named
+# `expected=` overrides the second positional, and a schema-proven
+# classed element can dispatch a Math method: all stay silent.
+constant_controls <- function() {
+  testthat::expect_equal(NaN, NaN)
+  testthat::expect_equal(NA_integer_, NA_integer_)
+  testthat::expect_equal(1, 1, expected = 2)
+  y <- list(a = structure(1, class = "bar"))
+  testthat::expect_equal(round(y$a, 3), round(y$a, 3))
+}

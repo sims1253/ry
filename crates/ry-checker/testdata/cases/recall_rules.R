@@ -656,3 +656,15 @@ dispatched <- c(first, list(rep(3L, 2L)))
 ## case: RY127: an unproven sibling rep count establishes nothing
 # no-diag
 f <- function(k) c(rep(list(1L), k), list(rep(3L, 2L)))
+
+## case: RY127: sibling length.out overrides a zero times
+# expect: RY127
+c(rep(list(1L), 0L, length.out = 3L), list(rep(3L, 2L)))
+
+## case: RY127: sibling length.out zero contributes nothing
+# no-diag
+c(rep(list(1L), 2L, length.out = 0L), list(rep(3L, 2L)))
+
+## case: RY127: unproven sibling length.out establishes nothing
+# no-diag
+f <- function(k) c(rep(list(1L), 0L, length.out = k), list(rep(3L, 2L)))

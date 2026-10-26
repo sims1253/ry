@@ -502,3 +502,13 @@ expression: rows
   diagnostics: []
 - case: "RY127: an unproven sibling rep count establishes nothing"
   diagnostics: []
+- case: "RY127: sibling length.out overrides a zero times"
+  diagnostics:
+    - code: RY127
+      line: 662
+      message: "`list(rep(...))` inside `c()` contributes one element holding the whole repeated vector, not one flat element per repetition; write `rep(list(...), n)` for flat elements"
+      severity: warning
+- case: "RY127: sibling length.out zero contributes nothing"
+  diagnostics: []
+- case: "RY127: unproven sibling length.out establishes nothing"
+  diagnostics: []

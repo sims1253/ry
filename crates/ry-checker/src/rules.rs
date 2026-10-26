@@ -380,7 +380,7 @@ pub const RULES: &[Rule] = &[
         code: "RY128",
         name: "invalid-diag-dimension",
         default_severity: Severity::Error,
-        summary: "A proven base `diag()` whose matrix dimension is proven invalid: a negative or `NA` `nrow`/`ncol`, or, with neither supplied, a length-one numeric `x` proven negative or `NA`, which `diag` reads as the dimension rather than a diagonal entry, so R errors (\"invalid 'nrow' value\"). Silent for vector `x` (diagonal entries), non-negative scalars, entries mode (a scalar `x` with `nrow=`/`ncol=` supplied), classed `x` that may dispatch to a `diag` method, and computed values ry cannot prove.",
+        summary: "A proven base `diag()` whose matrix dimension is proven invalid: a negative or `NA` `nrow`/`ncol`, or, with neither supplied, a length-one numeric `x` proven negative or `NA`, which `diag` reads as the dimension rather than a diagonal entry, so R errors (\"invalid 'nrow' value\"). Silent for vector `x` (diagonal entries), non-negative scalars, entries mode (a scalar `x` with any second argument supplied), classed `x` that may dispatch to a `diag` method, and computed values ry cannot prove.",
     },
 ];
 

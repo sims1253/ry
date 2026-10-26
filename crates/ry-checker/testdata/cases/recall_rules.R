@@ -705,5 +705,6 @@ diag(1L, nrow = -1L)
 ## case: RY128: entries mode and vector diagonals stay silent
 # no-diag
 diag(-1, nrow = 1L)
+diag(-1, names = FALSE)
 diag(c(-1, -2))
 diag(2L)

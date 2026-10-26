@@ -379,7 +379,7 @@ static PROBES: &[Probe] = &[
         code: "RY128",
         note: "diag() with a dimension proven negative or NA, as an explicit nrow/ncol or as the length-one x read as the dimension; entries mode, vector x, non-negative, classed, and computed forms stay silent",
         positive: "bad <- diag(-1L)\nbad2 <- diag(NA_integer_)\nbad3 <- diag(nrow = -1L)\nd <- -1L\nbad4 <- diag(d)\nbad5 <- diag(x = -1L)\nbad6 <- diag(mk(), nrow = -1L)\n",
-        negative: "ok <- diag(2L)\nentry <- diag(-1, nrow = 1L)\nentry2 <- diag(NA, ncol = 1L)\nvec <- diag(c(-1, -2))\nzero <- diag(0)\nsignonly <- function(d) diag(sign(d))\nmissingnrow <- diag(ncol = -1L)\n",
+        negative: "ok <- diag(2L)\nentry <- diag(-1, nrow = 1L)\nentry2 <- diag(NA, ncol = 1L)\nentry3 <- diag(-1, names = FALSE)\nvec <- diag(c(-1, -2))\nzero <- diag(0)\nsignonly <- function(d) diag(sign(d))\nmissingnrow <- diag(ncol = -1L)\n",
     },
 ];
 

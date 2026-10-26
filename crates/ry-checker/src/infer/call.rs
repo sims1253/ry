@@ -1518,8 +1518,10 @@ impl Checker {
                 return;
             }
         }
-        if arg_for(1).is_none()
-            && arg_for(2).is_none()
+        // R reads a length-one `x` as the dimension only when
+        // `nargs() == 1L`: any second actual (`names=` included,
+        // empty actuals retained) takes the entries path.
+        if args.len() == 1
             && let Some(x) = arg_for(0)
             && let Some(kind) = self.proven_invalid_dimension(&x.value, scope)
         {

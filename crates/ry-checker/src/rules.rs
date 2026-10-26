@@ -364,6 +364,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A proven base `ncol()`/`nrow()`/`dim()` call receives a definite function value (such as the search-path `utils::data` where a data variable was meant), so the result is always `NULL`. Also reported for the same shape inside a literal template argument to a proven cli message function (`cli_abort()` and siblings). Silent for data or unknown arguments, masked callees, classed function values, dynamic templates, and cli calls carrying `.envir`.",
     },
+    Rule {
+        code: "RY127",
+        name: "nested-rep-in-concat",
+        default_severity: Severity::Warning,
+        summary: "`list(rep(v, n))` inside a proven base `c()`/`append()` contributes one element holding the whole repeated vector, not `n` flat elements, when every sibling element is proven to be the same classless atomic type as `v`. Write `rep(list(v), n)`. Silent for standalone `list(rep(...))`, the `rep(list(v), n)` form, `n` proven at most 1, list, classed, or unknown element types, and masked `c`/`append`/`list`/`rep` callees.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

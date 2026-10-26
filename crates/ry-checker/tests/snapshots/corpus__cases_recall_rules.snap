@@ -462,3 +462,31 @@ expression: rows
   diagnostics: []
 - case: negation before a comparison of a call is not diagnosed
   diagnostics: []
+- case: "RY127: nested list(rep()) appended to a flat list through a $ receiver"
+  diagnostics:
+    - code: RY127
+      line: 592
+      message: "`list(rep(...))` inside `c()` contributes one element holding the whole repeated vector, not one flat element per repetition; write `rep(list(...), n)` for flat elements"
+      severity: warning
+- case: "RY127: nested list(rep()) as append() values"
+  diagnostics:
+    - code: RY127
+      line: 597
+      message: "`list(rep(...))` inside `append()` contributes one element holding the whole repeated vector, not one flat element per repetition; write `rep(list(...), n)` for flat elements"
+      severity: warning
+- case: "RY127: the flat rep(list()) form is silent"
+  diagnostics: []
+- case: "RY127: standalone list(rep()) outside c()/append() is silent"
+  diagnostics: []
+- case: "RY127: a count proven to be 1 is silent"
+  diagnostics: []
+- case: "RY127: a repeated list value is silent"
+  diagnostics: []
+- case: "RY127: an unknown repeated value is silent"
+  diagnostics: []
+- case: "RY127: a masked rep() is silent"
+  diagnostics: []
+- case: "RY127: recursive c() is silent"
+  diagnostics: []
+- case: "RY127: heterogeneous sibling elements are silent"
+  diagnostics: []

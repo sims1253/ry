@@ -582,3 +582,57 @@ f <- function(x, y) if (!x == y) 1
 ## case: negation before a comparison of a call is not diagnosed
 # no-diag
 f <- function(v) if (!nchar(v) > 3) 1
+
+## case: RY127: nested list(rep()) appended to a flat list through a $ receiver
+# expect: RY127
+# The readr shape from #359 with provable element types: `spec$cols`
+# holds flat integer elements, so one nested repeated vector is wrong.
+cols <- list(1L, 2L)
+spec <- list(cols = cols)
+spec$cols <- c(spec$cols, list(rep(3L, 2L)))
+
+## case: RY127: nested list(rep()) as append() values
+# expect: RY127
+xs <- list(1L, 2L)
+ys <- append(xs, list(rep(3L, 2L)))
+
+## case: RY127: the flat rep(list()) form is silent
+# no-diag
+cols <- list(1L, 2L)
+spec <- list(cols = cols)
+spec$cols <- c(spec$cols, rep(list(3L), 2L))
+
+## case: RY127: standalone list(rep()) outside c()/append() is silent
+# no-diag
+alone <- list(rep(3L, 2L))
+
+## case: RY127: a count proven to be 1 is silent
+# no-diag
+xs <- list(1L, 2L)
+once <- c(xs, list(rep(3L, 1L)))
+
+## case: RY127: a repeated list value is silent
+# no-diag
+ys <- list(list(1L), list(2L))
+nested <- c(ys, list(rep(list(3L), 2L)))
+
+## case: RY127: an unknown repeated value is silent
+# no-diag
+mk <- function() 1L
+xs <- list(1L, 2L)
+unknown <- c(xs, list(rep(mk(), 2L)))
+
+## case: RY127: a masked rep() is silent
+# no-diag
+rep <- function(x, times) x
+xs <- list(1L, 2L)
+masked <- c(xs, list(rep(3L, 2L)))
+
+## case: RY127: recursive c() is silent
+# no-diag
+xs <- list(1L, 2L)
+flat <- c(xs, list(rep(3L, 2L)), recursive = TRUE)
+
+## case: RY127: heterogeneous sibling elements are silent
+# no-diag
+mixed <- c(list(1L, "a"), list(rep(3L, 2L)))

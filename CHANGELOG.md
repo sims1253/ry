@@ -25,6 +25,10 @@ All notable changes to ry are documented in this file.
 - Add RY122 for testthat equality assertions that compare a deterministic
   expression to itself (`expect_equal(round(breaks$major, 3),
   round(breaks$major, 3))`), which cannot check two different values (#572).
+- Add RY127 for `list(rep(v, n))` nested in a base `c()`/`append()` whose
+  sibling elements are proven flat values of `v`'s classless atomic type:
+  the shape contributes one element holding the whole repeated vector, not
+  `n` flat elements; write `rep(list(v), n)` (#359).
 - RY001 now reports an `if`/`while` condition that is a proven scalar
   `NA`: an `NA` literal (including the typed `NA_*_` constants), closed
   literal shapes over one (unary `!`/`-`, a comparison or `+`/`-`/`*`

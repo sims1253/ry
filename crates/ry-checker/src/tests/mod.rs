@@ -76,10 +76,10 @@ mod structure_constructor;
 
 mod deferred_calls;
 
+mod cli_templates;
 mod failed_namespace;
 mod integer_range;
 mod literal_conditions;
-mod cli_templates;
 mod missing_args;
 mod printf_provenance;
 mod s4_dispatch;

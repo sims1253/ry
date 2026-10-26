@@ -1417,6 +1417,13 @@ impl ProbeKind {
     pub(crate) fn catches_errors(self) -> bool {
         self == ProbeKind::Error
     }
+
+    /// Whether a finding of `severity` inside this probe demotes:
+    /// an error-catching probe demotes everything; a
+    /// warning-assertion probe demotes only non-error findings.
+    pub(crate) fn demotes(self, severity: Severity) -> bool {
+        self.catches_errors() || severity != Severity::Error
+    }
 }
 
 pub struct Checker {

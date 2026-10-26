@@ -144,8 +144,10 @@ impl Checker {
             // literal non-function handler (`NULL`, `NA`, `"x"`, `1`,
             // `TRUE`) catches nothing in R -- it errors as "attempt to
             // apply non-function" -- so it does not make `expr` a probe.
+            // A `condition` handler catches errors too (the parent
+            // class), so it asserts the same way.
             "tryCatch" => args.iter().any(|arg| {
-                arg.name.as_deref() == Some("error")
+                matches!(arg.name.as_deref(), Some("error" | "condition"))
                     && !matches!(
                         arg.value,
                         Expr::Missing(_)

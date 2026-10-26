@@ -72,10 +72,7 @@ pub fn append_diagnostics(
                 code,
                 record.message.clone(),
             );
-            if record
-                .probe
-                .is_some_and(|kind| kind.catches_errors() || severity != crate::Severity::Error)
-            {
+            if record.probe.is_some_and(|kind| kind.demotes(severity)) {
                 diagnostic.confidence = diagnostic.confidence.demote();
             }
             diagnostics.push(diagnostic);
@@ -536,12 +533,18 @@ impl crate::Checker {
         message: impl Into<String>,
     ) {
         let mut finding = DeclarationFinding::new(kind, &self.path, span, message);
-        finding.probe = self
+        // Prefer an error-catching probe when nested probes of both
+        // kinds contain the span; otherwise any containing probe.
+        let containing = self
             .assertion_probe_spans
             .iter()
-            .filter(|(probe, _)| probe.start <= span.start && span.end <= probe.end)
-            .map(|(_, kind)| *kind)
-            .max_by_key(|kind| kind.catches_errors());
+            .filter_map(|(probe, kind)| {
+                (probe.start <= span.start && span.end <= probe.end).then_some(*kind)
+            });
+        finding.probe = containing
+            .clone()
+            .find(|kind| kind.catches_errors())
+            .or_else(|| containing.into_iter().next());
         self.declaration_findings.push(finding);
     }
 

@@ -33,6 +33,8 @@ fn recognized_error_wrappers_demote_the_probe_one_tier() {
         "tryCatch(1 + \"\", error = function(e) NULL)\n",
         "base::tryCatch(expr = 1 + \"\", error = function(e) NULL)\n",
         "tryCatch(error = function(e) NULL, 1 + \"\")\n",
+        // A `condition` handler catches errors (the parent class).
+        "tryCatch(1 + \"\", condition = function(c) NULL)\n",
         "try(1 + \"\")\n",
         "base::try(expr = 1 + \"\", silent = TRUE)\n",
     ] {

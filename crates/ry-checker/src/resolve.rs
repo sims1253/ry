@@ -668,9 +668,7 @@ impl Checker {
     /// error, so a proven error inside it stays full confidence).
     pub(crate) fn probe_demotes(&self, span: Span, severity: Severity) -> bool {
         self.assertion_probe_spans.iter().any(|(probe, kind)| {
-            probe.start <= span.start
-                && span.end <= probe.end
-                && (kind.catches_errors() || severity != Severity::Error)
+            probe.start <= span.start && span.end <= probe.end && kind.demotes(severity)
         })
     }
 

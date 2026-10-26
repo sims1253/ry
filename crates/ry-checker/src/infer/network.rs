@@ -641,7 +641,7 @@ pub(crate) fn index_guarded_spans(
     // in its own frame — shadows it within its span. Applies to the
     // diverging `stop` and to the opt-in probes alike: a locally
     // defined `interactive()` is not an opt-in check.
-    const SHADOWED: [&str; 4] = ["stop", "interactive", "getOption", "Sys.getenv"];
+    let shadowed_heads = crate::semantic_lists::GUARD_SHADOWED_HEADS;
     let binds = |names: &std::collections::HashSet<String>, wanted: &str| {
         names
             .iter()
@@ -657,7 +657,7 @@ pub(crate) fn index_guarded_spans(
             _ => return ControlFlow::Continue(Descend::Into),
         };
         let body_assigned = assigned_names_in_body(body);
-        for wanted in SHADOWED {
+        for wanted in shadowed_heads.iter().copied() {
             if params
                 .iter()
                 .any(|param| semantic_argument_name(&param.name) == wanted)

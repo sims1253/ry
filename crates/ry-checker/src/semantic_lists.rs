@@ -360,6 +360,12 @@ pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyen
 /// a math call) and RY122 (deterministic operand inside a self-
 /// comparison): the single-argument `Math`-group primitives plus
 /// `round`, which take a numeric first argument.
+/// Base heads whose bare spelling RY124's guard indexing trusts
+/// only unmasked: the diverging `stop` and the opt-in probes. A
+/// local or file-level binding of any of these names shadows the
+/// base meaning the guard logic relies on.
+pub const GUARD_SHADOWED_HEADS: &[&str] = &["stop", "interactive", "getOption", "Sys.getenv"];
+
 pub const BASE_MATH_FNS: &[&str] = &[
     "abs", "sqrt", "exp", "log", "log2", "log10", "log1p", "floor", "ceiling", "round", "trunc",
 ];
@@ -462,6 +468,12 @@ pub fn registry() -> Vec<SemanticList> {
             items: FRAME_REFLECTION,
             check: CheckKind::ROracle,
             claim: "base, methods, or rlang functions that can reach a frame's promises without naming the formal",
+        },
+        SemanticList {
+            name: "GUARD_SHADOWED_HEADS",
+            items: GUARD_SHADOWED_HEADS,
+            check: CheckKind::TypeshedAgreement,
+            claim: "base heads RY124 guard indexing trusts only when unmasked (diverging stop and opt-in probes)",
         },
         SemanticList {
             name: "BASE_MATH_FNS",

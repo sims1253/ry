@@ -392,15 +392,28 @@ impl Checker {
         let expr_index = matched.arg_for_param(0);
         // RY123: an `error` handler deliberately probes failure, so a
         // proven-failed namespace access inside `expr` is the caught
-        // error, not a missed fallback. Without an `error` handler the
+        // error, not a missed fallback. A `condition` handler catches
+        // errors too (the parent class). Without either handler the
         // error still propagates and the fact stays live. Only base
         // `tryCatch` installs handlers; a user function of that name
         // catches nothing. (A positional unnamed handler is not one:
         // R errors "condition handlers must be specified with a
-        // condition class".)
+        // condition class"; a literal non-function handler errors as
+        // "attempt to apply non-function" and catches nothing.)
         let has_error_handler = self.resolves_to_base("tryCatch", scope)
             && args.iter().enumerate().any(|(i, a)| {
-                a.name.as_deref() == Some("error") && matched.param_for_arg[i].is_none()
+                matches!(a.name.as_deref(), Some("error" | "condition"))
+                    && matched.param_for_arg[i].is_none()
+                    && !matches!(
+                        a.value,
+                        Expr::Missing(_)
+                            | Expr::Null(_)
+                            | Expr::Na(..)
+                            | Expr::Logical(..)
+                            | Expr::Integer(..)
+                            | Expr::Double(..)
+                            | Expr::String(..)
+                    )
             });
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {

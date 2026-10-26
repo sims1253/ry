@@ -215,3 +215,15 @@ fn quoted_package_containing_triple_colon_keys_on_double_colon() {
         "`:::` <- function(pkg, name) 1L\nif (!requireNamespace(\"a:::b\")) { y <- `a:::b`::thing } else { y <- 1L }\n"
     ));
 }
+
+#[test]
+fn condition_handler_probes_and_literal_handlers_do_not() {
+    // `condition` is the parent class of `error`: it catches too.
+    assert!(!warns_ry123(
+        "page <- if (!requireNamespace(\"pkgx\")) tryCatch(pkgx::thing, condition = function(c) 1L) else 2L\n"
+    ));
+    // A literal non-function handler catches nothing in R.
+    assert!(warns_ry123(
+        "page <- if (!requireNamespace(\"pkgx\")) tryCatch(pkgx::thing, error = NULL) else 2L\n"
+    ));
+}

@@ -15,12 +15,26 @@ impl Checker {
     ) -> RType {
         // R fixes the call head before promises can mutate its binding,
         // so an error-assertion wrapper (#344) is recognized here too.
-        // Invariant: the push below is balanced by the pop at the end of
-        // this function — keep the body free of early returns.
+        // The wrapper owns the probe push/pop so early returns in the
+        // body cannot leak a span onto the stack.
         let probe = self.error_probe_span(func, args, scope);
         if let Some(probe) = probe {
             self.error_probe_spans.push(probe);
         }
+        let result = self.infer_call_body(func, args, scope, span);
+        if probe.is_some() {
+            self.error_probe_spans.pop();
+        }
+        result
+    }
+
+    fn infer_call_body(
+        &mut self,
+        func: &Expr,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+    ) -> RType {
         if self.capture_references {
             self.enable_eager_reference_argument(func, args, scope, span);
         }
@@ -47,9 +61,6 @@ impl Checker {
         self.apply_call_effect(&effect, scope);
         if !pure {
             scope.invalidate_ops_environment();
-        }
-        if probe.is_some() {
-            self.error_probe_spans.pop();
         }
         result
     }

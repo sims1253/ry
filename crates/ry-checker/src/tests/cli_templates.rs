@@ -257,3 +257,15 @@ fn package_data_mask_verbs_inside_templates_stay_silent() {
     let diags = check("f <- function(df) cli::cli_text(\"{dplyr::mutate(df, n = ncol(data))}\")\n");
     assert!(diags.iter().all(|d| d.code != "RY125"), "{diags:?}");
 }
+
+#[test]
+fn multiline_template_hit_span_maps_line_and_column() {
+    let source = "f <- function(x) cli::cli_abort(\"first line\nsecond {ncol(data)} end\")\n";
+    let diags = check(source);
+    let hit = diags.iter().find(|d| d.code == "RY125").unwrap();
+    let slice = source
+        .get(hit.span.start..hit.span.end)
+        .unwrap_or_else(|| panic!("span {:?} not on char boundaries", hit.span));
+    assert_eq!(slice, "{ncol(data)}");
+    assert_eq!((hit.span.line, hit.span.col), (1, 7));
+}

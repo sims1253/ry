@@ -1473,9 +1473,10 @@ impl Checker {
             }
             if arg.name.is_none() {
                 // On the rlang-backed message functions a second
-                // positional string binds `class`, not a bullet; the
-                // multi-bullet form is the `c(...)` vector in the
-                // first position.
+                // positional string is not a template: it falls into
+                // `...` and is forwarded un-interpolated (binding
+                // `class` in `rlang::abort`); the multi-bullet form
+                // is the `c(...)` vector in the first position.
                 if positional > 0 && matches!(lookup_name, "cli_abort" | "cli_warn" | "cli_inform")
                 {
                     continue;
@@ -1615,14 +1616,17 @@ impl Checker {
         collect_hits: bool,
         hits: &mut Vec<(String, String, Span)>,
     ) -> bool {
+        let may_rebind_textually = ["<-", "=", "assign", "for"]
+            .iter()
+            .any(|hint| region.contains(hint));
         let Ok(file) = parser.parse("<cli-template>", region) else {
-            return region.contains("<-");
+            return may_rebind_textually;
         };
         if !file.parse_errors.is_empty() {
             // An unparseable region may still rebind a name later
             // regions resolve; without a parse, a textual assignment
             // operator is treated as shadowing (conservative silence).
-            return region.contains("<-");
+            return may_rebind_textually;
         }
         let mut rebinds = false;
         let mut found: Vec<(String, String, Span)> = Vec::new();
@@ -1742,7 +1746,7 @@ impl Checker {
         match expr {
             Expr::Function { .. } => Some("a function literal".to_string()),
             Expr::Ident { name, .. } => {
-                if let Some((pkg, member)) = qualified_parts(name) {
+                if let Some((pkg, member)) = crate::resolve::split_qualified(name) {
                     let known = if crate::resolve::BASE_DATABASE_PACKAGES.contains(&pkg) {
                         self.typeshed.functions.contains_key(member)
                     } else {
@@ -2951,12 +2955,6 @@ fn dimensional_argument(args: &[Arg]) -> Option<&Arg> {
     let matched = match_arguments(&["x"], args);
     let arg = &args[matched.arg_for_param(0)?];
     (!matches!(arg.value, Expr::Missing(_))).then_some(arg)
-}
-
-/// (`package`, `member`) of a `pkg::member` / `pkg:::member` name.
-fn qualified_parts(name: &str) -> Option<(&str, &str)> {
-    let (pkg, member) = name.rsplit_once("::")?;
-    Some((pkg.trim_end_matches(':'), member))
 }
 
 /// Expression regions of a cli/glue template: the contents of every

@@ -343,7 +343,7 @@ static PROBES: &[Probe] = &[
         code: "RY123",
         note: "access on the proven failed requireNamespace branch",
         positive: "page <- if (!requireNamespace(\"bslib\", quietly = TRUE)) bslib::page_fluid else shiny::fluidPage\n",
-        negative: "page <- if (requireNamespace(\"bslib\", quietly = TRUE)) bslib::page_fluid else shiny::fluidPage\n",
+        negative: "page <- if (requireNamespace(\"bslib\", quietly = TRUE)) bslib::page_fluid else shiny::fluidPage\nf <- function(p) if (!requireNamespace(p)) bslib::page_fluid else 1L\npage2 <- if (!requireNamespace(\"bslib\")) tryCatch(bslib::page_fluid, error = function(e) 1L) else 2L\n",
     },
 ];
 

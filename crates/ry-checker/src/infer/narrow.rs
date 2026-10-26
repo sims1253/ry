@@ -1338,10 +1338,10 @@ impl Checker {
         let Some((package, _)) = crate::resolve::split_qualified(name) else {
             return;
         };
-        let operator = if name.contains(":::") { ":::" } else { "::" };
         if !scope.failed_namespaces.contains(package) {
             return;
         }
+        let operator = if name.contains(":::") { ":::" } else { "::" };
         if ops_chooser::operator_rebound(self, operator, scope) {
             return;
         }

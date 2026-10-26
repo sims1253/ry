@@ -171,7 +171,7 @@ impl Checker {
             Some(inner)
         };
         let reaches = exits.is_some() && !(always_true && !has_transfer && body_unreachable);
-        if let Some(exit) = exits {
+        if let Some(mut exit) = exits {
             // A failed-namespace fact survives the loop only if the
             // joined exit state still holds it (and, for a loop that may
             // not run at all, the entry state held it too).
@@ -179,7 +179,7 @@ impl Checker {
                 // Sound wholesale because the fact keys on a literal
                 // package name: any iteration that could load it cleared
                 // it from the joined exit state.
-                scope.failed_namespaces = exit.failed_namespaces.clone();
+                scope.failed_namespaces = std::mem::take(&mut exit.failed_namespaces);
             } else {
                 scope
                     .failed_namespaces

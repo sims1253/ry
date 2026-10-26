@@ -1272,6 +1272,10 @@ impl Checker {
         cond: &Expr,
         scope: &Scope,
     ) -> Option<(String, bool)> {
+        // Rebound-ness of `!` cannot change while unrolling it.
+        if ops_chooser::operator_rebound(self, "!", scope) {
+            return None;
+        }
         let mut negated = false;
         let mut test = cond;
         while let Expr::UnaryOp {
@@ -1280,9 +1284,6 @@ impl Checker {
             ..
         } = test
         {
-            if ops_chooser::operator_rebound(self, "!", scope) {
-                return None;
-            }
             negated = !negated;
             test = expr;
         }

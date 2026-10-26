@@ -414,6 +414,12 @@ impl Checker {
                             | Expr::Double(..)
                             | Expr::String(..)
                     )
+                    // An identifier bound to a proven non-function
+                    // value is the same non-handler as a literal one.
+                    && !matches!(&a.value, Expr::Ident { name, .. }
+                        if scope.get(name).is_some_and(|ty| {
+                            !ty.mode.may_be_function()
+                        }))
             });
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {

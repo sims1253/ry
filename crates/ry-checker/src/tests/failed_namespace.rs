@@ -236,3 +236,16 @@ fn user_infix_spelling_is_not_a_namespace_access() {
         "`%::%` <- function(a, b) a\nif (!requireNamespace(\"%\")) { y <- 1L %::% 2L } else { y <- 1L }\n"
     ));
 }
+
+#[test]
+fn non_function_handler_binding_does_not_probe() {
+    // A handler name bound to a proven non-function value catches
+    // nothing in R, exactly like a literal non-function handler.
+    assert!(warns_ry123(
+        "h <- 1L\npage <- if (!requireNamespace(\"pkgx\")) tryCatch(pkgx::thing, error = h) else 2L\n"
+    ));
+    // A function-valued handler name still probes.
+    assert!(!warns_ry123(
+        "h <- function(e) 1L\npage <- if (!requireNamespace(\"pkgx\")) tryCatch(pkgx::thing, error = h) else 2L\n"
+    ));
+}

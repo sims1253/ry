@@ -693,3 +693,17 @@ c(x[[1L]], list(rep(3L, 2L)))
 # expect: RY127
 x <- list(a = "a", 1L)
 c(x[[2L]], list(rep(3L, 2L)))
+
+## case: RY128: a proven negative scalar diag() dimension errors
+# expect: RY128
+diag(-1L)
+
+## case: RY128: an explicit negative nrow errors
+# expect: RY128
+diag(1L, nrow = -1L)
+
+## case: RY128: entries mode and vector diagonals stay silent
+# no-diag
+diag(-1, nrow = 1L)
+diag(c(-1, -2))
+diag(2L)

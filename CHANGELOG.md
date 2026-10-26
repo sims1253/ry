@@ -33,6 +33,12 @@ All notable changes to ry are documented in this file.
   sibling elements are proven flat values of `v`'s classless atomic type:
   the shape contributes one element holding the whole repeated vector, not
   `n` flat elements; write `rep(list(v), n)` (#359).
+- Add RY128 for `diag()` calls whose matrix dimension is proven invalid:
+  a negative or `NA` `nrow`/`ncol`, or, with neither supplied, a length-one
+  numeric `x` proven negative or `NA`, which `diag` reads as the dimension
+  rather than a diagonal entry (GPArotation's scalar `diag(d)` defect), so
+  R errors before any matrix is built. Vector `x`, entries mode, classed
+  `x`, and computed signs such as `diag(sign(...))` stay silent (#320).
 - RY001 now reports an `if`/`while` condition that is a proven scalar
   `NA`: an `NA` literal (including the typed `NA_*_` constants), closed
   literal shapes over one (unary `!`/`-`, a comparison or `+`/`-`/`*`

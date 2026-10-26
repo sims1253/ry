@@ -82,6 +82,10 @@ fn ordinary_functions_defaults_and_deferred_connections_stay_quiet() {
         "con <- base::url('https://example.invalid/x', open = mode)",
         // A nested closure in a load hook runs only when called.
         ".onLoad <- function(libname, pkgname) { later <- function() utils::download.file('https://example.invalid/x', tempfile()) }",
+        // An ordinary function defined after the hook is not the hook:
+        // the load-hook frame is popped when the hook body exits, so a
+        // same-depth later function is not load-time code.
+        ".onLoad <- function(libname, pkgname) NULL\nfetch <- function() utils::download.file('https://example.invalid/x', tempfile())",
     ] {
         assert_eq!(network_warnings(source), 0, "{source}");
     }

@@ -109,3 +109,11 @@ fn named_atomic_receivers_and_seq_endpoint_defaults() {
     assert_eq!(mixed_sign_errors("x <- 1:9; x[seq(to = 2)]"), 0);
     assert_eq!(mixed_sign_errors("x <- 1:9; x[seq(3)]"), 0);
 }
+
+#[test]
+fn seq2_requires_both_endpoints() {
+    // rlang::seq2 has no defaults: a missing endpoint errors in R
+    // instead of producing a straddling sequence.
+    assert_eq!(mixed_sign_errors("x <- 1:9\nx[rlang::seq2(-1)]\n"), 0);
+    assert_eq!(mixed_sign_errors("x <- 1:9\nx[rlang::seq2(to = 1)]\n"), 0);
+}

@@ -561,13 +561,18 @@ impl Checker {
                         ) {
                             return None;
                         }
+                        const FROM: usize = 0;
+                        const TO: usize = 1;
+                        const BY: usize = 2;
+                        const LENGTH_OUT: usize = 3;
+                        const ALONG_WITH: usize = 4;
                         let matched = match_arguments(
                             &["from", "to", "by", "length.out", "along.with", "..."],
                             args,
                         );
                         if !matched.is_one_to_one()
-                            || matched.arg_for_param(3).is_some()
-                            || matched.arg_for_param(4).is_some()
+                            || matched.arg_for_param(LENGTH_OUT).is_some()
+                            || matched.arg_for_param(ALONG_WITH).is_some()
                         {
                             return None;
                         }
@@ -575,19 +580,23 @@ impl Checker {
                         // documented default 1 (`seq(to = -1)` is
                         // `1:-1`; a lone endpoint produces `1:x` the
                         // other way round, same sign set).
-                        let endpoint = |param: usize| -> Option<i64> {
-                            match matched.arg_for_param(param) {
-                                Some(arg) => self.proven_integral_endpoint(
-                                    &args[arg].value,
-                                    scope,
-                                    allow_ident_endpoints,
-                                ),
-                                None => Some(1),
-                            }
-                        };
-                        let from = endpoint(0)?;
-                        let to = endpoint(1)?;
-                        let last = match matched.arg_for_param(2) {
+                        let from = self.seq_endpoint(
+                            &matched,
+                            args,
+                            FROM,
+                            scope,
+                            allow_ident_endpoints,
+                            Some(1),
+                        )?;
+                        let to = self.seq_endpoint(
+                            &matched,
+                            args,
+                            TO,
+                            scope,
+                            allow_ident_endpoints,
+                            Some(1),
+                        )?;
+                        let last = match matched.arg_for_param(BY) {
                             Some(by_arg) => {
                                 let by = self.proven_integral_endpoint(
                                     &args[by_arg].value,
@@ -613,28 +622,51 @@ impl Checker {
                         if !matched.is_one_to_one() {
                             return None;
                         }
-                        // An unsupplied endpoint takes seq.default's
-                        // documented default 1 (`seq(to = -1)` is
-                        // `1:-1`; a lone endpoint produces `1:x` the
-                        // other way round, same sign set).
-                        let endpoint = |param: usize| -> Option<i64> {
-                            match matched.arg_for_param(param) {
-                                Some(arg) => self.proven_integral_endpoint(
-                                    &args[arg].value,
-                                    scope,
-                                    allow_ident_endpoints,
-                                ),
-                                None => Some(1),
-                            }
-                        };
-                        let from = endpoint(0)?;
-                        let to = endpoint(1)?;
+                        // rlang::seq2 has no endpoint defaults: a
+                        // missing endpoint errors in R, so both are
+                        // required here.
+                        let from = self.seq_endpoint(
+                            &matched,
+                            args,
+                            0,
+                            scope,
+                            allow_ident_endpoints,
+                            None,
+                        )?;
+                        let to = self.seq_endpoint(
+                            &matched,
+                            args,
+                            1,
+                            scope,
+                            allow_ident_endpoints,
+                            None,
+                        )?;
                         (from < 0 && to > 0).then_some((from, to))
                     }
                     _ => None,
                 }
             }
             _ => None,
+        }
+    }
+
+    /// One proven sequence endpoint from a matched call: the
+    /// argument bound to `param`, or `default` when unsupplied
+    /// (`None` default = the endpoint is required).
+    fn seq_endpoint(
+        &self,
+        matched: &super::args::ArgumentMatch,
+        args: &[Arg],
+        param: usize,
+        scope: &Scope,
+        allow_ident_endpoints: bool,
+        default: Option<i64>,
+    ) -> Option<i64> {
+        match matched.arg_for_param(param) {
+            Some(arg) => {
+                self.proven_integral_endpoint(&args[arg].value, scope, allow_ident_endpoints)
+            }
+            None => default,
         }
     }
 

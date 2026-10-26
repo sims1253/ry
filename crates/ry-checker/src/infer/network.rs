@@ -130,8 +130,12 @@ pub(crate) fn load_context_file(path: &str, is_package_r: bool) -> bool {
     if is_package_r {
         return true;
     }
+    // Callers may hand over a path spelled with the other platform's
+    // separators (an LSP client on Windows, a stored fixture path);
+    // component matching is done on the normalized spelling.
+    let normalized = path.replace('\\', "/");
     let is_component = |needle: &str| {
-        std::path::Path::new(path)
+        std::path::Path::new(&normalized)
             .components()
             .filter_map(|component| component.as_os_str().to_str())
             .any(|component| component == needle)
@@ -320,13 +324,14 @@ impl Checker {
             let member = crate::semantic_lists::bare_name(semantic_argument_name(name));
             // Deferred execution: the arguments of these heads are
             // captured as language/promises, not evaluated by the call.
-            let deferred = matches!(
+            let deferred = (matches!(
                 member,
-                "quote" | "delayedAssign" | "substitute" | "expression"
-            ) && match Callee::parse(name) {
-                Callee::Bare(_) => true,
-                Callee::Qualified { package, .. } => package.trim_end_matches(':') == "base",
-            };
+                "quote" | "bquote" | "delayedAssign" | "substitute" | "expression"
+            ) || crate::semantic_lists::is_quoting_form(member))
+                && match Callee::parse(name) {
+                    Callee::Bare(_) => true,
+                    Callee::Qualified { package, .. } => package.trim_end_matches(':') == "base",
+                };
             if deferred {
                 return ControlFlow::Continue(Descend::Skip);
             }
@@ -401,6 +406,73 @@ fn probe_call_name(expr: &Expr, masked: &dyn Fn(&str, Span) -> bool) -> Option<&
     Some(probe)
 }
 
+/// The fallback a probe call returns when the setting is absent:
+/// `getOption(x, default)`'s `default`, `Sys.getenv(x, unset)`'s
+/// `unset`. Resolved narrowly (exact formal name, else second
+/// positional — R's exact pass runs before position, partial names
+/// are not resolved here and keep the older behavior). A probe
+/// whose fallback already satisfies the shape's positive test runs
+/// the guarded arm with no opt-in at all, so it establishes
+/// nothing; only literal fallbacks are read, others are not
+/// guessed at either way.
+fn probe_fallback<'a>(expr: &'a Expr, probe: &str) -> Option<&'a Expr> {
+    let Expr::Call { args, .. } = expr else {
+        return None;
+    };
+    let formal = match probe {
+        "getOption" => "default",
+        "Sys.getenv" => "unset",
+        _ => return None,
+    };
+    if let Some(named) = args.iter().find(|arg| arg.name.as_deref() == Some(formal)) {
+        return Some(&named.value);
+    }
+    args.iter()
+        .filter(|arg| arg.name.is_none())
+        .nth(1)
+        .map(|arg| &arg.value)
+}
+
+/// How a guard shape tests a probe value; a literal fallback that
+/// passes the shape's own test defeats establishment.
+#[derive(Clone, Copy)]
+enum ProbeShape {
+    /// `if (probe)`: R coerces with `as.logical` (nonzero numbers
+    /// and the strings `as.logical` maps to `TRUE` pass).
+    Direct,
+    /// `isTRUE(probe)`: only the logical scalar `TRUE` passes.
+    IsTrue,
+    /// `nzchar(Sys.getenv(...))`: any non-empty string passes.
+    Nzchar,
+}
+
+fn fallback_passes(expr: &Expr, probe: &str, shape: ProbeShape) -> bool {
+    let Some(default) = probe_fallback(expr, probe) else {
+        return false;
+    };
+    match (shape, default) {
+        (_, Expr::Logical(true, _)) => !matches!(shape, ProbeShape::Nzchar),
+        (ProbeShape::Direct, Expr::Integer(value, _)) => *value != 0,
+        (ProbeShape::Direct, Expr::Double(value, _)) => *value != 0.0,
+        (ProbeShape::Direct, Expr::String(value, _)) => {
+            matches!(value.as_str(), "T" | "TRUE" | "True" | "true")
+        }
+        (ProbeShape::Nzchar, Expr::String(value, _)) => !value.is_empty(),
+        _ => false,
+    }
+}
+
+/// Whether two literals compare equal under R's `==` for the kinds
+/// `equality_established` reasons about: same-kind logicals and
+/// strings only.
+fn literals_equal(left: &Expr, right: &Expr) -> bool {
+    match (left, right) {
+        (Expr::Logical(a, _), Expr::Logical(b, _)) => a == b,
+        (Expr::String(a, _), Expr::String(b, _)) => a == b,
+        _ => false,
+    }
+}
+
 /// Whether an equality between a probe call and a literal, holding
 /// exactly when `eq_holds`, establishes the opt-in. Only literals whose
 /// comparison pins the probe's positive value count: `TRUE`, a
@@ -414,13 +486,23 @@ fn equality_established(
     eq_holds: bool,
     masked: &dyn Fn(&str, Span) -> bool,
 ) -> bool {
-    let (probe, literal) = if let Some(probe) = probe_call_name(lhs, masked) {
-        (probe, rhs)
+    let (probe, probe_expr, literal) = if let Some(probe) = probe_call_name(lhs, masked) {
+        (probe, lhs, rhs)
     } else if let Some(probe) = probe_call_name(rhs, masked) {
-        (probe, lhs)
+        (probe, rhs, lhs)
     } else {
         return false;
     };
+    // If the probe's own fallback equals the compared literal, the
+    // equality already holds with the setting absent
+    // (`Sys.getenv("X", "true") == "true"`), so the equality arm is
+    // not an opt-in. The inequality arm still proves the value
+    // differs from the fallback.
+    if eq_holds
+        && probe_fallback(probe_expr, probe).is_some_and(|default| literals_equal(default, literal))
+    {
+        return false;
+    }
     match literal {
         Expr::Logical(true, _) => eq_holds,
         Expr::Logical(false, _) => !eq_holds && probe == "interactive",
@@ -463,8 +545,8 @@ fn probe_established(expr: &Expr, when_true: bool, masked: &dyn Fn(&str, Span) -
             ..
         } => equality_established(lhs, rhs, !when_true, masked),
         Expr::Call { func, args, .. } => {
-            if probe_call_name(expr, masked).is_some() {
-                return when_true;
+            if let Some(probe) = probe_call_name(expr, masked) {
+                return when_true && !fallback_passes(expr, probe, ProbeShape::Direct);
             }
             // A bare wrapper head masked by a local binding is not
             // base's predicate and establishes nothing.
@@ -477,14 +559,17 @@ fn probe_established(expr: &Expr, when_true: bool, masked: &dyn Fn(&str, Span) -
             match base_call_member(func) {
                 Some("isTRUE") => {
                     when_true
-                        && args
-                            .first()
-                            .is_some_and(|arg| probe_call_name(&arg.value, masked).is_some())
+                        && args.first().is_some_and(|arg| {
+                            probe_call_name(&arg.value, masked).is_some_and(|probe| {
+                                !fallback_passes(&arg.value, probe, ProbeShape::IsTrue)
+                            })
+                        })
                 }
                 Some("nzchar") => {
                     when_true
                         && args.first().is_some_and(|arg| {
                             probe_call_name(&arg.value, masked) == Some("Sys.getenv")
+                                && !fallback_passes(&arg.value, "Sys.getenv", ProbeShape::Nzchar)
                         })
                 }
                 Some("identical") => {

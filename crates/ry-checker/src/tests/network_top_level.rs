@@ -386,3 +386,40 @@ fn file_shadowing_respects_source_order() {
         1
     );
 }
+
+#[test]
+fn enabling_probe_fallbacks_do_not_guard() {
+    // A fallback that already passes the guard's own test runs the
+    // arm with the setting absent: not an explicit opt-in.
+    for source in [
+        "if (isTRUE(getOption('mypkg.download', TRUE))) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (getOption('mypkg.download', TRUE)) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (nzchar(Sys.getenv('MYPKG_DOWNLOAD', 'yes'))) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (Sys.getenv('MYPKG_DOWNLOAD', 'true') == 'true') utils::download.file('https://example.invalid/x', tempfile())",
+        "if (getOption('mypkg.download', default = TRUE)) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (Sys.getenv('MYPKG_DOWNLOAD', unset = 'true') != 'true') 1L else utils::download.file('https://example.invalid/x', tempfile())",
+    ] {
+        assert_eq!(network_warnings(source), 1, "{source}");
+    }
+    // Disabling or non-enabling fallbacks keep the guard meaning:
+    // the unset value cannot take the arm.
+    for source in [
+        "if (isTRUE(getOption('mypkg.download', FALSE))) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (nzchar(Sys.getenv('MYPKG_DOWNLOAD', ''))) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (Sys.getenv('MYPKG_DOWNLOAD', 'false') == 'true') utils::download.file('https://example.invalid/x', tempfile())",
+        "if (Sys.getenv('MYPKG_DOWNLOAD', '') != '') utils::download.file('https://example.invalid/x', tempfile())",
+    ] {
+        assert_eq!(network_warnings(source), 0, "{source}");
+    }
+}
+
+#[test]
+fn quoted_wrapper_bodies_do_not_perform_network() {
+    for source in [
+        "fetch <- function() bquote(utils::download.file('https://example.invalid/x', tempfile()))\nfetch()",
+        "fetch <- function() ~utils::download.file('https://example.invalid/x', tempfile())\nfetch()",
+        "fetch <- function() { y ~ utils::download.file('https://example.invalid/x', tempfile()) }\nfetch()",
+    ] {
+        assert_eq!(network_warnings(source), 0, "{source}");
+    }
+}

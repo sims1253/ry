@@ -2001,6 +2001,10 @@ impl Checker {
         );
         self.network_guarded_spans.clear();
         self.network_wrapper_cache.clear();
+        // Push/pop-balanced per file today; reset anyway so an early
+        // unwind can never leak load-time framing into the next file.
+        self.load_hook_frames.clear();
+        self.lazy_context_depth = 0;
         self.network_load_context_file = infer::network::load_context_file(
             &self.path,
             self.package_facts.source_package.is_some(),

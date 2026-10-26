@@ -512,3 +512,17 @@ expression: rows
   diagnostics: []
 - case: "RY127: unproven sibling length.out establishes nothing"
   diagnostics: []
+- case: "RY127: a named \"[[02]]\" key does not shadow positional [[2]]"
+  diagnostics: []
+- case: "RY127: positional [[2]] past a named \"[[02]]\" key still proves"
+  diagnostics:
+    - code: RY127
+      line: 680
+      message: "`list(rep(...))` inside `c()` contributes one element holding the whole repeated vector, not one flat element per repetition; write `rep(list(...), n)` for flat elements"
+      severity: warning
+- case: "RY127: a double-spelled [[2]] sibling index proves the same slot"
+  diagnostics:
+    - code: RY127
+      line: 685
+      message: "`list(rep(...))` inside `c()` contributes one element holding the whole repeated vector, not one flat element per repetition; write `rep(list(...), n)` for flat elements"
+      severity: warning

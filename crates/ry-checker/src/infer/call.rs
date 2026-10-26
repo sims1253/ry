@@ -2130,35 +2130,52 @@ impl Checker {
                     return None;
                 }
                 let schema = receiver.columns?;
-                match &args[0].value {
-                    Expr::String(name, _) => schema.get(name),
-                    // Zero/negative indices (R's dropping semantics)
-                    // are deliberately unproven here.
-                    Expr::Integer(index, _) if *index >= 1 => {
-                        // `build_named_schema` keys positional
-                        // elements "[[i]]"; compare the key's digits
-                        // with the index instead of formatting one.
-                        schema
-                            .columns
-                            .iter()
-                            .find(|(key, _)| {
-                                key.strip_prefix("[[")
-                                    .and_then(|rest| rest.strip_suffix("]]"))
-                                    .and_then(|digits| digits.parse::<i64>().ok())
-                                    == Some(*index)
-                            })
-                            .map(|(_, ty)| ty.clone())
-                            .or_else(|| {
-                                // Width-checked: an index beyond usize
-                                // is unproven, never truncated.
-                                usize::try_from(*index)
-                                    .ok()
-                                    .and_then(|index| schema.columns.get(index - 1))
-                                    .map(|(_, ty)| ty.clone())
-                            })
+                // Zero/negative indices (R's dropping semantics)
+                // are deliberately unproven here. R's default
+                // spelling `x[[2]]` is a double literal, so an
+                // exactly-integral double within f64's exact
+                // integer range proves the same position.
+                let index = match &args[0].value {
+                    Expr::String(name, _) => return schema.get(name),
+                    Expr::Integer(index, _) if *index >= 1 => *index,
+                    Expr::Double(value, _)
+                        if *value >= 1.0
+                            && value.fract() == 0.0
+                            && *value <= 9_007_199_254_740_992.0 =>
+                    {
+                        *value as i64
                     }
-                    _ => None,
-                }
+                    _ => return None,
+                };
+                // `build_named_schema` keys positional elements
+                // "[[i]]" in canonical decimal; compare the key's
+                // digits with the index instead of formatting one.
+                // Only the canonical spelling matches: a *named*
+                // key like "[[02]]" or "[[+2]]" is a string name,
+                // which R's numeric `[[` never selects.
+                schema
+                    .columns
+                    .iter()
+                    .find(|(key, _)| {
+                        key.strip_prefix("[[")
+                            .and_then(|rest| rest.strip_suffix("]]"))
+                            .and_then(|digits| {
+                                let canonical = !digits.is_empty()
+                                    && digits.bytes().all(|byte| byte.is_ascii_digit())
+                                    && (digits.len() == 1 || !digits.starts_with('0'));
+                                canonical.then(|| digits.parse::<i64>().ok()).flatten()
+                            })
+                            == Some(index)
+                    })
+                    .map(|(_, ty)| ty.clone())
+                    .or_else(|| {
+                        // Width-checked: an index beyond usize
+                        // is unproven, never truncated.
+                        usize::try_from(index)
+                            .ok()
+                            .and_then(|index| schema.columns.get(index - 1))
+                            .map(|(_, ty)| ty.clone())
+                    })
             }
             Expr::Call { func, args, .. } if self.is_base_call(func, "list", scope) => {
                 let length = known_length(args.len());

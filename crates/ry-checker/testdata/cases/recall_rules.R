@@ -668,3 +668,18 @@ c(rep(list(1L), 2L, length.out = 0L), list(rep(3L, 2L)))
 ## case: RY127: unproven sibling length.out establishes nothing
 # no-diag
 f <- function(k) c(rep(list(1L), 0L, length.out = k), list(rep(3L, 2L)))
+
+## case: RY127: a named "[[02]]" key does not shadow positional [[2]]
+# no-diag
+x <- list("[[02]]" = 3L, "a")
+c(x[[2L]], list(rep(3L, 2L)))
+
+## case: RY127: positional [[2]] past a named "[[02]]" key still proves
+# expect: RY127
+x <- list("[[02]]" = "a", 1L)
+c(x[[2L]], list(rep(3L, 2L)))
+
+## case: RY127: a double-spelled [[2]] sibling index proves the same slot
+# expect: RY127
+x <- list(1L, 3L)
+c(x[[2]], list(rep(3L, 2L)))

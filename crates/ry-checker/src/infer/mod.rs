@@ -1542,6 +1542,7 @@ impl Checker {
                 // is not rebound: `` `-` <- function(e1) ... `` can turn
                 // `-1` into a classed value whose `Ops` method decides
                 // the comparison or arithmetic.
+                let neg_rebound = ops_chooser::operator_rebound(self, "-", scope);
                 let neg_ok = |operand: &Expr| {
                     !matches!(
                         operand,
@@ -1549,7 +1550,7 @@ impl Checker {
                             op: UnaryOpKind::Neg,
                             ..
                         }
-                    ) || !ops_chooser::operator_rebound(self, "-", scope)
+                    ) || !neg_rebound
                 };
                 if is_comparison(*op) {
                     // Ordering a complex NA errors in the comparison

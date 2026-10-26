@@ -2062,7 +2062,13 @@ impl Checker {
                 ..
             } => {
                 let field = args.first()?.name.as_deref()?;
-                self.peek_type(base, scope)?.columns.as_ref()?.get(field)
+                let receiver = self.peek_type(base, scope)?;
+                // A classed receiver may dispatch `$.foo` and return
+                // something other than the recorded field.
+                if !receiver.class.is_classless() {
+                    return None;
+                }
+                receiver.columns.as_ref()?.get(field)
             }
             Expr::Index {
                 base,
@@ -2070,7 +2076,11 @@ impl Checker {
                 args,
                 ..
             } if args.len() == 1 && args[0].name.is_none() => {
-                let schema = self.peek_type(base, scope)?.columns?;
+                let receiver = self.peek_type(base, scope)?;
+                if !receiver.class.is_classless() {
+                    return None;
+                }
+                let schema = receiver.columns?;
                 match &args[0].value {
                     Expr::String(name, _) => schema.get(name),
                     Expr::Integer(index, _) if *index >= 1 => {

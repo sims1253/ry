@@ -636,3 +636,9 @@ flat <- c(xs, list(rep(3L, 2L)), recursive = TRUE)
 ## case: RY127: heterogeneous sibling elements are silent
 # no-diag
 mixed <- c(list(1L, "a"), list(rep(3L, 2L)))
+
+## case: RY127: a classed $ receiver is silent
+# no-diag
+# $.foo may dispatch and return something other than the field.
+spec <- structure(list(cols = list(1L, 2L)), class = "foo")
+spec$cols <- c(spec$cols, list(rep(3L, 2L)))

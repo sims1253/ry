@@ -490,3 +490,5 @@ expression: rows
   diagnostics: []
 - case: "RY127: heterogeneous sibling elements are silent"
   diagnostics: []
+- case: "RY127: a classed $ receiver is silent"
+  diagnostics: []

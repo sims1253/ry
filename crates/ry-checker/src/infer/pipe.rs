@@ -361,6 +361,7 @@ impl Checker {
         if let Some(first) = args.first() {
             let selector = self.infer(&first.value, scope);
             self.emit_switch_expr_diagnostic(span_of(&first.value), &selector);
+            self.check_switch_authored_default_selector(&first.value, &selector, scope);
         }
         let mut alt_types: Vec<RType> = Vec::new();
         for a in args.iter().skip(1) {

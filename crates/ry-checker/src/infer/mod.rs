@@ -1265,10 +1265,16 @@ impl Checker {
         // argument and the body reads it: they are not load-time
         // execution for RY124, even at the top level of a file.
         self.lazy_context_depth += 1;
+        // The inferred default types are retained as authored
+        // evidence for the no-argument call path (see
+        // `EnclosingFormals::authored_defaults`); the binding
+        // types below must also cover supplied arguments.
+        let mut authored_defaults: FxMap<String, RType> = FxMap::default();
         for p in params {
             let t = match &p.default {
                 Some(e) => {
-                    let _ = self.infer(e, &mut default_scope);
+                    let inferred = self.infer(e, &mut default_scope);
+                    authored_defaults.insert(p.name.clone(), inferred);
                     function_name
                         .map(|function| {
                             self.diagnostic_parameter_type(function, span, p, params, e)
@@ -1316,6 +1322,9 @@ impl Checker {
             .push(index::nested_superassignment_writes(body));
         self.lazy_context_depth -= 1;
         self.push_enclosing_formals(params, span);
+        if let Some(frame) = self.enclosing_formals.last_mut() {
+            frame.authored_defaults = authored_defaults;
+        }
         // RY124: only a top-level `.onLoad`/`.onAttach` binding is a
         // package load hook; R calls those two names from the finished
         // namespace, so their bodies are load-time execution.
@@ -1805,6 +1814,61 @@ impl Checker {
     /// included), so naming accepted modes would understate the rule.
     /// Takes the already-extracted selector span: callers either have it
     /// (`Expr::Null`'s) or pass `span_of` of the selector expression.
+    /// The authored-default half of the `switch` selector check
+    /// (#323): a selector that is still the enclosing function's
+    /// defaulted formal (`scope.is_default_parameter` — a rebind,
+    /// `match.arg` included, clears that marker) takes the
+    /// default's value on the no-argument call path, so a default
+    /// whose length is proven not one errors there even though
+    /// supplied arguments keep the binding's own type opaque. A
+    /// selector already narrowed to length one needs no second
+    /// say. The frame lookup stops at the innermost function
+    /// whose formals contain the name, so an inner formal shadows
+    /// an outer default.
+    fn check_switch_authored_default_selector(
+        &mut self,
+        selector_expr: &Expr,
+        selector_type: &RType,
+        scope: &Scope,
+    ) {
+        let Expr::Ident { name, .. } = selector_expr else {
+            return;
+        };
+        if selector_type.length == Length::One
+            || switch_expr_length_rejected(selector_type)
+            || !scope.is_default_parameter(name)
+            // A write anywhere in an enclosing frame may have
+            // replaced the default before this read (a branch-local
+            // `type <- type[1L]` guard rejoins with the marker
+            // intact); only a never-written formal still holds it.
+            || self.frame_writes.iter().any(|writes| writes.may_write(name))
+        {
+            return;
+        }
+        let Some(default_type) = self.enclosing_formals.iter().rev().find_map(|frame| {
+            frame
+                .names
+                .contains(name)
+                .then(|| frame.authored_defaults.get(name))
+        }) else {
+            return;
+        };
+        let Some(default_type) = default_type else {
+            return;
+        };
+        if switch_expr_length_rejected(default_type) {
+            let name = semantic_argument_name(name);
+            self.emit(
+                Severity::Warning,
+                span_of(selector_expr),
+                "RY001",
+                format!(
+                    "`switch` EXPR is formal `{name}`, whose default is `{default_type}`, which is not a length-1 vector; calling without `{name}` errors with \"EXPR must be a length 1 vector\" (use `match.arg()` to select from the default)"
+                ),
+            );
+        }
+    }
+
     fn emit_switch_expr_diagnostic(&mut self, span: Span, selector_type: &RType) {
         if switch_expr_length_rejected(selector_type) {
             self.emit(
@@ -4258,6 +4322,7 @@ impl Checker {
                 .all(|parameter| parameter.default.as_ref().is_none_or(is_scalar_literal)),
             possible_default_writes,
             function_span,
+            authored_defaults: FxMap::default(),
         });
     }
 }

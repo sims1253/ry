@@ -371,6 +371,7 @@ impl Checker {
         self.check_testthat_self_comparison(&name, func, &semantic_name, &lookup_name, args, scope);
         self.check_dimensional_on_function(func, args, scope);
         self.check_cli_template(&name, func, &semantic_name, &lookup_name, args, scope);
+        self.check_nested_list_rep(&name, &lookup_name, args, scope);
 
         if matches!(lookup_name.as_str(), "hasArg" | "on.exit") {
             let package = if lookup_name == "hasArg" {
@@ -1807,6 +1808,438 @@ impl Checker {
         }
     }
 
+    /// RY127: `list(rep(v, n))` as one argument of a base `c()` (or the
+    /// `values` argument of a base `append()`) contributes ONE element
+    /// holding the whole repeated vector, not `n` flat elements; the
+    /// flat form is `rep(list(v), n)` (readr's `col_spec_standardise`
+    /// appended one nested list of collectors this way, #359). The
+    /// shape alone is not evidence -- a list may legitimately hold a
+    /// vector element -- so this fires only when every sibling element
+    /// the construction contributes is proven, from bindings and
+    /// literal constructions already in scope, to be the same
+    /// classless atomic type as `v`. Classed elements (readr's
+    /// collectors included), list elements, unknown element types, a
+    /// count proven at most 1, and masked `c`/`append`/`list`/`rep`
+    /// callees all stay silent; type evidence is peeked from scope
+    /// and syntax only, never re-inferred, so no diagnostic repeats.
+    fn check_nested_list_rep(
+        &mut self,
+        name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) {
+        if !matches!(lookup_name, "c" | "append")
+            || scope.data_mask_unknown
+            || !self.resolves_to_base_lenient(name, scope)
+        {
+            return;
+        }
+        // (candidate indices, sibling element indices) for this call.
+        let (candidates, siblings): (Vec<usize>, Vec<usize>) = if lookup_name == "c" {
+            // `recursive = TRUE` flattens the nested vector too; with
+            // the control present the shape is no longer this rule's.
+            if args
+                .iter()
+                .any(|arg| arg.name.as_deref() == Some("recursive"))
+            {
+                return;
+            }
+            let elements: Vec<usize> = args
+                .iter()
+                .enumerate()
+                .filter(|(_, arg)| !matches!(arg.name.as_deref(), Some("recursive" | "use.names")))
+                .map(|(index, _)| index)
+                .collect();
+            (elements.clone(), elements)
+        } else {
+            let matched = match_arguments(&["x", "values", "after"], args);
+            let (Some(x), Some(values)) = (matched.arg_for_param(0), matched.arg_for_param(1))
+            else {
+                return;
+            };
+            if !matched.is_one_to_one() {
+                return;
+            }
+            (vec![values], vec![x, values])
+        };
+        // `c()` dispatches on its first argument: a classed first
+        // sibling may route to a `c.foo` method that flattens or
+        // reorders, so the one-nested-element claim is unproven then.
+        // (For `append`, the first sibling is the `x` receiver.)
+        if let Some(first) = siblings.first()
+            && let Some(receiver_type) = self.peek_type(&args[*first].value, scope)
+            && !receiver_type.class.is_classless()
+        {
+            return;
+        }
+        for candidate in candidates {
+            let arg = &args[candidate];
+            // A named `c()` element is a deliberate single named
+            // slot: the name lands on the constructed element, so
+            // nesting there reads as intent. `append()`'s candidate
+            // is the `values` formal instead: writing it by name is
+            // ordinary formal naming, names no inserted element,
+            // and is not the same evidence.
+            if lookup_name == "c" && arg.name.is_some() {
+                continue;
+            }
+            let Some(value) = self.nested_rep_value(&arg.value, scope) else {
+                continue;
+            };
+            let mut sibling_types: Vec<RType> = Vec::new();
+            let mut proven = true;
+            for sibling in &siblings {
+                if *sibling == candidate {
+                    continue;
+                }
+                match self.contributed_element_types(&args[*sibling].value, scope) {
+                    Some(mut types) => sibling_types.append(&mut types),
+                    None => {
+                        proven = false;
+                        break;
+                    }
+                }
+            }
+            if !proven
+                || sibling_types.is_empty()
+                || !sibling_types.iter().all(|ty| same_flat_element(ty, &value))
+            {
+                continue;
+            }
+            self.emit(
+                Severity::Warning,
+                arg.span,
+                "RY127",
+                format!(
+                    "`list(rep(...))` inside `{lookup_name}()` contributes one element holding the whole repeated vector, not one flat element per repetition; write `rep(list(...), n)` for flat elements"
+                ),
+            );
+        }
+    }
+
+    /// The repeated value `v` of an exact `list(rep(v, n))` shape, with
+    /// its peeked type, or `None` outside RY127's slice: masked
+    /// callees, a multi-element or named `list()`, `each`/`length.out`
+    /// repetition, a count proven at most 1 (including the default),
+    /// a vector-valued count, and a `v` not proven classless atomic.
+    fn nested_rep_value(&self, expr: &Expr, scope: &Scope) -> Option<RType> {
+        let Expr::Call {
+            func,
+            args: list_args,
+            ..
+        } = expr
+        else {
+            return None;
+        };
+        if !self.is_base_call(func, "list", scope)
+            || list_args.len() != 1
+            || list_args[0].name.is_some()
+        {
+            return None;
+        }
+        let Expr::Call {
+            func: rep_func,
+            args: rep_args,
+            ..
+        } = &list_args[0].value
+        else {
+            return None;
+        };
+        if !self.is_base_call(rep_func, "rep", scope) {
+            return None;
+        }
+        let matched = match_arguments(&["x", "times", "length.out", "each"], rep_args);
+        if !matched.is_one_to_one()
+            || matched.arg_for_param(2).is_some()
+            || matched.arg_for_param(3).is_some()
+        {
+            return None;
+        }
+        let value = &rep_args[matched.arg_for_param(0)?].value;
+        // The count must be written: `rep(v)` repeats once (handled
+        // by the `?` above). A count proven at most 1 is already
+        // flat, and a proven invalid count (negative or fractional)
+        // errors in R before any nesting exists.
+        let times = &rep_args[matched.arg_for_param(1)?].value;
+        if proven_count(times, scope).is_some_and(|count| count <= 1.0 || count.fract() != 0.0) {
+            return None;
+        }
+        // A vector count repeats element-wise, a different operation.
+        if let Some(times_type) = self.peek_type(times, scope)
+            && matches!(
+                times_type.length,
+                Length::Zero | Length::Known(_) | Length::Nonempty
+            )
+        {
+            return None;
+        }
+        let value_type = self.peek_type(value, scope)?;
+        (value_type.mode.is_atomic() && value_type.class.is_classless()).then_some(value_type)
+    }
+
+    /// Element types one `c()`/`append()` argument contributes, or
+    /// `None` when any contributed element's type is unproven. An
+    /// empty vector means the argument provably contributes nothing
+    /// (`NULL`, `list()`, a zero-length value).
+    fn contributed_element_types(&self, expr: &Expr, scope: &Scope) -> Option<Vec<RType>> {
+        if let Expr::Call { func, args, .. } = expr {
+            if self.is_base_call(func, "list", scope) {
+                return args
+                    .iter()
+                    .map(|arg| self.peek_type(&arg.value, scope))
+                    .collect();
+            }
+            // The correct flat form as a sibling: `rep(list(...), n)`
+            // contributes the listed element types (summarized once;
+            // multiplicity does not affect the all-flat check).
+            if self.is_base_call(func, "rep", scope) {
+                let matched = match_arguments(&["x", "times", "length.out", "each"], args);
+                if !matched.is_one_to_one() {
+                    return None;
+                }
+                // Claiming contributed elements requires a proven
+                // positive total count: a proven-zero governing count
+                // contributes nothing, and a proven invalid or
+                // unproven one (which may be zero at runtime)
+                // establishes no sibling element at all. `length.out`
+                // overrides `times`/`each` entirely in R
+                // (`rep(list(1L), 0L, length.out = 3L)` has three
+                // elements), so it governs when present; otherwise
+                // every written one of `times` (default 1) and `each`
+                // (default 1) must prove positive.
+                let governing: Vec<&Expr> = if let Some(length_out) =
+                    matched.arg_for_param(2).map(|index| &args[index].value)
+                {
+                    vec![length_out]
+                } else {
+                    [1usize, 3]
+                        .into_iter()
+                        .filter_map(|param| {
+                            matched.arg_for_param(param).map(|index| &args[index].value)
+                        })
+                        .collect()
+                };
+                for count_expr in governing {
+                    match proven_count(count_expr, scope) {
+                        Some(0.0) => return Some(Vec::new()),
+                        Some(count) if count > 0.0 && count.fract() == 0.0 => {}
+                        _ => return None,
+                    }
+                }
+                if let Some(listed) = matched
+                    .arg_for_param(0)
+                    .map(|index| &args[index].value)
+                    .filter(|value| {
+                        matches!(value, Expr::Call { func, .. }
+                                if self.is_base_call(func, "list", scope))
+                    })
+                {
+                    return self.contributed_element_types(listed, scope);
+                }
+                // A plain atomic `rep(v, n)` sibling splices flat
+                // scalars of `v`'s type, like the generic atomic arm
+                // below (which the early return here used to shadow).
+                if let Some(value) = matched.arg_for_param(0).map(|index| &args[index].value)
+                    && let Some(value_type) = self.peek_type(value, scope)
+                    && value_type.mode.is_atomic()
+                {
+                    return Some(vec![
+                        RType::scalar(value_type.mode).with_class(value_type.class.clone()),
+                    ]);
+                }
+                return None;
+            }
+        }
+        let ty = self.peek_type(expr, scope)?;
+        if matches!(ty.mode, Mode::Null) || ty.length == Length::Zero {
+            return Some(Vec::new());
+        }
+        if matches!(ty.mode, Mode::List) {
+            let schema = ty.columns.as_ref().filter(|schema| schema.complete)?;
+            return Some(
+                schema
+                    .columns
+                    .iter()
+                    .map(|(_, element)| element.clone())
+                    .collect(),
+            );
+        }
+        if ty.mode.is_atomic() {
+            // `c()`/`append()` splice an atomic vector into scalar
+            // elements once the result is a list.
+            return Some(vec![RType::scalar(ty.mode).with_class(ty.class.clone())]);
+        }
+        None
+    }
+
+    /// Whether `func` is a direct call head resolving to `base::<bare>`
+    /// under the lenient search-path policy RY102 uses for the same
+    /// container callees: lexical and project masking stay silent.
+    fn is_base_call(&self, func: &Expr, bare: &str, scope: &Scope) -> bool {
+        callee_name(func).is_some_and(|callee| {
+            crate::semantic_lists::bare_name(&callee) == bare
+                && self.resolves_to_base_lenient(&callee, scope)
+        })
+    }
+
+    /// A type read from scope and syntax alone, without inference, so
+    /// peeking never emits or repeats a diagnostic. Only the shapes
+    /// RY127 needs are modeled; everything else is unproven.
+    fn peek_type(&self, expr: &Expr, scope: &Scope) -> Option<RType> {
+        match expr {
+            Expr::Logical(..) => Some(RType::scalar(Mode::Logical)),
+            Expr::Integer(..) => Some(RType::scalar(Mode::Integer)),
+            Expr::Double(..) => Some(RType::scalar(Mode::Double)),
+            Expr::String(..) => Some(RType::scalar(Mode::Character)),
+            Expr::Null(_) => Some(RType::new(Mode::Null, Length::Zero)),
+            Expr::Na(ty, _) => Some(ty.clone()),
+            Expr::Ident { name, .. } => scope.get(name).cloned(),
+            Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr: inner,
+                ..
+            } => match inner.as_ref() {
+                Expr::Integer(..) => Some(RType::scalar(Mode::Integer)),
+                Expr::Double(..) => Some(RType::scalar(Mode::Double)),
+                _ => None,
+            },
+            Expr::Index {
+                base,
+                kind: IndexKind::Dollar,
+                args,
+                ..
+            } => {
+                let field = args.first()?.name.as_deref()?;
+                let receiver = self.peek_type(base, scope)?;
+                // A classed receiver may dispatch `$.foo` and return
+                // something other than the recorded field.
+                if !receiver.class.is_classless() {
+                    return None;
+                }
+                receiver.columns.as_ref()?.get(field)
+            }
+            Expr::Index {
+                base,
+                kind: IndexKind::Double,
+                args,
+                ..
+            } if args.len() == 1 && args[0].name.is_none() => {
+                let receiver = self.peek_type(base, scope)?;
+                if !receiver.class.is_classless() {
+                    return None;
+                }
+                let schema = receiver.columns?;
+                // Zero/negative indices (R's dropping semantics)
+                // are deliberately unproven here. R's default
+                // spelling `x[[2]]` is a double literal, so an
+                // exactly-integral double within f64's exact
+                // integer range proves the same position.
+                let index = match &args[0].value {
+                    Expr::String(name, _) => return schema.get(name),
+                    Expr::Integer(index, _) if *index >= 1 => *index,
+                    Expr::Double(value, _)
+                        if *value >= 1.0
+                            && value.fract() == 0.0
+                            && *value <= 9_007_199_254_740_992.0 =>
+                    {
+                        *value as i64
+                    }
+                    _ => return None,
+                };
+                // A complete schema lists every element in
+                // source order, so the numeric index selects by
+                // position. (The "[[i]]" keys `build_named_schema`
+                // assigns count only unnamed slots, so key digits
+                // are not absolute positions in a mixed list.)
+                // Width-checked: an index beyond usize is
+                // unproven, never truncated.
+                if schema.complete {
+                    return usize::try_from(index)
+                        .ok()
+                        .and_then(|index| schema.columns.get(index - 1))
+                        .map(|(_, ty)| ty.clone());
+                }
+                // For an incomplete schema the canonical "[[i]]"
+                // key is the remaining positional evidence;
+                // compare its digits with the index instead of
+                // formatting one. Only the canonical spelling
+                // matches: a *named* key like "[[02]]" or
+                // "[[+2]]" is a string name, which R's numeric
+                // `[[` never selects.
+                schema
+                    .columns
+                    .iter()
+                    .find(|(key, _)| {
+                        key.strip_prefix("[[")
+                            .and_then(|rest| rest.strip_suffix("]]"))
+                            .and_then(|digits| {
+                                let canonical = !digits.is_empty()
+                                    && digits.bytes().all(|byte| byte.is_ascii_digit())
+                                    && (digits.len() == 1 || !digits.starts_with('0'));
+                                canonical.then(|| digits.parse::<i64>().ok()).flatten()
+                            })
+                            == Some(index)
+                    })
+                    .map(|(_, ty)| ty.clone())
+            }
+            Expr::Call { func, args, .. } if self.is_base_call(func, "list", scope) => {
+                let length = known_length(args.len());
+                let arg_types: Option<Vec<RType>> = args
+                    .iter()
+                    .map(|arg| self.peek_type(&arg.value, scope))
+                    .collect();
+                let base = RType::new(Mode::List, length);
+                Some(
+                    match arg_types.and_then(|types| build_named_schema(&types, args)) {
+                        Some(schema) => base.with_columns(std::sync::Arc::new(schema)),
+                        None => base,
+                    },
+                )
+            }
+            Expr::Call { func, args, .. } if self.is_base_call(func, "c", scope) => {
+                if args
+                    .iter()
+                    .any(|arg| arg.name.as_deref() == Some("recursive"))
+                {
+                    return None;
+                }
+                let mut mode: Option<Mode> = None;
+                let mut length = 0usize;
+                let mut exact_length = true;
+                for arg in args
+                    .iter()
+                    .filter(|arg| arg.name.as_deref() != Some("use.names"))
+                {
+                    let ty = self.peek_type(&arg.value, scope)?;
+                    if !ty.class.is_classless() || !(ty.mode.is_atomic() || ty.mode == Mode::Null) {
+                        return None;
+                    }
+                    mode = Some(match mode {
+                        None => ty.mode,
+                        Some(current) => current.combine_result(ty.mode),
+                    });
+                    match ty.length {
+                        Length::Zero => {}
+                        Length::One => length += 1,
+                        Length::Known(n) => length += n,
+                        Length::Unknown | Length::Nonempty => exact_length = false,
+                    }
+                }
+                let mode = mode?;
+                Some(RType::new(
+                    mode,
+                    if exact_length {
+                        known_length(length)
+                    } else {
+                        Length::Unknown
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// Whether repeated evaluation of `expr` is provably free of side
     /// effects and ambient state, within RY122's narrow set.
     fn deterministic_operand(&self, expr: &Expr, scope: &Scope) -> bool {
@@ -3115,6 +3548,47 @@ fn matching_brace_scanned(text: &str, open: usize, code_aware: bool) -> Option<u
         i += 1;
     }
     None
+}
+
+/// Whether two peeked element types agree as flat `c()` elements for
+/// RY127: same mode and length, both proven classless. Value facts
+/// (which literal built the value) are not part of an element type.
+fn same_flat_element(left: &RType, right: &RType) -> bool {
+    left.mode == right.mode
+        && left.length == right.length
+        && left.class.is_classless()
+        && right.class.is_classless()
+}
+
+/// A repetition count proven from syntax or scope value facts alone:
+/// a numeric literal or a binding whose every value is one known
+/// number. Anything else is not a proven count.
+fn proven_count(expr: &Expr, scope: &Scope) -> Option<f64> {
+    match expr {
+        Expr::Integer(value, _) => Some(*value as f64),
+        Expr::Double(value, _) if value.is_finite() => Some(*value),
+        Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr: inner,
+            ..
+        } => proven_count(inner, scope).map(|count| -count),
+        Expr::Ident { name, .. } => {
+            let facts = scope.get(name)?.value_facts;
+            let (low, high) = facts.numeric_bounds?;
+            (facts.all_values_known && low == high).then(|| f64::from_bits(low))
+        }
+        _ => None,
+    }
+}
+
+/// The `Length` for an exactly known element count, honoring the
+/// lattice convention that `Known` holds only lengths above 1.
+fn known_length(count: usize) -> Length {
+    match count {
+        0 => Length::Zero,
+        1 => Length::One,
+        n => Length::Known(n),
+    }
 }
 
 /// The two operands an `expect_equal`/`expect_identical` call compares,

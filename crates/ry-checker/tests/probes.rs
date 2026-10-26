@@ -363,6 +363,12 @@ static PROBES: &[Probe] = &[
         positive: "f <- function(x) cli::cli_abort(\"cols: {ncol(data)}\")\n",
         negative: "f <- function(data) cli::cli_abort(\"{ncol(data)}\")\nf <- function(x) cli::cli_abort(\"loader: {data}\")\nf <- function(x) cli::cli_abort(\"{ncol(data)}\", .envir = x)\n",
     },
+    Probe {
+        code: "RY127",
+        note: "list(rep(v, n)) nested in c()/append() whose sibling elements are proven flat values of v's classless atomic type; correct, classed, count-1, and unknown forms stay silent",
+        positive: "cols <- list(1L, 2L)\nspec <- list(cols = cols)\nspec$cols <- c(spec$cols, list(rep(3L, 2L)))\nmore <- append(cols, list(rep(3L, 2L)))\n",
+        negative: "cols <- list(1L, 2L)\nspec <- list(cols = cols)\nspec$cols <- c(spec$cols, rep(list(3L), 2L))\nalone <- list(rep(3L, 2L))\nonce <- c(cols, list(rep(3L, 1L)))\nnested <- c(list(list(1L)), list(rep(list(3L), 2L)))\nclassed <- c(list(factor(\"a\")), list(rep(factor(\"b\"), 2L)))\nunknown <- c(cols, list(rep(mk(), 2L)))\n",
+    },
 ];
 
 #[test]

@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793031561746,
+  "lastUpdate": 1793032339364,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -59496,6 +59496,219 @@ window.BENCHMARK_DATA = {
           {
             "name": "server/unrelated-file/p95",
             "value": 181.947456,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "396121b225f13e8658e950aafcebda31afd9ca4c",
+          "message": "feat(checker): flag sequence subscripts proven to mix signs (RY126) (#832)\n\n* feat(checker): flag sequence subscripts proven to mix signs (RY126)\n\nAdd RY126 (mixed-sign-sequence-index): error when a `:`/`seq()`/`seq.int()`/`rlang::seq2()` sequence in subscript position has proven whole-number endpoints straddling zero, so the index mixes positive and negative subscripts and base subsetting always errors. Endpoints are literals or locals with exact value facts; the receiver must be proven plain (classless atomic or list for `[`, atomic only for `[[`). Descending one-sided sequences, computed endpoints, seq_len/seq_along, non-index uses, masked definitions, and unproven receivers stay silent. rlang::seq2(1, -1) is integer(0), not descending, so seq2 fires only when it ascends across zero.\\n\\nRefs #355\n\n* fix(checker): named atomic receivers and seq() endpoint defaults for RY126\n\nRefs #355\n\n* fix(checker): seq2 endpoints have no defaults; shared seq_endpoint helper\n\nRefs #355\n\n* style: fmt module ordering after rebase\n\n* test(checker): pin seq endpoint defaults in RY126 oracle claims\n\nRefs #355\n\n* fix(checker): rebound colon operator defeats RY126 sequence proof\n\nRefs #355\n\n* test(checker): pin rebound-colon gate and rejected-seq silence for RY126\n\nRefs #355\n\n* docs(checker): correct seq dots comment in RY126 silent controls\n\nRefs #355",
+          "timestamp": "2026-10-26T17:25:08+01:00",
+          "tree_id": "d447bef00b76ffc37f991f128b59540c2235b4aa",
+          "url": "https://github.com/sims1253/ry/commit/396121b225f13e8658e950aafcebda31afd9ca4c"
+        },
+        "date": 1793032339232,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 2440235.1946389102,
+            "range": "2436643.06–2444149.46",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 632233.1738293061,
+            "range": "629457.57–635651.41",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 2153447.441314592,
+            "range": "2108965.70–2226144.95",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 307510.3479500835,
+            "range": "305672.62–309946.05",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 2394485.839940323,
+            "range": "2243454.24–2562348.20",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 306095.7022946771,
+            "range": "304509.25–308236.95",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 11075825.58029663,
+            "range": "10986135.72–11164249.52",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 36333181.260000005,
+            "range": "36240195.44–36433246.28",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 6101288.521789642,
+            "range": "6074066.04–6136048.37",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 36737034.510000005,
+            "range": "36670975.51–36812843.68",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 6233387.526093015,
+            "range": "6219028.57–6248865.29",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 36429485.760000005,
+            "range": "36239923.11–36632214.78",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 5841367.302660672,
+            "range": "5814255.95–5867313.33",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 109505013.425,
+            "range": "108441930.33–110775820.54",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 10648824.256863859,
+            "range": "10566456.83–10732189.85",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 3688067.041577959,
+            "range": "3658611.16–3718926.29",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 10439862.13634552,
+            "range": "10330392.43–10561835.74",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 4502378.840371921,
+            "range": "4433117.43–4574148.18",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 11585123.590491703,
+            "range": "11446901.28–11730229.86",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 888549.1440735545,
+            "range": "880892.31–897145.37",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 11316936,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 366343,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 220172,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 318570,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 73.47979700000724,
+            "range": "52.96–87.39",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 52.95592499995837, 53.95305700000608, 73.47979700000724, 80.12741700001061, 87.38746199995512"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 403.2143750000396,
+            "range": "401.12–437.20",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 401.1216879999847, 402.00632799998857, 403.2143750000396, 406.5307889999822, 437.2015009999741"
+          },
+          {
+            "name": "server/startup-median",
+            "value": 192.229791,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/median",
+            "value": 182.008456,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/p95",
+            "value": 182.12563,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/median",
+            "value": 181.811913,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/p95",
+            "value": 181.960743,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/median",
+            "value": 181.849529,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/p95",
+            "value": 181.940912,
             "unit": "ms"
           }
         ]

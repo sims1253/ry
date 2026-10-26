@@ -35,10 +35,10 @@ fn one_sided_and_computed_sequences_stay_silent() {
         "x <- 1:10\nx[seq(2, -1, by = -2)]\n",
         // seq's own wrong-sign error is not RY126's claim.
         "x <- 1:10\nx[seq(1, -1, by = 2)]\n",
-        // `length.out`, single-argument, and duplicated-formal forms
-        // are outside the proven shape set.
+        // `length.out` and duplicated-formal forms are outside the
+        // proven shape set. (A single negative argument is not:
+        // `seq(-1)` runs `1:-1` via the default endpoint.)
         "x <- 1:10\nx[seq(1, -1, length.out = 2)]\n",
-        "x <- 1:10\nx[seq(-1)]\n",
         "x <- 1:10\nx[seq(1, -1, from = 2)]\n",
         // Fractional endpoints may truncate to zeros.
         "x <- 1:10\nx[seq(0.5, -0.5, by = -1)]\n",
@@ -95,4 +95,17 @@ fn assignment_targets_fire_once() {
     assert_eq!(mixed_sign_errors("x <- 1:10\nx[1:-1] <- 0L\n"), 1);
     let source = "x <- 'a'\nx[seq(1, -1)] <- 'b'\n";
     assert_eq!(mixed_sign_errors(source), 1, "{source}");
+}
+
+#[test]
+fn named_atomic_receivers_and_seq_endpoint_defaults() {
+    // A names schema does not change atomic subsetting.
+    assert_eq!(mixed_sign_errors("x <- c(a = 1, b = 2); x[1:-1]"), 1);
+    // seq(to = -1) runs 1:-1 via seq.default's documented default.
+    assert_eq!(mixed_sign_errors("x <- 1:9; x[seq(to = -1)]"), 1);
+    assert_eq!(mixed_sign_errors("x <- 1:9; x[seq.int(to = -1)]"), 1);
+    assert_eq!(mixed_sign_errors("x <- 1:9; x[seq(-2)]"), 1);
+    // One-sided sequences stay silent.
+    assert_eq!(mixed_sign_errors("x <- 1:9; x[seq(to = 2)]"), 0);
+    assert_eq!(mixed_sign_errors("x <- 1:9; x[seq(3)]"), 0);
 }

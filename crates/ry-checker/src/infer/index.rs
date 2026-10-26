@@ -469,9 +469,9 @@ impl Checker {
         args: &[Arg],
         scope: &Scope,
     ) -> Vec<(Span, String)> {
-        let plain_atomic = receiver.class.is_classless()
-            && receiver.mode.is_atomic()
-            && receiver.columns.is_none();
+        // A names schema on an atomic vector (`c(a = 1)`) does not
+        // change subsetting semantics, so columns do not disqualify.
+        let plain_atomic = receiver.class.is_classless() && receiver.mode.is_atomic();
         let receiver_ok = match kind {
             IndexKind::Single => {
                 (plain_atomic || (receiver.class.is_classless() && receiver.mode == Mode::List))
@@ -571,16 +571,22 @@ impl Checker {
                         {
                             return None;
                         }
-                        let from = self.proven_integral_endpoint(
-                            &args[matched.arg_for_param(0)?].value,
-                            scope,
-                            allow_ident_endpoints,
-                        )?;
-                        let to = self.proven_integral_endpoint(
-                            &args[matched.arg_for_param(1)?].value,
-                            scope,
-                            allow_ident_endpoints,
-                        )?;
+                        // An unsupplied endpoint takes seq.default's
+                        // documented default 1 (`seq(to = -1)` is
+                        // `1:-1`; a lone endpoint produces `1:x` the
+                        // other way round, same sign set).
+                        let endpoint = |param: usize| -> Option<i64> {
+                            match matched.arg_for_param(param) {
+                                Some(arg) => self.proven_integral_endpoint(
+                                    &args[arg].value,
+                                    scope,
+                                    allow_ident_endpoints,
+                                ),
+                                None => Some(1),
+                            }
+                        };
+                        let from = endpoint(0)?;
+                        let to = endpoint(1)?;
                         let last = match matched.arg_for_param(2) {
                             Some(by_arg) => {
                                 let by = self.proven_integral_endpoint(
@@ -607,16 +613,22 @@ impl Checker {
                         if !matched.is_one_to_one() {
                             return None;
                         }
-                        let from = self.proven_integral_endpoint(
-                            &args[matched.arg_for_param(0)?].value,
-                            scope,
-                            allow_ident_endpoints,
-                        )?;
-                        let to = self.proven_integral_endpoint(
-                            &args[matched.arg_for_param(1)?].value,
-                            scope,
-                            allow_ident_endpoints,
-                        )?;
+                        // An unsupplied endpoint takes seq.default's
+                        // documented default 1 (`seq(to = -1)` is
+                        // `1:-1`; a lone endpoint produces `1:x` the
+                        // other way round, same sign set).
+                        let endpoint = |param: usize| -> Option<i64> {
+                            match matched.arg_for_param(param) {
+                                Some(arg) => self.proven_integral_endpoint(
+                                    &args[arg].value,
+                                    scope,
+                                    allow_ident_endpoints,
+                                ),
+                                None => Some(1),
+                            }
+                        };
+                        let from = endpoint(0)?;
+                        let to = endpoint(1)?;
                         (from < 0 && to > 0).then_some((from, to))
                     }
                     _ => None,

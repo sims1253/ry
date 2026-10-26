@@ -2085,9 +2085,11 @@ impl Checker {
                     Expr::String(name, _) => schema.get(name),
                     Expr::Integer(index, _) if *index >= 1 => {
                         schema.get(&format!("[[{index}]]")).or_else(|| {
-                            schema
-                                .columns
-                                .get((*index as usize) - 1)
+                            // Width-checked: an index beyond usize
+                            // is unproven, never truncated.
+                            usize::try_from(*index)
+                                .ok()
+                                .and_then(|index| schema.columns.get(index - 1))
                                 .map(|(_, ty)| ty.clone())
                         })
                     }

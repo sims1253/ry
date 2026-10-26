@@ -1485,10 +1485,13 @@ impl Checker {
             return;
         }
         let arg_for = |param: usize| matched.arg_for_param(param).map(|index| &args[index]);
-        // A classed `x` may dispatch to a `diag` method; only a
-        // peeked classless `x` (or none) keeps the base reading.
+        // A proven classed `x` may dispatch to a `diag` method
+        // and suppresses the check; an unpeekable `x` falls
+        // through, since dimension validation in base `diag`
+        // does not depend on `x`.
         if let Some(x) = arg_for(0)
-            && !matches!(self.peek_type(&x.value, scope), Some(ty) if ty.class.is_classless())
+            && let Some(ty) = self.peek_type(&x.value, scope)
+            && !ty.class.is_classless()
         {
             return;
         }

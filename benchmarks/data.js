@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793007670326,
+  "lastUpdate": 1793010042217,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -58431,6 +58431,219 @@ window.BENCHMARK_DATA = {
           {
             "name": "server/unrelated-file/p95",
             "value": 182.118232,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e9ce3a26fa529a65443f0215200cd403625edfe8",
+          "message": "feat(checker): demote diagnostics inside error-assertion probes (#826)\n\n* feat(checker): demote diagnostics inside error-assertion probes\n\nRecognize testthat expect_error/expect_warning/expect_snapshot(error = TRUE) and base try/tryCatch(error = ...) when the callee resolves to the real wrapper, and demote diagnostics whose span lies in the probe argument one confidence tier. Severity and diagnostics outside probes are unchanged. The captured-argument half of the issue (substitute()/enquo() helpers such as dbplyr's expect_translation_snapshot) is not covered.\n\nRefs #344\n\n* fix(checker): no-error assertions and deferred bodies keep full strength\n\nregexp = NA asserts that no error occurs (testthat docs), so it is\nnot a probe; a probe catches creating a closure, not calling it\nlater, so suspend the probe stack across function-body walks.\nPlus review hygiene: probe-stack invariant note, allocation-free\nwrapper gate, may_be_function predicate, exact-handler-name note,\ndocs accuracy, and refusal-direction tests.\n\nRefs #344\n\n* refactor(checker): own the error-probe push/pop in an infer_call wrapper\n\nRefs #344\n\n* fix(checker): model expect_snapshot formals after its real ... signature\n\nRefs #344\n\n* fix(checker): real expect_snapshot signature; NULL/NA handler is no probe\n\nRefs #344\n\n* docs(checker): state demote-once semantics for error probes\n\nRefs #344\n\n* fix(checker): numeric error=TRUE coercion; all literal handlers refuse\n\nRefs #344\n\n* fix(checker): real testthat formals with class/inherit; numeric error asserts nothing\n\nRefs #344\n\n* fix(checker): warning probes demote only non-errors; preserve demotion for declaration findings\n\nRefs #344\n\n* refactor(checker): assertion-probe naming; kind-carrying declaration findings\n\nRefs #344\n\n* fix(checker): tryCatch condition handler asserts; shared ProbeKind::demotes\n\nRefs #344\n\n* docs: condition handlers in probe enumeration; restore emit_related doc\n\nRefs #344",
+          "timestamp": "2026-10-26T11:12:45+01:00",
+          "tree_id": "c5dad841e14ac1d4cf1f66ae2b44939b29f4a3a8",
+          "url": "https://github.com/sims1253/ry/commit/e9ce3a26fa529a65443f0215200cd403625edfe8"
+        },
+        "date": 1793010042112,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 3315477.028135301,
+            "range": "3298184.96–3332595.31",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 842060.2007693041,
+            "range": "835065.22–850065.24",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 2848219.7548410455,
+            "range": "2823739.19–2877144.33",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 398820.61863409856,
+            "range": "395406.47–403486.65",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 2812064.732937203,
+            "range": "2798948.22–2827535.54",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 409311.8113274708,
+            "range": "404618.71–414377.22",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 17809144.86602622,
+            "range": "17623515.15–18014322.69",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 56500709.749999985,
+            "range": "56248041.04–56771121.83",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 8828164.077928122,
+            "range": "8783864.01–8884216.28",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 57214631.38333334,
+            "range": "56947039.34–57530745.67",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 9224479.928361068,
+            "range": "9151030.66–9324742.49",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 55870048.95000001,
+            "range": "55679754.24–56067446.63",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 8449918.353558134,
+            "range": "8410475.21–8490452.46",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 114967330.45,
+            "range": "114303554.98–115681971.34",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 16643877.551704725,
+            "range": "16491690.01–16815526.33",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 5674618.338827775,
+            "range": "5507789.84–5850044.23",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 16721350.444507426,
+            "range": "16556484.94–16911053.85",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 6868087.5738031315,
+            "range": "6830067.39–6907954.13",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 18071169.365164153,
+            "range": "17882678.33–18299500.44",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 1304396.7399470815,
+            "range": "1296753.72–1313867.93",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 11186504,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 366343,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 220172,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 318570,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 67.951613000012,
+            "range": "57.78–81.96",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 57.77581600000849, 64.80191700003343, 67.951613000012, 69.231706999999, 81.95968100003665"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 446.3622810000088,
+            "range": "427.47–458.77",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 427.4676230000332, 432.7009539999999, 446.3622810000088, 458.72067900002, 458.77217499999097"
+          },
+          {
+            "name": "server/startup-median",
+            "value": 193.980089,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/median",
+            "value": 182.097447,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/p95",
+            "value": 182.227874,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/median",
+            "value": 181.911134,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/p95",
+            "value": 182.077939,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/median",
+            "value": 181.947627,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/p95",
+            "value": 182.161898,
             "unit": "ms"
           }
         ]

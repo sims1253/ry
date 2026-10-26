@@ -31,3 +31,8 @@ stopifnot(identical(x[3:1], c(3L, 2L, 1L)))
 stopifnot(identical(x[-3:-1], x[c(4L, 5L, 6L, 7L, 8L, 9L, 10L)]))
 stopifnot(identical(seq(2, -1, by = -2), c(2, 0)))
 stopifnot(identical(x[seq(2, -1, by = -2)], x[2L]))
+# Endpoint defaults (seq.default) and named atomic receivers.
+stopifnot(mixed_error("x[seq(to = -1)]"))
+stopifnot(mixed_error("x[seq(-2)]"))
+y <- c(a = 1, b = 2)
+stopifnot(mixed_error("y[1:-1]"))

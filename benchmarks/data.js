@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793010042217,
+  "lastUpdate": 1793011738240,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -58644,6 +58644,219 @@ window.BENCHMARK_DATA = {
           {
             "name": "server/unrelated-file/p95",
             "value": 182.161898,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c209f20a3c585b73e7d63d96efb255c3451adbf8",
+          "message": "feat(checker): warn on namespace access after a failed requireNamespace (RY123) (#827)\n\n* feat(checker): warn on namespace access after a failed requireNamespace (RY122)\n\nTrack a literal package's failed base::requireNamespace(pkg, quietly = TRUE) result into the branch it dominates and warn on pkg::name / pkg:::name there, in both the negated and positive/else forms. Masked requireNamespace, dynamic package names, correct positive guards, and tryCatch error-handler probes stay silent; unknown calls end the fact.\n\nCloses #571\n\n* fix(checker): RY122 soundness — quietly is not load-bearing; joins and caught probes\n\nBase requireNamespace returns FALSE on failure regardless of\nquietly (verified in R), so drop the quietly=TRUE gate. Intersect\nfailed-namespace facts at if/loop joins instead of restoring the\npre-branch snapshot, silence accesses caught by a base tryCatch\nerror handler via probe depth (incl. guards installed inside expr;\nuser-defined tryCatch catches nothing), and run the access check\nahead of the typeshed value rungs. Wire failed_namespaces into the\nscope-parity assertion.\n\nRefs #571\n\n* fix(checker): RY122 joins shared, caller-code invalidation, bound-name access check\n\nExtract join_failed_namespaces for both if walkers, clear the fact\non RunsCallerCode calls, and run the access check ahead of the\nidentifier lookup ladder (backticked/lexically defined spellings\nexcluded) so import-surfaced qualified values cannot skip it.\n\nRefs #571\n\n* fix(checker): RY122 round 3 — write-set invalidation, structural probe depth, quoted packages\n\nRefs #571\n\n* refactor(checker): renumber failed-namespace-access to RY123\n\n#825 claimed RY122 for testthat-self-comparison; registry, docs, probes, fixtures, snapshot, and CHANGELOG move this rule to RY123.\n\nCloses #571\n\n* fix(checker): share RY123 suppression predicate; pin loader-function silence\n\nRefs #571\n\n* test(checker): rename leftover ry122 identifiers to ry123\n\nRefs #571\n\n* perf(checker): move loop-exit fact set; cheap-check first; wider RY123 probe\n\nRefs #571\n\n* perf(checker): single empty-gated RY123 access check; move join fact sets\n\nRefs #571\n\n* fix(checker): key RY123 rebound test on the actual split operator\n\nRefs #571\n\n* fix(checker): condition handlers probe for RY123; literal handlers do not\n\nRefs #571\n\n* fix(checker): user-infix spellings are not namespace accesses\n\nRefs #571\n\n* fix(checker): non-function handler bindings do not probe; hoist rebound check\n\nRefs #571",
+          "timestamp": "2026-10-26T11:40:29+01:00",
+          "tree_id": "d945b1d4e2b6ed92c6d7b286bc1ce49ec59d7fa5",
+          "url": "https://github.com/sims1253/ry/commit/c209f20a3c585b73e7d63d96efb255c3451adbf8"
+        },
+        "date": 1793011738109,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 4349200.87612317,
+            "range": "4335963.85–4363541.63",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 1122630.704074243,
+            "range": "1116837.70–1130706.45",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 3592005.223925578,
+            "range": "3585324.77–3601130.31",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 544640.9604536382,
+            "range": "542637.76–547095.59",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 3603098.3031638204,
+            "range": "3594775.13–3613066.41",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 546947.7566912791,
+            "range": "545609.58–548413.65",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 22997216.970238756,
+            "range": "22591124.50–23535561.84",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 75900075.125,
+            "range": "75797813.51–76008226.89",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 12004537.129097141,
+            "range": "11913713.67–12102546.96",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 76283287.65,
+            "range": "76170992.67–76445729.05",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 12429570.191782925,
+            "range": "12370909.93–12505152.09",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 76035890.525,
+            "range": "75534534.26–76677643.75",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 11578983.742332252,
+            "range": "11522609.95–11638023.84",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 180456978.45,
+            "range": "178840972.35–182051727.21",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 20852299.007122144,
+            "range": "20805064.01–20907708.50",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 6756949.280544261,
+            "range": "6734412.87–6787975.26",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 21071906.099901173,
+            "range": "20831457.13–21486110.57",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 8415249.890659431,
+            "range": "8356750.30–8492799.68",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 22836792.764246892,
+            "range": "22692464.91–23059730.82",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 1396973.507305956,
+            "range": "1394378.85–1399697.27",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 11195336,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 366343,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 220172,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 318570,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 105.76318400003947,
+            "range": "91.79–132.35",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 91.79434599995147, 101.17500499996822, 105.76318400003947, 106.37918499996886, 132.34870600001886"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 518.1988989999518,
+            "range": "487.04–575.54",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 487.0422130000079, 496.3239070000127, 518.1988989999518, 554.0275939999847, 575.5441390000051"
+          },
+          {
+            "name": "server/startup-median",
+            "value": 197.103993,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/median",
+            "value": 181.971361,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/p95",
+            "value": 182.11381,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/median",
+            "value": 181.854109,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/p95",
+            "value": 181.935096,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/median",
+            "value": 181.888492,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/p95",
+            "value": 182.021621,
             "unit": "ms"
           }
         ]

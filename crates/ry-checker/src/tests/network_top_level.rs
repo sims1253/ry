@@ -298,3 +298,35 @@ fn vectorized_and_rhs_still_warns() {
         0
     );
 }
+
+#[test]
+fn negated_true_while_and_masked_probes() {
+    // `while (!TRUE)` is as dead as `while (FALSE)`.
+    assert_eq!(
+        network_warnings(
+            "while (!TRUE) utils::download.file('https://example.invalid/x', tempfile())"
+        ),
+        0
+    );
+    // A locally defined `interactive` is not base's opt-in probe.
+    assert_eq!(
+        network_warnings(
+            "interactive <- function() TRUE\nif (interactive()) utils::download.file('https://example.invalid/x', tempfile())"
+        ),
+        1
+    );
+    // Nor is a same-named formal inside a load hook.
+    assert_eq!(
+        network_warnings(
+            ".onLoad <- function(libname, pkgname, interactive = function() TRUE) { if (interactive()) utils::download.file('https://example.invalid/x', tempfile()) }"
+        ),
+        1
+    );
+    // Qualified `base::interactive()` still guards under a local mask.
+    assert_eq!(
+        network_warnings(
+            "interactive <- function() TRUE\nif (base::interactive()) utils::download.file('https://example.invalid/x', tempfile())"
+        ),
+        0
+    );
+}

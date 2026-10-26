@@ -1065,7 +1065,15 @@ impl Checker {
                 // A literal-FALSE body never runs: walk it for its
                 // bindings under the same dead-arm silence as `if`.
                 let outer_dead = self.in_dead_arm;
-                self.in_dead_arm |= matches!(cond, Expr::Logical(false, _));
+                self.in_dead_arm |= matches!(cond, Expr::Logical(false, _))
+                    || matches!(
+                        cond,
+                        Expr::UnaryOp {
+                            op: UnaryOpKind::Not,
+                            expr,
+                            ..
+                        } if matches!(expr.as_ref(), Expr::Logical(true, _))
+                    );
                 self.walk_block(body, &mut inner, returns.as_deref_mut());
                 self.in_dead_arm = outer_dead;
                 let always_true = matches!(cond, Expr::Logical(true, _));

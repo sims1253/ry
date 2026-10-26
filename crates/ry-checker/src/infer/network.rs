@@ -374,17 +374,27 @@ fn base_call_member(func: &Expr) -> Option<&str> {
 }
 
 /// If `expr` is a direct opt-in probe call (`interactive()`,
-/// `getOption()`, `Sys.getenv()`, bare or `base::`), its name.
-fn probe_call_name(expr: &Expr) -> Option<&'static str> {
-    let Expr::Call { func, .. } = expr else {
+/// `getOption()`, `Sys.getenv()`, bare or `base::`), its name. A
+/// bare head masked by a local or file-level binding of the same
+/// name (`masked`) is not base's probe and proves nothing.
+fn probe_call_name(expr: &Expr, masked: &dyn Fn(&str, Span) -> bool) -> Option<&'static str> {
+    let Expr::Call { func, span, .. } = expr else {
         return None;
     };
-    match base_call_member(func)? {
-        "interactive" => Some("interactive"),
-        "getOption" => Some("getOption"),
-        "Sys.getenv" => Some("Sys.getenv"),
-        _ => None,
+    let member = base_call_member(func)?;
+    let probe = match member {
+        "interactive" => "interactive",
+        "getOption" => "getOption",
+        "Sys.getenv" => "Sys.getenv",
+        _ => return None,
+    };
+    let Expr::Ident { name, .. } = func.as_ref() else {
+        return None;
+    };
+    if matches!(Callee::parse(name), Callee::Bare(_)) && masked(probe, *span) {
+        return None;
     }
+    Some(probe)
 }
 
 /// Whether an equality between a probe call and a literal, holding
@@ -394,10 +404,15 @@ fn probe_call_name(expr: &Expr) -> Option<&'static str> {
 /// and — only for `interactive()`, whose result is a logical scalar —
 /// `FALSE` under inequality. `identical(interactive(), FALSE)` under
 /// equality proves the opposite of an opt-in and never counts.
-fn equality_established(lhs: &Expr, rhs: &Expr, eq_holds: bool) -> bool {
-    let (probe, literal) = if let Some(probe) = probe_call_name(lhs) {
+fn equality_established(
+    lhs: &Expr,
+    rhs: &Expr,
+    eq_holds: bool,
+    masked: &dyn Fn(&str, Span) -> bool,
+) -> bool {
+    let (probe, literal) = if let Some(probe) = probe_call_name(lhs, masked) {
         (probe, rhs)
-    } else if let Some(probe) = probe_call_name(rhs) {
+    } else if let Some(probe) = probe_call_name(rhs, masked) {
         (probe, lhs)
     } else {
         return false;
@@ -424,27 +439,27 @@ fn equality_established(lhs: &Expr, rhs: &Expr, eq_holds: bool) -> bool {
 /// unrelated predicate establishes nothing. A probe read through a
 /// variable (`enabled <- getOption(...); if (enabled)`) is likewise
 /// not recognized; that stays a known remainder rather than a guess.
-fn probe_established(expr: &Expr, when_true: bool) -> bool {
+fn probe_established(expr: &Expr, when_true: bool, masked: &dyn Fn(&str, Span) -> bool) -> bool {
     match expr {
         Expr::UnaryOp {
             op: UnaryOpKind::Not,
             expr,
             ..
-        } => probe_established(expr, !when_true),
+        } => probe_established(expr, !when_true, masked),
         Expr::BinOp {
             op: BinOpKind::Eq,
             lhs,
             rhs,
             ..
-        } => equality_established(lhs, rhs, when_true),
+        } => equality_established(lhs, rhs, when_true, masked),
         Expr::BinOp {
             op: BinOpKind::Ne,
             lhs,
             rhs,
             ..
-        } => equality_established(lhs, rhs, !when_true),
+        } => equality_established(lhs, rhs, !when_true, masked),
         Expr::Call { func, args, .. } => {
-            if probe_call_name(expr).is_some() {
+            if probe_call_name(expr, masked).is_some() {
                 return when_true;
             }
             match base_call_member(func) {
@@ -452,17 +467,17 @@ fn probe_established(expr: &Expr, when_true: bool) -> bool {
                     when_true
                         && args
                             .first()
-                            .is_some_and(|arg| probe_call_name(&arg.value).is_some())
+                            .is_some_and(|arg| probe_call_name(&arg.value, masked).is_some())
                 }
                 Some("nzchar") => {
                     when_true
-                        && args
-                            .first()
-                            .is_some_and(|arg| probe_call_name(&arg.value) == Some("Sys.getenv"))
+                        && args.first().is_some_and(|arg| {
+                            probe_call_name(&arg.value, masked) == Some("Sys.getenv")
+                        })
                 }
                 Some("identical") => {
                     args.len() >= 2
-                        && equality_established(&args[0].value, &args[1].value, when_true)
+                        && equality_established(&args[0].value, &args[1].value, when_true, masked)
                 }
                 _ => false,
             }
@@ -530,13 +545,17 @@ fn dead_arm_spans(body: &[Stmt]) -> Vec<Span> {
 /// Whether `cond` evaluating to `when_true` proves an opt-in probe
 /// held, so the arm taken on that outcome is guarded. `&&`/`&` prove
 /// their conjuncts when true; `||`/`|` prove theirs when false.
-fn condition_implies_guard(cond: &Expr, when_true: bool) -> bool {
+fn condition_implies_guard(
+    cond: &Expr,
+    when_true: bool,
+    masked: &dyn Fn(&str, Span) -> bool,
+) -> bool {
     match cond {
         Expr::UnaryOp {
             op: UnaryOpKind::Not,
             expr,
             ..
-        } => condition_implies_guard(expr, !when_true),
+        } => condition_implies_guard(expr, !when_true, masked),
         Expr::BinOp {
             op: BinOpKind::AndAnd | BinOpKind::And,
             lhs,
@@ -547,9 +566,11 @@ fn condition_implies_guard(cond: &Expr, when_true: bool) -> bool {
             // suffices. False: only some conjunct failed, so each
             // conjunct must establish the probe by failing.
             if when_true {
-                condition_implies_guard(lhs, true) || condition_implies_guard(rhs, true)
+                condition_implies_guard(lhs, true, masked)
+                    || condition_implies_guard(rhs, true, masked)
             } else {
-                condition_implies_guard(lhs, false) && condition_implies_guard(rhs, false)
+                condition_implies_guard(lhs, false, masked)
+                    && condition_implies_guard(rhs, false, masked)
             }
         }
         Expr::BinOp {
@@ -563,12 +584,14 @@ fn condition_implies_guard(cond: &Expr, when_true: bool) -> bool {
             // each disjunct must establish the probe by holding —
             // a non-probe disjunct may be the true one.
             if when_true {
-                condition_implies_guard(lhs, true) && condition_implies_guard(rhs, true)
+                condition_implies_guard(lhs, true, masked)
+                    && condition_implies_guard(rhs, true, masked)
             } else {
-                condition_implies_guard(lhs, false) || condition_implies_guard(rhs, false)
+                condition_implies_guard(lhs, false, masked)
+                    || condition_implies_guard(rhs, false, masked)
             }
         }
-        _ => probe_established(cond, when_true),
+        _ => probe_established(cond, when_true, masked),
     }
 }
 
@@ -612,38 +635,46 @@ pub(crate) fn index_guarded_spans(
     continuations: &std::collections::HashMap<Span, Span>,
     guarded: &mut Vec<Span>,
 ) {
-    // Where a bare `stop` is not base's: a file-level binding of
-    // `stop` shadows it everywhere (load hooks run after the file's
-    // top level), and a function that binds `stop` — as a formal or
-    // by assignment in its own frame — shadows it within its span.
-    let binds_stop = |names: &std::collections::HashSet<String>| {
+    // Where a bare head is not base's: a file-level binding shadows
+    // it everywhere (load hooks run after the file's top level), and
+    // a function that binds the name — as a formal or by assignment
+    // in its own frame — shadows it within its span. Applies to the
+    // diverging `stop` and to the opt-in probes alike: a locally
+    // defined `interactive()` is not an opt-in check.
+    const SHADOWED: [&str; 4] = ["stop", "interactive", "getOption", "Sys.getenv"];
+    let binds = |names: &std::collections::HashSet<String>, wanted: &str| {
         names
             .iter()
-            .any(|name| semantic_argument_name(name) == "stop")
+            .any(|name| semantic_argument_name(name) == wanted)
     };
-    let file_stop_shadowed = binds_stop(&assigned_names_in_body(stmts));
-    let mut stop_shadow_spans: Vec<Span> = Vec::new();
+    let file_assigned = assigned_names_in_body(stmts);
+    let file_shadowed = |wanted: &str| binds(&file_assigned, wanted);
+    let mut shadow_spans: Vec<(Span, &'static str)> = Vec::new();
     let _: ControlFlow<()> = walk_stmts(stmts, Walk::ALL, |node, _| {
         let (params, body, span) = match node {
             AstNode::Stmt(Stmt::FunctionDef { params, body, span }) => (params, body, span),
             AstNode::Expr(Expr::Function { params, body, span }) => (params, body, span),
             _ => return ControlFlow::Continue(Descend::Into),
         };
-        if params
-            .iter()
-            .any(|param| semantic_argument_name(&param.name) == "stop")
-            || binds_stop(&assigned_names_in_body(body))
-        {
-            stop_shadow_spans.push(*span);
+        let body_assigned = assigned_names_in_body(body);
+        for wanted in SHADOWED {
+            if params
+                .iter()
+                .any(|param| semantic_argument_name(&param.name) == wanted)
+                || binds(&body_assigned, wanted)
+            {
+                shadow_spans.push((*span, wanted));
+            }
         }
         ControlFlow::Continue(Descend::Into)
     });
-    let bare_stop_is_base = |span: Span| {
-        !file_stop_shadowed
-            && !stop_shadow_spans
-                .iter()
-                .any(|shadow| span.start >= shadow.start && span.end <= shadow.end)
+    let masked = |wanted: &str, span: Span| {
+        file_shadowed(wanted)
+            || shadow_spans.iter().any(|(shadow, name)| {
+                *name == wanted && span.start >= shadow.start && span.end <= shadow.end
+            })
     };
+    let bare_stop_is_base = |span: Span| !masked("stop", span);
     let _: ControlFlow<()> = walk_stmts(stmts, Walk::ALL, |node, _| {
         match node {
             AstNode::Stmt(Stmt::If {
@@ -652,10 +683,10 @@ pub(crate) fn index_guarded_spans(
                 else_,
                 span,
             }) => {
-                if condition_implies_guard(cond, true) {
+                if condition_implies_guard(cond, true, &masked) {
                     guarded.extend(then.iter().map(vacuous::stmt_span));
                 }
-                if condition_implies_guard(cond, false) {
+                if condition_implies_guard(cond, false, &masked) {
                     if let Some(else_stmts) = else_ {
                         guarded.extend(else_stmts.iter().map(vacuous::stmt_span));
                     }
@@ -671,10 +702,10 @@ pub(crate) fn index_guarded_spans(
             AstNode::Expr(Expr::If {
                 cond, then, else_, ..
             }) => {
-                if condition_implies_guard(cond, true) {
+                if condition_implies_guard(cond, true, &masked) {
                     guarded.push(span_of(then));
                 }
-                if condition_implies_guard(cond, false)
+                if condition_implies_guard(cond, false, &masked)
                     && let Some(else_expr) = else_
                 {
                     guarded.push(span_of(else_expr));
@@ -685,7 +716,7 @@ pub(crate) fn index_guarded_spans(
                 lhs,
                 rhs,
                 ..
-            }) if condition_implies_guard(lhs, true) => {
+            }) if condition_implies_guard(lhs, true, &masked) => {
                 guarded.push(span_of(rhs));
             }
             AstNode::Expr(Expr::BinOp {
@@ -693,7 +724,7 @@ pub(crate) fn index_guarded_spans(
                 lhs,
                 rhs,
                 ..
-            }) if condition_implies_guard(lhs, false) => {
+            }) if condition_implies_guard(lhs, false, &masked) => {
                 guarded.push(span_of(rhs));
             }
             _ => {}

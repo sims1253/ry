@@ -2831,7 +2831,7 @@ impl Checker {
 
     fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
         match expr {
-            Expr::Function { params, body, .. } => {
+            Expr::Function { params, body, span } => {
                 let mut inner = scope.function_execution_scope();
                 for parameter in params {
                     inner.insert_parameter(parameter.name.clone(), RType::unknown());
@@ -2839,7 +2839,13 @@ impl Checker {
                 for name in assigned_names_in_body(body) {
                     inner.insert(name, RType::unknown());
                 }
+                // An injected function literal (an R6 method, say) is a
+                // function body like any other: record its frame so
+                // frame-sensitive analyses do not read its body as the
+                // enclosing (possibly top-level) execution.
+                self.push_enclosing_formals(params, *span);
                 self.walk_block(body, &mut inner, None);
+                self.enclosing_formals.pop();
                 RType::scalar(Mode::Function)
             }
             Expr::Call { args, .. } => {

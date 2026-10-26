@@ -126,6 +126,129 @@ fn masked_and_dynamic_callees_stay_quiet() {
 }
 
 #[test]
+fn connection_open_uses_argument_matching() {
+    // Named formals bind first, so the unnamed `'r'` fills `open`.
+    assert_eq!(
+        network_warnings("base::url(description = 'https://example.invalid/x', 'r')"),
+        1
+    );
+    assert_eq!(
+        network_warnings("curl::curl(url = 'https://example.invalid/x', 'r')"),
+        1
+    );
+    // An unambiguous partial name binds `open`.
+    assert_eq!(
+        network_warnings("base::url('https://example.invalid/x', op = 'r')"),
+        1
+    );
+    assert_eq!(
+        network_warnings("base::socketConnection(host = 'localhost', 80L)"),
+        1
+    );
+    for source in [
+        // `o` does not prove an opened connection: it is an ambiguous
+        // partial name (`open`/`options`) in current R.
+        "base::socketConnection('localhost', port = 80L, o = '')",
+        "base::socketConnection('localhost', port = 80L, ope = '')",
+        // A computed `open` reached by partial matching stays silent.
+        "base::url('https://example.invalid/x', op = mode)",
+        "base::url(description = 'https://example.invalid/x', '')",
+    ] {
+        assert_eq!(network_warnings(source), 0, "{source}");
+    }
+}
+
+#[test]
+fn wrapper_scan_respects_local_bindings_and_deferred_code() {
+    for source in [
+        // A function defined locally in the wrapper masks the bare head.
+        "fetch <- function() { url <- function(...) NULL; url('https://example.invalid/x', open = 'r') }\nfetch()",
+        "fetch <- function() { download.file <- function(u, d) d; download.file('https://example.invalid/x', tempfile()) }\nfetch()",
+        // Quoted and delayed code is not executed by calling the wrapper.
+        "fetch <- function() quote(utils::download.file('https://example.invalid/x', tempfile()))\nfetch()",
+        "fetch <- function() { delayedAssign('x', utils::download.file('https://example.invalid/x', tempfile())) }\nfetch()",
+        // A literal-FALSE arm never runs; a literal-TRUE else arm neither.
+        "fetch <- function() { if (FALSE) utils::download.file('https://example.invalid/x', tempfile()) }\nfetch()",
+        "fetch <- function() { if (TRUE) NULL else utils::download.file('https://example.invalid/x', tempfile()) }\nfetch()",
+    ] {
+        assert_eq!(network_warnings(source), 0, "{source}");
+    }
+    // The executed arm of a literal-TRUE `if` still counts.
+    assert_eq!(
+        network_warnings(
+            "fetch <- function() { if (TRUE) utils::download.file('https://example.invalid/x', tempfile()) }\nfetch()"
+        ),
+        1
+    );
+    // A local binding cannot mask a qualified head.
+    assert_eq!(
+        network_warnings(
+            "fetch <- function() { download.file <- function(u, d) d; utils::download.file('https://example.invalid/x', tempfile()) }\nfetch()"
+        ),
+        1
+    );
+}
+
+#[test]
+fn guard_probe_must_be_established_by_the_condition() {
+    for source in [
+        // This arm runs specifically in noninteractive sessions.
+        "if (identical(interactive(), FALSE)) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (identical(Sys.getenv('MYPKG_DOWNLOAD'), '')) utils::download.file('https://example.invalid/x', tempfile())",
+        // The probe sits in an unevaluated nested function; the
+        // condition's truth says nothing about it.
+        "if (length(list(function() interactive())) > 0L) utils::download.file('https://example.invalid/x', tempfile())",
+    ] {
+        assert_eq!(network_warnings(source), 1, "{source}");
+    }
+    for source in [
+        "if (identical(interactive(), TRUE)) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (!identical(interactive(), FALSE)) utils::download.file('https://example.invalid/x', tempfile())",
+        "if (Sys.getenv('MYPKG_DOWNLOAD') == '1') utils::download.file('https://example.invalid/x', tempfile())",
+        "if (Sys.getenv('MYPKG_DOWNLOAD') != '') utils::download.file('https://example.invalid/x', tempfile())",
+        "if (interactive() && isTRUE(getOption('mypkg.download'))) utils::download.file('https://example.invalid/x', tempfile())",
+    ] {
+        assert_eq!(network_warnings(source), 0, "{source}");
+    }
+}
+
+#[test]
+fn diverging_guard_requires_base_stop() {
+    // A locally defined `stop` returns normally, so the download runs.
+    assert_eq!(
+        network_warnings(
+            ".onLoad <- function(libname, pkgname) { stop <- function(...) NULL; if (!interactive()) stop('skip'); utils::download.file('https://example.invalid/x', tempfile()) }"
+        ),
+        1
+    );
+    for source in [
+        ".onLoad <- function(libname, pkgname) { if (!interactive()) stop('skip'); utils::download.file('https://example.invalid/x', tempfile()) }",
+        // A qualified `base::stop` diverges even beside a local `stop`.
+        ".onLoad <- function(libname, pkgname) { stop <- function(...) NULL; if (!interactive()) base::stop('skip'); utils::download.file('https://example.invalid/x', tempfile()) }",
+    ] {
+        assert_eq!(network_warnings(source), 0, "{source}");
+    }
+}
+
+#[test]
+fn methods_nested_in_top_level_calls_stay_quiet() {
+    // The torch shape: an R6 method body is ordinary function code,
+    // however deeply the literal is nested in a top-level call.
+    assert_eq!(
+        network_warnings(
+            "r_session <- R6::R6Class('r_session', public = list(setup = function() { con <- socketConnection(port = 1L, server = TRUE, open = 'a+b') }))"
+        ),
+        0
+    );
+    assert_eq!(
+        network_warnings(
+            "handlers <- list(fetch = function() utils::download.file('https://example.invalid/x', tempfile()))"
+        ),
+        0
+    );
+}
+
+#[test]
 fn project_wrapper_called_at_top_level_warns_at_the_call() {
     assert_eq!(
         network_warnings(

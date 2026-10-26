@@ -12,10 +12,13 @@
 //! (their `open` formal defaults to `""`), while `socketConnection()`
 //! connects immediately (`open` defaults to `"a+"`). Only a literal
 //! `open` argument can settle the question; a computed one stays silent.
+//! The direct path and the project-wrapper path share
+//! `call_reaches_network`, so a computed `open` is silent in both: a
+//! wrapper never warns where its inlined body would not.
 
 use super::callee::CallHead;
 use super::*;
-use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::ops::ControlFlow;
 
 /// How a recognized head reaches the network.
@@ -23,11 +26,12 @@ use std::ops::ControlFlow;
 enum NetworkHead {
     /// The call itself performs the request.
     Performs,
-    /// A connection constructor: it connects only once opened. `open_index`
-    /// is the positional index of the `open` formal, and `opens_by_default`
-    /// records the formal's default (`"a+"` for `socketConnection`).
+    /// A connection constructor: it connects only once opened. `formals`
+    /// is the constructor's full formal list (so `match_arguments` can
+    /// bind `open` exactly as R does), and `opens_by_default` records
+    /// the `open` formal's default (`"a+"` for `socketConnection`).
     Connection {
-        open_index: usize,
+        formals: &'static [&'static str],
         opens_by_default: bool,
     },
 }
@@ -40,14 +44,23 @@ fn network_head(lookup_name: &str) -> Option<(&'static str, NetworkHead)> {
         "url" => (
             "base",
             NetworkHead::Connection {
-                open_index: 1,
+                formals: &[
+                    "description",
+                    "open",
+                    "blocking",
+                    "encoding",
+                    "method",
+                    "headers",
+                ],
                 opens_by_default: false,
             },
         ),
         "socketConnection" => (
             "base",
             NetworkHead::Connection {
-                open_index: 4,
+                formals: &[
+                    "host", "port", "server", "blocking", "open", "encoding", "timeout", "options",
+                ],
                 opens_by_default: true,
             },
         ),
@@ -55,7 +68,7 @@ fn network_head(lookup_name: &str) -> Option<(&'static str, NetworkHead)> {
         "curl" => (
             "curl",
             NetworkHead::Connection {
-                open_index: 1,
+                formals: &["url", "open", "handle"],
                 opens_by_default: false,
             },
         ),
@@ -65,46 +78,41 @@ fn network_head(lookup_name: &str) -> Option<(&'static str, NetworkHead)> {
     })
 }
 
-/// The literal `open` mode of a connection call: `Some(true)` opens,
-/// `Some(false)` stays closed, `None` is not statically known.
-fn literal_open_opens(args: &[Arg], open_index: usize) -> Option<bool> {
-    let mut positional = 0usize;
-    let mut open_arg = None;
-    for arg in args {
-        match arg.name.as_deref() {
-            Some("open") => open_arg = Some(arg),
-            Some(_) => {}
-            None => {
-                if positional == open_index {
-                    open_arg = Some(arg);
-                }
-                positional += 1;
-            }
-        }
-    }
-    match open_arg?.value {
-        Expr::String(ref mode, _) => Some(!mode.is_empty()),
-        _ => None,
-    }
-}
-
 /// Whether this call provably opens its connection (or performs outright).
+///
+/// The `open` actual is found with R's own argument matching
+/// (`match_arguments`: exact names, unambiguous partial names, then
+/// position), so `url(description = u, 'r')` binds `'r'` to `open` and
+/// `socketConnection(..., o = '')` binds nothing — `o` is an ambiguous
+/// prefix of `open`/`options` in current R and the call errors before
+/// connecting (verified with Rscript). A call whose actuals do not bind
+/// one-to-one (duplicates, unmatched names) errors in R before any
+/// connection and stays silent, as does a computed `open`.
 fn call_reaches_network(head: NetworkHead, args: &[Arg]) -> bool {
     match head {
         NetworkHead::Performs => true,
         NetworkHead::Connection {
-            open_index,
+            formals,
             opens_by_default,
-        } => match literal_open_opens(args, open_index) {
-            Some(opens) => opens,
-            // No literal `open`: an absent argument takes the formal's
-            // default, but a computed argument could be either way.
-            None => {
-                opens_by_default
-                    && !args.iter().any(|arg| arg.name.as_deref() == Some("open"))
-                    && args.iter().filter(|arg| arg.name.is_none()).count() <= open_index
+        } => {
+            let matched = match_arguments(formals, args);
+            if !matched.is_one_to_one() {
+                return false;
             }
-        },
+            let Some(open_index) = formals.iter().position(|formal| *formal == "open") else {
+                return false;
+            };
+            match matched.arg_for_param(open_index) {
+                // A literal mode settles it; a computed one could be
+                // either way and stays silent.
+                Some(arg_index) => match &args[arg_index].value {
+                    Expr::String(mode, _) => !mode.is_empty(),
+                    _ => false,
+                },
+                // No `open` actual: the formal's default applies.
+                None => opens_by_default,
+            }
+        }
     }
 }
 
@@ -112,26 +120,31 @@ fn call_reaches_network(head: NetworkHead, args: &[Arg]) -> bool {
 /// deliberately absent: those scripts run as written, like top level.
 const NON_LOAD_TREES: [&str; 5] = ["tests", "demo", "vignettes", "inst", "examples"];
 
-impl Checker {
-    /// Whether the file being emitted runs its top level at package
-    /// load: a package `R/` file (`source_package` is set only there),
-    /// a `data-raw` script, or a file of unknown provenance (a bare
-    /// single-file check), which ry treats as load-executed like its
-    /// other syntactic rules. Known non-load trees stay silent.
-    fn in_load_context_file(&self) -> bool {
-        if self.package_facts.source_package.is_some() {
-            return true;
-        }
-        let components: Vec<&str> = std::path::Path::new(&self.path)
+/// Whether a file runs its top level at package load: a package `R/`
+/// file (`source_package` is set only there), a `data-raw` script, or a
+/// file of unknown provenance (a bare single-file check), which ry
+/// treats as load-executed like its other syntactic rules. Known
+/// non-load trees stay silent. Computed once per pass (see
+/// `Checker::network_load_context_file`), not per call.
+pub(crate) fn load_context_file(path: &str, is_package_r: bool) -> bool {
+    if is_package_r {
+        return true;
+    }
+    let is_component = |needle: &str| {
+        std::path::Path::new(path)
             .components()
             .filter_map(|component| component.as_os_str().to_str())
-            .collect();
-        if components.contains(&"data-raw") {
-            return true;
-        }
-        !components
-            .iter()
-            .any(|component| NON_LOAD_TREES.contains(component))
+            .any(|component| component == needle)
+    };
+    if is_component("data-raw") {
+        return true;
+    }
+    !NON_LOAD_TREES.iter().any(|tree| is_component(tree))
+}
+
+impl Checker {
+    fn in_load_context_file(&self) -> bool {
+        self.network_load_context_file
     }
 
     /// Whether the walk is currently evaluating load-time code: the
@@ -151,8 +164,11 @@ impl Checker {
 
     /// Whether a bare head may use `package` provenance without an
     /// explicit import or attachment. Base-database packages are on
-    /// every search path; other packages must be named by the call,
-    /// a NAMESPACE `importFrom`, or an attachment ry knows about.
+    /// every search path; other packages must be named by the call or
+    /// a NAMESPACE `importFrom`, or be attached on *this file's* search
+    /// path (`bare_loaded`). The project-wide `loaded` union does not
+    /// prove provenance at load time: another file's `library()` call
+    /// has not necessarily run while this file's namespace is built.
     fn bare_package_in_scope(&self, lookup_name: &str, package: &str) -> bool {
         crate::resolve::BASE_DATABASE_PACKAGES.contains(&package)
             || self
@@ -160,7 +176,6 @@ impl Checker {
                 .get(lookup_name)
                 .is_some_and(|imported| imported == package)
             || self.bare_loaded.contains(package)
-            || self.loaded.contains(package)
     }
 
     /// RY124: a proven network call evaluated while package code loads.
@@ -188,7 +203,7 @@ impl Checker {
         if let Some(function) = head.user_function()
             && head.bound_definition().is_some()
             && function.source_path == self.path
-            && self.body_performs_network_call(function)
+            && self.wrapper_performs_network_call(function)
         {
             self.emit(
                 Severity::Warning,
@@ -248,11 +263,37 @@ impl Checker {
         }
     }
 
+    /// Memoized [`body_performs_network_call`]: the same wrapper body
+    /// is scanned at most once per pass, however many load-time call
+    /// sites reach it. The cache is cleared with the guarded spans it
+    /// depends on (see `lib.rs` pass-3 setup).
+    fn wrapper_performs_network_call(&mut self, function: &UserFn) -> bool {
+        if let Some(cached) = self.network_wrapper_cache.get(&function.definition_span) {
+            return *cached;
+        }
+        let result = self.body_performs_network_call(function);
+        self.network_wrapper_cache
+            .insert(function.definition_span, result);
+        result
+    }
+
     /// Whether a project function's body directly calls a recognized
     /// network head outside any nested closure and outside a guarded
-    /// span. Bare heads masked by a formal or by a project definition
-    /// of the same name do not count.
+    /// span. Bare heads masked by a formal, by a name the body itself
+    /// binds (a locally defined function hides under a nested table
+    /// name such as `fetch$url`, invisible to `functions.binds`), or
+    /// by a project definition of the same name do not count. Calls
+    /// R does not evaluate when the wrapper runs — inside `quote()` /
+    /// `delayedAssign()` / `substitute()` / `expression()`, and in
+    /// the dead arm of a literal `if`/`while` — do not count either.
     fn body_performs_network_call(&self, function: &UserFn) -> bool {
+        let local_names = assigned_names_in_body(&function.body);
+        let dead_spans = dead_arm_spans(&function.body);
+        let in_dead_span = |span: Span| {
+            dead_spans
+                .iter()
+                .any(|dead| span.start >= dead.start && span.end <= dead.end)
+        };
         let mut policy = Walk::ALL;
         policy.fn_bodies = false;
         let mut found = false;
@@ -263,11 +304,24 @@ impl Checker {
             let Expr::Ident { name, .. } = func.as_ref() else {
                 return ControlFlow::Continue(Descend::Into);
             };
-            let callee = Callee::parse(name);
             let member = crate::semantic_lists::bare_name(semantic_argument_name(name));
+            // Deferred execution: the arguments of these heads are
+            // captured as language/promises, not evaluated by the call.
+            let deferred = matches!(
+                member,
+                "quote" | "delayedAssign" | "substitute" | "expression"
+            ) && match Callee::parse(name) {
+                Callee::Bare(_) => true,
+                Callee::Qualified { package, .. } => package.trim_end_matches(':') == "base",
+            };
+            if deferred {
+                return ControlFlow::Continue(Descend::Skip);
+            }
+            let callee = Callee::parse(name);
             if let Some((package, network)) = network_head(member)
                 && call_reaches_network(network, args)
                 && !self.in_guarded_span(*span)
+                && !in_dead_span(*span)
                 && match callee {
                     Callee::Qualified { package: named, .. } => {
                         named.trim_end_matches(':') == package
@@ -277,6 +331,9 @@ impl Checker {
                             .params
                             .iter()
                             .any(|parameter| parameter.name == member)
+                            && !local_names
+                                .iter()
+                                .any(|local| semantic_argument_name(local) == member)
                             && !self.fn_table.functions.binds(member)
                             && self.bare_package_in_scope(member, package)
                     }
@@ -291,30 +348,174 @@ impl Checker {
     }
 }
 
-/// Whether an expression mentions an opt-in probe (`interactive()`,
-/// `getOption()`, `Sys.getenv()`) anywhere inside it, under a bare or
-/// `base::` head. A probe guarded only through a variable
-/// (`enabled <- getOption(...); if (enabled)`) is not recognized; that
-/// stays a known remainder rather than a guess.
-fn mentions_guard_probe(expr: &Expr) -> bool {
-    let mut found = false;
-    let _ = walk_expr(expr, Walk::ALL, |node, _| {
-        if let AstNode::Expr(Expr::Call { func, .. }) = node
-            && let Expr::Ident { name, .. } = func.as_ref()
-        {
-            let member = crate::semantic_lists::bare_name(semantic_argument_name(name));
-            let qualified_ok = match Callee::parse(name) {
-                Callee::Bare(_) => true,
-                Callee::Qualified { package, .. } => package.trim_end_matches(':') == "base",
-            };
-            if qualified_ok && matches!(member, "interactive" | "getOption" | "Sys.getenv") {
-                found = true;
-                return ControlFlow::Break(());
+/// The member name of a call head that may be read as a base call:
+/// a bare head or an explicit `base::` head.
+fn base_call_member(func: &Expr) -> Option<&str> {
+    let Expr::Ident { name, .. } = func else {
+        return None;
+    };
+    match Callee::parse(name) {
+        Callee::Bare(_) => {}
+        Callee::Qualified { package, .. } if package.trim_end_matches(':') == "base" => {}
+        Callee::Qualified { .. } => return None,
+    }
+    Some(crate::semantic_lists::bare_name(semantic_argument_name(
+        name,
+    )))
+}
+
+/// If `expr` is a direct opt-in probe call (`interactive()`,
+/// `getOption()`, `Sys.getenv()`, bare or `base::`), its name.
+fn probe_call_name(expr: &Expr) -> Option<&'static str> {
+    let Expr::Call { func, .. } = expr else {
+        return None;
+    };
+    match base_call_member(func)? {
+        "interactive" => Some("interactive"),
+        "getOption" => Some("getOption"),
+        "Sys.getenv" => Some("Sys.getenv"),
+        _ => None,
+    }
+}
+
+/// Whether an equality between a probe call and a literal, holding
+/// exactly when `eq_holds`, establishes the opt-in. Only literals whose
+/// comparison pins the probe's positive value count: `TRUE`, a
+/// non-empty string for the character probes, `""` under inequality,
+/// and — only for `interactive()`, whose result is a logical scalar —
+/// `FALSE` under inequality. `identical(interactive(), FALSE)` under
+/// equality proves the opposite of an opt-in and never counts.
+fn equality_established(lhs: &Expr, rhs: &Expr, eq_holds: bool) -> bool {
+    let (probe, literal) = if let Some(probe) = probe_call_name(lhs) {
+        (probe, rhs)
+    } else if let Some(probe) = probe_call_name(rhs) {
+        (probe, lhs)
+    } else {
+        return false;
+    };
+    match literal {
+        Expr::Logical(true, _) => eq_holds,
+        Expr::Logical(false, _) => !eq_holds && probe == "interactive",
+        Expr::String(value, _) if matches!(probe, "Sys.getenv" | "getOption") => {
+            if value.is_empty() {
+                !eq_holds
+            } else {
+                eq_holds
             }
+        }
+        _ => false,
+    }
+}
+
+/// Whether `expr` evaluating to `when_true` proves an opt-in probe
+/// held. This is structural, not a mention scan: only shapes whose
+/// outcome pins the probe's positive value count (the probe itself,
+/// `isTRUE(probe)`, `nzchar(Sys.getenv(...))`, and literal equalities),
+/// so a probe buried in an unevaluated nested function or under an
+/// unrelated predicate establishes nothing. A probe read through a
+/// variable (`enabled <- getOption(...); if (enabled)`) is likewise
+/// not recognized; that stays a known remainder rather than a guess.
+fn probe_established(expr: &Expr, when_true: bool) -> bool {
+    match expr {
+        Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } => probe_established(expr, !when_true),
+        Expr::BinOp {
+            op: BinOpKind::Eq,
+            lhs,
+            rhs,
+            ..
+        } => equality_established(lhs, rhs, when_true),
+        Expr::BinOp {
+            op: BinOpKind::Ne,
+            lhs,
+            rhs,
+            ..
+        } => equality_established(lhs, rhs, !when_true),
+        Expr::Call { func, args, .. } => {
+            if probe_call_name(expr).is_some() {
+                return when_true;
+            }
+            match base_call_member(func) {
+                Some("isTRUE") => {
+                    when_true
+                        && args
+                            .first()
+                            .is_some_and(|arg| probe_call_name(&arg.value).is_some())
+                }
+                Some("nzchar") => {
+                    when_true
+                        && args
+                            .first()
+                            .is_some_and(|arg| probe_call_name(&arg.value) == Some("Sys.getenv"))
+                }
+                Some("identical") => {
+                    args.len() >= 2
+                        && equality_established(&args[0].value, &args[1].value, when_true)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// The `TRUE`/`FALSE` value of a literal logical, through `!`.
+fn literal_logical(expr: &Expr) -> Option<bool> {
+    match expr {
+        Expr::Logical(value, _) => Some(*value),
+        Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } => literal_logical(expr).map(|value| !value),
+        _ => None,
+    }
+}
+
+/// Source ranges a literal condition proves never execute: the taken
+/// arm of `if (FALSE)`, the else arm of `if (TRUE)`, and the body of
+/// `while (FALSE)`, in this frame (nested closures are not entered).
+fn dead_arm_spans(body: &[Stmt]) -> Vec<Span> {
+    let mut dead = Vec::new();
+    let mut policy = Walk::ALL;
+    policy.fn_bodies = false;
+    let _: ControlFlow<()> = walk_stmts(body, policy, |node, _| {
+        match node {
+            AstNode::Stmt(Stmt::If {
+                cond, then, else_, ..
+            }) => match literal_logical(cond) {
+                Some(false) => dead.extend(then.iter().map(vacuous::stmt_span)),
+                Some(true) => {
+                    if let Some(else_stmts) = else_ {
+                        dead.extend(else_stmts.iter().map(vacuous::stmt_span));
+                    }
+                }
+                None => {}
+            },
+            AstNode::Stmt(Stmt::While { cond, body, .. })
+                if literal_logical(cond) == Some(false) =>
+            {
+                dead.extend(body.iter().map(vacuous::stmt_span));
+            }
+            AstNode::Expr(Expr::If {
+                cond, then, else_, ..
+            }) => match literal_logical(cond) {
+                Some(false) => dead.push(span_of(then)),
+                Some(true) => {
+                    if let Some(else_expr) = else_ {
+                        dead.push(span_of(else_expr));
+                    }
+                }
+                None => {}
+            },
+            _ => {}
         }
         ControlFlow::Continue(Descend::Into)
     });
-    found
+    dead
 }
 
 /// Whether `cond` evaluating to `when_true` proves an opt-in probe
@@ -344,23 +545,36 @@ fn condition_implies_guard(cond: &Expr, when_true: bool) -> bool {
             !when_true
                 && (condition_implies_guard(lhs, false) || condition_implies_guard(rhs, false))
         }
-        _ => when_true && mentions_guard_probe(cond),
+        _ => probe_established(cond, when_true),
+    }
+}
+
+/// Whether a call head leaves its function or errors: a qualified
+/// `base::stop`/`base::return`, a bare `return`, or a bare `stop` —
+/// but a bare `stop` only where no local binding shadows it
+/// (`bare_stop_is_base`), since a locally defined `stop` returns
+/// normally and execution continues to the guarded continuation.
+fn call_diverges(func: &Expr, bare_stop_is_base: bool) -> bool {
+    let Expr::Ident { name, .. } = func else {
+        return false;
+    };
+    let member = crate::semantic_lists::bare_name(semantic_argument_name(name));
+    match Callee::parse(name) {
+        Callee::Qualified { package, .. } => {
+            package.trim_end_matches(':') == "base" && matches!(member, "stop" | "return")
+        }
+        Callee::Bare(_) => member == "return" || (member == "stop" && bare_stop_is_base),
     }
 }
 
 /// Whether a statement list leaves its function or errors on every
 /// path ry can see from its direct statements (`return`, `stop`).
-fn arm_diverges(stmts: &[Stmt]) -> bool {
+/// A braced block used as a statement diverges as its statements do.
+fn arm_diverges(stmts: &[Stmt], bare_stop_is_base: bool) -> bool {
     stmts.iter().any(|stmt| match stmt {
         Stmt::Return { .. } => true,
-        Stmt::Expr(Expr::Call { func, .. }) => matches!(
-            func.as_ref(),
-            Expr::Ident { name, .. }
-                if matches!(
-                    crate::semantic_lists::bare_name(semantic_argument_name(name)),
-                    "return" | "stop"
-                )
-        ),
+        Stmt::Expr(Expr::Block { body, .. }) => arm_diverges(body, bare_stop_is_base),
+        Stmt::Expr(Expr::Call { func, .. }) => call_diverges(func, bare_stop_is_base),
         _ => false,
     })
 }
@@ -375,6 +589,38 @@ pub(crate) fn index_guarded_spans(
     continuations: &std::collections::HashMap<Span, Span>,
     guarded: &mut Vec<Span>,
 ) {
+    // Where a bare `stop` is not base's: a file-level binding of
+    // `stop` shadows it everywhere (load hooks run after the file's
+    // top level), and a function that binds `stop` — as a formal or
+    // by assignment in its own frame — shadows it within its span.
+    let binds_stop = |names: &std::collections::HashSet<String>| {
+        names
+            .iter()
+            .any(|name| semantic_argument_name(name) == "stop")
+    };
+    let file_stop_shadowed = binds_stop(&assigned_names_in_body(stmts));
+    let mut stop_shadow_spans: Vec<Span> = Vec::new();
+    let _: ControlFlow<()> = walk_stmts(stmts, Walk::ALL, |node, _| {
+        let (params, body, span) = match node {
+            AstNode::Stmt(Stmt::FunctionDef { params, body, span }) => (params, body, span),
+            AstNode::Expr(Expr::Function { params, body, span }) => (params, body, span),
+            _ => return ControlFlow::Continue(Descend::Into),
+        };
+        if params
+            .iter()
+            .any(|param| semantic_argument_name(&param.name) == "stop")
+            || binds_stop(&assigned_names_in_body(body))
+        {
+            stop_shadow_spans.push(*span);
+        }
+        ControlFlow::Continue(Descend::Into)
+    });
+    let bare_stop_is_base = |span: Span| {
+        !file_stop_shadowed
+            && !stop_shadow_spans
+                .iter()
+                .any(|shadow| span.start >= shadow.start && span.end <= shadow.end)
+    };
     let _: ControlFlow<()> = walk_stmts(stmts, Walk::ALL, |node, _| {
         match node {
             AstNode::Stmt(Stmt::If {
@@ -392,7 +638,7 @@ pub(crate) fn index_guarded_spans(
                     }
                     // `if (!probe) return()` guards whatever follows it
                     // in the same statement list.
-                    if arm_diverges(then)
+                    if arm_diverges(then, bare_stop_is_base(*span))
                         && let Some(continuation) = continuations.get(span)
                     {
                         guarded.push(*continuation);

@@ -2843,6 +2843,9 @@ impl Checker {
                 // function body like any other: record its frame so
                 // frame-sensitive analyses do not read its body as the
                 // enclosing (possibly top-level) execution.
+                // Paired pop: `push_enclosing_formals` mutates only
+                // `enclosing_formals` (see its definition), unlike
+                // `enter_function_body`'s wider frame state.
                 self.push_enclosing_formals(params, *span);
                 self.walk_block(body, &mut inner, None);
                 self.enclosing_formals.pop();

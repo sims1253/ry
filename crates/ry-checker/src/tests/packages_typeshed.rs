@@ -1149,7 +1149,7 @@ fn candidate_package_functions_load_qualified_and_attached() {
             // and says nothing about whether the name resolved.
             let diagnostics: Vec<_> = check(&source)
                 .into_iter()
-                .filter(|diagnostic| diagnostic.code != "RY124")
+                .filter(|diagnostic| !(*package == "curl" && diagnostic.code == "RY124"))
                 .collect();
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
         }

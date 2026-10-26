@@ -408,9 +408,7 @@ fn probe_call_name(expr: &Expr, masked: &dyn Fn(&str, Span) -> bool) -> Option<&
 
 /// The fallback a probe call returns when the setting is absent:
 /// `getOption(x, default)`'s `default`, `Sys.getenv(x, unset)`'s
-/// `unset`. Resolved narrowly (exact formal name, else second
-/// positional — R's exact pass runs before position, partial names
-/// are not resolved here and keep the older behavior). A probe
+/// `unset`. A probe
 /// whose fallback already satisfies the shape's positive test runs
 /// the guarded arm with no opt-in at all, so it establishes
 /// nothing; only literal fallbacks are read, others are not
@@ -419,18 +417,17 @@ fn probe_fallback<'a>(expr: &'a Expr, probe: &str) -> Option<&'a Expr> {
     let Expr::Call { args, .. } = expr else {
         return None;
     };
-    let formal = match probe {
-        "getOption" => "default",
-        "Sys.getenv" => "unset",
+    // The probes' real formal lists, matched with the same
+    // `match_arguments` policy (exact, partial, positional) the
+    // connection-open logic above uses.
+    let formals: &[&str] = match probe {
+        "getOption" => &["x", "default"],
+        "Sys.getenv" => &["x", "unset", "names"],
         _ => return None,
     };
-    if let Some(named) = args.iter().find(|arg| arg.name.as_deref() == Some(formal)) {
-        return Some(&named.value);
-    }
-    args.iter()
-        .filter(|arg| arg.name.is_none())
-        .nth(1)
-        .map(|arg| &arg.value)
+    match_arguments(formals, args)
+        .arg_for_param(1)
+        .map(|index| &args[index].value)
 }
 
 /// How a guard shape tests a probe value; a literal fallback that

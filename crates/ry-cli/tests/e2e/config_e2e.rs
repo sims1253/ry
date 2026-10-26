@@ -1207,7 +1207,7 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
                 USE,
                 (
                     "R/sysdata.rda",
-                    include_bytes!("../../../../testdata/serialized/nested-limit.rda"),
+                    include_bytes!("../../../../testdata/serialized/nested-deep.rda"),
                 ),
             ],
             Some(("sysdata.rda", "serialized parser resource limit exceeded")),
@@ -1241,8 +1241,9 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
             Some(("sysdata.rda", "unsupported serialized input")),
             &["sysdata", "genuinely_missing"],
         ),
-        // A workspace the parser stops reading early (an external pointer,
-        // #714) is partial, never silently complete.
+        // A workspace with an external pointer enumerates completely via
+        // the tag walker (#714): no degraded scope, and the only unbound
+        // names are the ones the workspace really does not bind.
         (
             "",
             &[
@@ -1252,7 +1253,7 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
                     include_bytes!("../../../../testdata/serialized/extptr.rda"),
                 ),
             ],
-            Some(("sysdata.rda", "unsupported serialized input")),
+            None,
             &["sysdata", "genuinely_missing"],
         ),
         // A missing `load()` target is unreadable. An absent optional
@@ -1317,6 +1318,38 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
             None => assert_eq!(scopes, &json!([])),
         }
     }
+}
+
+/// Bindings saved after an external pointer in R/sysdata.rda are real
+/// namespace bindings, not unbound variables (#714). A tibble from
+/// `readr::read_csv()` carries such a pointer in its `problems`
+/// attribute, which cost gtsummary four false RY010 findings.
+#[test]
+fn sysdata_bindings_after_an_external_pointer_are_bound() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    write(
+        pkg,
+        &[
+            ("DESCRIPTION", b"Package: sysdatapkg\n"),
+            (
+                "R/f.R",
+                b"f <- function() list(a_first, ptr_value, z_last)\n\
+                  g <- function() missing_after_ptr\n",
+            ),
+            (
+                "R/sysdata.rda",
+                include_bytes!("../../../../testdata/serialized/extptr.rda"),
+            ),
+        ],
+    );
+    let json = check_in(pkg, &["R", "--output-format", "json", "--exit-zero"]);
+    assert_eq!(
+        unbound_names(json.json().as_array().unwrap()),
+        &["missing_after_ptr"],
+    );
+    let human = check_in(pkg, &["R"]);
+    assert!(!human.stderr().contains("degraded"), "{human:?}");
 }
 
 /// `useDynLib(pkg, .registration = TRUE)` binds every routine in

@@ -543,7 +543,9 @@ impl Checker {
                 rhs,
                 ..
             } => {
-                if self.has_explicit_operator_mask(":", "`:`", scope) {
+                if self.has_explicit_operator_mask(":", "`:`", scope)
+                    || super::ops_chooser::operator_rebound(self, ":", scope)
+                {
                     return None;
                 }
                 let from = self.proven_integral_endpoint(lhs, scope, allow_ident_endpoints)?;

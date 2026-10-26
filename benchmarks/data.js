@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793013605885,
+  "lastUpdate": 1793030351463,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -59070,6 +59070,219 @@ window.BENCHMARK_DATA = {
           {
             "name": "server/unrelated-file/p95",
             "value": 182.567455,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2085e005d2f79e75febea4ffa3677a2aef5c6a23",
+          "message": "feat(checker): warn on network calls during package load (RY124) (#828)\n\n* feat(checker): warn on network calls during package load (RY124)\n\nProven network/download calls (utils::download.file, opened url/socketConnection/curl connections, curl::curl_download/curl_fetch_memory, httr::GET/POST, httr2::req_perform, and bound project wrappers) now warn when evaluated at package or data-raw top level or in .onLoad/.onAttach. Ordinary function bodies, lazy defaults, unopened connections, interactive/getOption/Sys.getenv-guarded calls, and masked or dynamic callees stay silent.\n\nRefs #570\n\n* fix(checker): RY124 soundness — R argument matching, local masks, deferred code, guard polarity\n\nRefs #829\n\n* fix(checker): disjunction guards, positive-only wrapper memo, data-raw precedence\n\nRefs #829\n\n* fix(checker): literal-FALSE while bodies are dead arms\n\nRefs #829\n\n* fix(checker): masked probe heads do not guard; while (!TRUE) is dead\n\nRefs #829\n\n* fix(checker): register GUARD_SHADOWED_HEADS semantic list\n\nRefs #829\n\n* fix(checker): fold negated literal conditions; masked wrapper heads do not guard\n\nRefs #829\n\n* docs(checker): place GUARD_SHADOWED_HEADS doc on its own const\n\nRefs #829\n\n* fix(checker): value-position if folds negated literal conditions\n\nRefs #829\n\n* fix(checker): file-level guard shadowing respects source order\n\nRefs #829\n\n* test(checker): pin ordinary function after .onLoad stays non-load-time\n\nRefs #829\n\n* fix(checker): enabling probe fallbacks do not guard RY124; quoted wrapper bodies stay silent\n\nRefs #829\n\n* refactor(checker): probe fallback via match_arguments; narrow RY124 test filter\n\nRefs #829\n\n* fix(checker): probe fallback decides both guard polarities\n\nRefs #829",
+          "timestamp": "2026-10-26T16:47:50+01:00",
+          "tree_id": "b8e14f6087b1cc43357c6820ea6c717e12f4a5df",
+          "url": "https://github.com/sims1253/ry/commit/2085e005d2f79e75febea4ffa3677a2aef5c6a23"
+        },
+        "date": 1793030351206,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 4884052.168109797,
+            "range": "4852645.91–4919784.00",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 1226482.0490411753,
+            "range": "1224129.90–1229076.60",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 4175821.502454472,
+            "range": "4151641.16–4208696.64",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 614333.3735883633,
+            "range": "611317.28–617795.58",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 4188873.341815675,
+            "range": "4148345.14–4256284.79",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 636708.6749015263,
+            "range": "635549.78–638023.61",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 23671949.33318662,
+            "range": "23487283.58–23863976.61",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 92703934.35,
+            "range": "92575167.48–92874466.65",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 15255908.490784373,
+            "range": "15070523.85–15462838.76",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 92928726.875,
+            "range": "92835527.27–93050664.54",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 15285660.36534876,
+            "range": "15206162.30–15371987.61",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 91809441.125,
+            "range": "91712759.21–91922576.25",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 14570092.481143286,
+            "range": "14453358.84–14684383.26",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 204477936.1,
+            "range": "202237540.63–206741119.27",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 22185484.28403191,
+            "range": "22043379.33–22343795.76",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 6883716.067829897,
+            "range": "6797739.37–6991430.70",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 22140155.19485695,
+            "range": "21954528.77–22338716.65",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 8812432.854874995,
+            "range": "8766773.28–8859831.18",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 24369162.106193654,
+            "range": "24171072.49–24581094.36",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 1441200.1315218383,
+            "range": "1432636.76–1451076.39",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 11290984,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 366343,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 220172,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 318570,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 122.82317600003444,
+            "range": "103.76–142.68",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 103.7583169999998, 108.87506300001405, 122.82317600003444, 134.95349999994505, 142.68428000004496"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 530.0859649999766,
+            "range": "490.73–577.42",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 490.7299559999956, 496.0773019999033, 530.0859649999766, 557.5546310000354, 577.4237999999896"
+          },
+          {
+            "name": "server/startup-median",
+            "value": 197.395316,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/median",
+            "value": 182.151358,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/p95",
+            "value": 182.323674,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/median",
+            "value": 181.972878,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/p95",
+            "value": 182.11176,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/median",
+            "value": 182.082055,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/p95",
+            "value": 182.161903,
             "unit": "ms"
           }
         ]

@@ -82,10 +82,15 @@ fn unproven_receivers_and_masked_definitions_stay_silent() {
         // (`has_explicit_operator_mask` looks for callable masks),
         // pinning that gate independently.
         "f <- function() {\n `:` <- 3L\n y <- c(1, 2)\n y[1:-1]\n}\n",
-        // `seq` calls R rejects before building a sequence ("too
-        // many arguments" / unused argument) do not match
-        // one-to-one, so the mixed-sign claim never forms.
+        // A `seq` call R rejects before building a sequence
+        // ("too many arguments" once by/length.out/along.with
+        // collide) does not match one-to-one, so the mixed-sign
+        // claim never forms.
         "y <- c(1, 2)\ny[seq(1, -1, 2, 5, 9, 7)]\n",
+        // An extra named argument is only warned away by
+        // seq.default's chkDots and the sequence still forms, so
+        // silence here is a conservative miss of the one-to-one
+        // gate, not a rejection.
         "y <- c(1, 2)\ny[seq(1, -1, foo = 3)]\n",
     ] {
         assert_eq!(mixed_sign_errors(source), 0, "{source}");

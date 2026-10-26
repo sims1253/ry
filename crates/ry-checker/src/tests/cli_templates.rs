@@ -249,3 +249,11 @@ fn non_template_cli_arguments_stay_silent() {
         );
     }
 }
+
+#[test]
+fn package_data_mask_verbs_inside_templates_stay_silent() {
+    // Inside dplyr::mutate's mask, `data` may be a column; the
+    // non-template equivalent is silent for the same reason.
+    let diags = check("f <- function(df) cli::cli_text(\"{dplyr::mutate(df, n = ncol(data))}\")\n");
+    assert!(diags.iter().all(|d| d.code != "RY125"), "{diags:?}");
+}

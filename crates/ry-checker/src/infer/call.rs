@@ -1484,6 +1484,9 @@ impl Checker {
             }
             self.collect_template_literals(&arg.value, scope, &mut literals);
         }
+        if literals.is_empty() {
+            return;
+        }
         let mut hits: Vec<(String, String, Span)> = Vec::new();
         // Parser construction failure degrades the whole template
         // check uniformly, before any region is examined.
@@ -1665,6 +1668,25 @@ impl Checker {
                     {
                         return ControlFlow::Continue(Descend::Skip);
                     }
+                    // Package verbs whose stub declares data-mask or
+                    // quoted evaluation (dplyr::mutate and kin)
+                    // resolve names against that machinery, not this
+                    // scope: skip the whole subtree.
+                    if let Some(callee) = callee_name(func)
+                        && self.resolve_typeshed_sig_ref(&callee).is_some_and(|sig| {
+                            sig.eval.values().any(|mode| {
+                                matches!(
+                                    mode,
+                                    EvalMode::DataMask
+                                        | EvalMode::TidySelect
+                                        | EvalMode::QuotedExpression
+                                        | EvalMode::CapturesPromise
+                                )
+                            })
+                        })
+                    {
+                        return ControlFlow::Continue(Descend::Skip);
+                    }
                     // Hits evaluated before any in-region rebinding
                     // are real; only later ones are suppressed.
                     if collect_hits
@@ -1692,11 +1714,11 @@ impl Checker {
         scope: &Scope,
     ) -> Option<(String, String, Span)> {
         let name = callee_name(func)?;
-        let semantic = scope.function_alias(&name).unwrap_or(&name).to_string();
-        let lookup = crate::semantic_lists::bare_name(&semantic).to_string();
-        if !crate::semantic_lists::is_dimensional_function(&lookup)
+        let semantic: &str = scope.function_alias(&name).unwrap_or(&name);
+        let lookup = crate::semantic_lists::bare_name(semantic);
+        if !crate::semantic_lists::is_dimensional_function(lookup)
             || !matches!(
-                self.special_call_provenance(&name, func, &semantic, &lookup, "base", scope),
+                self.special_call_provenance(&name, func, semantic, lookup, "base", scope),
                 crate::resolve::SpecialCallProvenance::Proven
             )
         {
@@ -1704,7 +1726,7 @@ impl Checker {
         }
         let arg = dimensional_argument(args)?;
         let subject = self.definite_function_value(&arg.value, scope)?;
-        Some((lookup, subject, arg.span))
+        Some((lookup.to_string(), subject, arg.span))
     }
 
     /// A description of `expr` when it is provably a plain function

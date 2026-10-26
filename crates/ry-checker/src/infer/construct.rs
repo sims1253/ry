@@ -485,6 +485,39 @@ impl Checker {
     ) -> Option<RType> {
         // Built-in: `c(...)` concatenates and produces the common mode.
         if lookup_name == "c" {
+            // `recursive` and `use.names` are controls matched after
+            // `...`, never elements: R excludes them from the result's
+            // mode, length, and names. A `recursive` that may be TRUE
+            // can flatten list elements, a length no exact or bounded
+            // claim here survives.
+            let is_control =
+                |arg: &Arg| matches!(arg.name.as_deref(), Some("recursive" | "use.names"));
+            if args.iter().any(is_control) {
+                let may_flatten = args.iter().any(|arg| {
+                    arg.name.as_deref() == Some("recursive")
+                        && !matches!(arg.value, Expr::Logical(false, _))
+                });
+                let (elem_args, elem_types): (Vec<Arg>, Vec<RType>) = args
+                    .iter()
+                    .zip(arg_types)
+                    .filter(|(arg, _)| !is_control(arg))
+                    .map(|(arg, ty)| (arg.clone(), ty.clone()))
+                    .unzip();
+                let mut result = self.infer_c(&elem_args, &elem_types);
+                if may_flatten
+                    && elem_types
+                        .iter()
+                        .any(|ty| matches!(ty.mode, Mode::List | Mode::Union))
+                {
+                    result.length = Length::Unknown;
+                }
+                if let Some(schema) = build_named_schema(&elem_types, &elem_args)
+                    .filter(|_| elem_args.iter().any(|argument| argument.name.is_some()))
+                {
+                    return Some(result.with_columns(Arc::new(schema)));
+                }
+                return Some(result);
+            }
             let result = self.infer_c(args, arg_types);
             if let Some(schema) = build_named_schema(arg_types, args)
                 .filter(|_| args.iter().any(|argument| argument.name.is_some()))
@@ -561,24 +594,21 @@ impl Checker {
         }
         let mut mode = Mode::Null;
         let mut total_len = Some(0usize);
-        let mut any_nonempty = false;
+        let mut min_total = 0usize;
         for t in arg_types {
             mode = mode.combine_result(if t.mode == Mode::Union {
                 Mode::Opaque
             } else {
                 t.mode
             });
+            // The exact total may be gone, but the sum of proven lower
+            // bounds is a sound lower bound for the concatenation.
+            min_total = min_total.saturating_add(t.length.min_possible());
             match t.length {
                 Length::Zero => {}
                 Length::One => total_len = total_len.and_then(|total| total.checked_add(1)),
                 Length::Known(n) => total_len = total_len.and_then(|total| total.checked_add(n)),
-                // The exact total is gone, but a proven-nonempty element
-                // keeps the sum at least one.
-                Length::Nonempty => {
-                    any_nonempty = true;
-                    total_len = None;
-                }
-                Length::Unknown => total_len = None,
+                Length::Nonempty | Length::AtLeast(_) | Length::Unknown => total_len = None,
             }
         }
         let length = if args
@@ -589,8 +619,7 @@ impl Checker {
         } else {
             match total_len {
                 Some(total) => Length::Known(total),
-                None if any_nonempty => Length::Nonempty,
-                None => Length::Unknown,
+                None => Length::lower_bound(min_total),
             }
         };
         let mut result = RType::new(mode, length);
@@ -809,8 +838,16 @@ impl Checker {
                     n => Length::Known(n),
                 }
             }
-            // Repetition preserves the >= 1 lower bound unless a count
-            // of zero empties the result (unknown counts returned early).
+            // Repetition scales a proven lower bound unless a count of
+            // zero empties the result (unknown counts returned early).
+            Length::AtLeast(xn) => {
+                let total = xn.saturating_mul(times_n).saturating_mul(each_n);
+                if total == 0 {
+                    Length::Zero
+                } else {
+                    Length::lower_bound(total)
+                }
+            }
             Length::Nonempty => {
                 if times_n > 0 && each_n > 0 {
                     Length::Nonempty
@@ -1177,7 +1214,9 @@ pub(crate) fn semantic_return_length(
                 .map(|ty| ty.length)
             {
                 Some(Length::Zero | Length::Known(0)) => Length::Zero,
-                Some(Length::One | Length::Known(_) | Length::Nonempty) => Length::Nonempty,
+                Some(Length::One | Length::Known(_) | Length::Nonempty | Length::AtLeast(_)) => {
+                    Length::Nonempty
+                }
                 _ => Length::Unknown,
             },
         ),

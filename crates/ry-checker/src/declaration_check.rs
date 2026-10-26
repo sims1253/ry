@@ -388,11 +388,16 @@ fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
                     Length::Known(actual) if actual == *expected => Evidence::Compatible,
                     Length::Zero | Length::One | Length::Known(_) => Evidence::Incompatible,
                     Length::Nonempty if *expected == 0 => Evidence::Incompatible,
-                    Length::Nonempty | Length::Unknown => Evidence::Insufficient,
+                    Length::AtLeast(actual) if *expected < actual => Evidence::Incompatible,
+                    Length::Nonempty | Length::AtLeast(_) | Length::Unknown => {
+                        Evidence::Insufficient
+                    }
                 },
                 Some(DeclaredLength::Nonempty) => match ty.length {
                     Length::Zero | Length::Known(0) => Evidence::Incompatible,
-                    Length::One | Length::Known(_) | Length::Nonempty => Evidence::Compatible,
+                    Length::One | Length::Known(_) | Length::Nonempty | Length::AtLeast(_) => {
+                        Evidence::Compatible
+                    }
                     Length::Unknown => Evidence::Insufficient,
                 },
             }

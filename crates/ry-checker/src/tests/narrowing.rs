@@ -391,3 +391,92 @@ fn compound_guard_oracle_has_no_atomic_access_errors() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn length_lower_bound_guard_reaches_condition_rules() {
+    // Issue #649 founding case: the guard proves length >= 2, so the
+    // inner condition is a proven length error in R.
+    let source = "f <- function(x) {\n  if (is.logical(x) && length(x) > 1L) {\n    if (x) 1L else 0L\n  }\n}";
+    let diagnostics = check(source);
+    let hits: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY001").collect();
+    assert_eq!(hits.len(), 1, "{diagnostics:?}");
+    assert_eq!(&source[hits[0].span.start..hits[0].span.end], "x");
+
+    // Every spelling of the same bound: >=, mirrored, negated,
+    // early-exit continuation, loop conditions, switch selectors.
+    for source in [
+        "f <- function(x) { if (length(x) >= 2L) { if (x) 1L } }",
+        "f <- function(x) { if (1L < length(x)) { if (x) 1L } }",
+        "f <- function(x) { if (!(length(x) < 2L)) { if (x) 1L } }",
+        "f <- function(x) { if (length(x) <= 1L) stop('short'); if (x) 1L }",
+        "f <- function(x) { if (length(x) > 1L) { while (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1L) switch(x, a = 1L) }",
+    ] {
+        let diagnostics = check(source);
+        assert_eq!(
+            diagnostics.iter().filter(|d| d.code == "RY001").count(),
+            1,
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn length_lower_bound_guard_controls_stay_silent() {
+    for source in [
+        // > 0 proves nonempty, not above one.
+        "f <- function(x) { if (length(x) > 0L) { if (x) 1L } }",
+        // The element, not the vector, is the condition.
+        "f <- function(x) { if (length(x) > 1L) { if (x[[1]]) 1L } }",
+        // Rebinding inside the branch replaces the narrowed type.
+        "f <- function(x) { if (length(x) > 1L) { x <- TRUE; if (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1L) { x <- x[1]; if (x) 1L } }",
+        // The bound is about another binding.
+        "f <- function(x, y) { if (length(y) > 1L) { if (x) 1L } }",
+        // A computed or fractional bound proves nothing here.
+        "f <- function(x, k) { if (length(x) > k) { if (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1.5) { if (x) 1L } }",
+        // A rebound `length` is not base length.
+        "length <- function(x) 5L\nf <- function(x) { if (length(x) > 1L) { if (x) 1L } }",
+        "f <- function(x, length = function(y) 5L) { if (length(x) > 1L) { if (x) 1L } }",
+        // `c()` controls matched after `...` are not elements, so
+        // they add neither an exact element nor a lower bound.
+        "a <- c(1L, use.names = FALSE)\nif (a) 1L",
+        "a <- c(1L, recursive = FALSE)\nif (a) 1L",
+        "f <- function(x) { if (length(x) > 0L) { y <- c(x, use.names = FALSE); if (y) 1L } }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn length_lower_bound_propagates_through_construction_and_joins() {
+    // Choosing between length-2 and length-3 vectors keeps "at least
+    // 2" through the join and the negation; a logical `if` condition
+    // with a proven length above one is RY002.
+    let diagnostics = check(
+        "f <- function(flag) { x <- if (flag) c(TRUE, FALSE) else c(TRUE, FALSE, TRUE); if (!x) 1L }",
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == "RY002").count(),
+        1,
+        "{diagnostics:?}"
+    );
+
+    // c() sums lower bounds; rep() scales them.
+    for source in [
+        "f <- function(x) { if (length(x) > 1L) { y <- c(x, TRUE); if (y) 1L } }",
+        "f <- function(x) { if (length(x) > 1L) { y <- rep(x, 2); if (y) 1L } }",
+    ] {
+        let diagnostics = check(source);
+        assert_eq!(
+            diagnostics.iter().filter(|d| d.code == "RY001").count(),
+            1,
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

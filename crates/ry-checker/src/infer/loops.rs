@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn known_unclassed_vector(ty: &RType) -> bool {
-    matches!(ty.length, Length::Known(n) if n > 1) && ty.class.known && ty.class.len == 0
+    ty.length.proven_above_one() && ty.class.known && ty.class.len == 0
 }
 
 #[derive(Default)]

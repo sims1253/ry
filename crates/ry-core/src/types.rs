@@ -200,6 +200,12 @@ pub enum Length {
     /// vacuous-`all()` work on #462) can stay silent for values that
     /// cannot be empty, while `Unknown` keeps meaning "possibly zero".
     Nonempty,
+    /// Length unknown at compile time, but provably at least `n`
+    /// (always `n >= 2`; lower bounds of 0 and 1 canonicalize to
+    /// `Unknown` and `Nonempty` via [`Length::lower_bound`]). Split
+    /// from `Nonempty` so condition-length rules (RY001/RY002) can
+    /// fire under guards like `length(x) > 1L` (issue #649).
+    AtLeast(usize),
 }
 
 impl Length {
@@ -208,6 +214,71 @@ impl Length {
     /// open-world default for parameters and untracked computations.
     pub fn may_be_empty(self) -> bool {
         matches!(self, Length::Zero | Length::Unknown)
+    }
+
+    /// The canonical length claiming only "at least `n`": 0 is no
+    /// information (`Unknown`), 1 is `Nonempty`, anything above is
+    /// `AtLeast`.
+    pub fn lower_bound(n: usize) -> Length {
+        match n {
+            0 => Length::Unknown,
+            1 => Length::Nonempty,
+            n => Length::AtLeast(n),
+        }
+    }
+
+    /// The exact length, when this variant pins one (`Zero`, `One`,
+    /// `Known`); `None` for bounds and `Unknown`.
+    pub fn exact(self) -> Option<usize> {
+        match self {
+            Length::Zero => Some(0),
+            Length::One => Some(1),
+            Length::Known(n) => Some(n),
+            Length::Unknown | Length::Nonempty | Length::AtLeast(_) => None,
+        }
+    }
+
+    /// The smallest length this variant allows.
+    pub fn min_possible(self) -> usize {
+        match self {
+            Length::Zero | Length::Unknown => 0,
+            Length::One | Length::Nonempty => 1,
+            Length::Known(n) | Length::AtLeast(n) => n,
+        }
+    }
+
+    /// Least upper bound at a control-flow merge. Equal lengths keep
+    /// their precision; an exact length joined with a different one
+    /// keeps the weaker lower bound (`Known(3)` with `Known(2)` is
+    /// `AtLeast(2)`) instead of collapsing to `Unknown`.
+    pub fn join(self, other: Length) -> Length {
+        if self == other {
+            return self;
+        }
+        if let (Some(a), Some(b)) = (self.exact(), other.exact())
+            && a == b
+        {
+            // `One` and `Known(1)` spell the same exact length.
+            return self;
+        }
+        Length::lower_bound(self.min_possible().min(other.min_possible()))
+    }
+
+    /// Whether every length this variant allows is above one
+    /// (`Known(n > 1)` or a lower bound of two or more).
+    pub fn proven_above_one(self) -> bool {
+        matches!(self, Length::Known(n) if n > 1) || matches!(self, Length::AtLeast(_))
+    }
+
+    /// Strengthen this length with a proven lower bound of `n` (a
+    /// passing `length(x) > k` guard). Exact lengths already say
+    /// everything, so they stay — including when they contradict the
+    /// bound, where the guarded branch is simply unreachable.
+    pub fn refine_at_least(self, n: usize) -> Length {
+        if self.exact().is_some() {
+            return self;
+        }
+        Length::lower_bound(self.min_possible().max(n))
     }
 
     /// Length of a binary op's result given the operands' lengths,
@@ -220,6 +291,12 @@ impl Length {
             // R recycles to max(a, b). The checker separately reports the
             // warning case where neither length divides the other.
             (Known(a), Known(b)) => Known(a.max(b)),
+            // A lower-bounded operand recycled against a proven-nonempty
+            // one keeps the stronger lower bound: max of the two lengths
+            // is at least the bounded length.
+            (AtLeast(a), AtLeast(b)) => AtLeast(a.max(b)),
+            (AtLeast(a), Known(b)) | (Known(b), AtLeast(a)) => AtLeast(a.max(b)),
+            (AtLeast(a), Nonempty) | (Nonempty, AtLeast(a)) => AtLeast(a),
             // A proven-nonempty operand keeps the maximum at least one
             // whenever the other operand is not empty.
             (Nonempty, Known(_)) | (Known(_), Nonempty) | (Nonempty, Nonempty) => Nonempty,
@@ -228,6 +305,8 @@ impl Length {
             | (Unknown, Nonempty)
             | (Known(_), Unknown)
             | (Unknown, Known(_))
+            | (AtLeast(_), Unknown)
+            | (Unknown, AtLeast(_))
             | (Unknown, Unknown) => Unknown,
         }
     }
@@ -805,11 +884,13 @@ impl RType {
         if members.len() == 1 {
             return (*members.first().unwrap()).clone();
         }
-        // Length: common across members if they all agree, else Unknown.
+        // Length: least upper bound across members — the common
+        // length when they all agree, the weaker lower bound when
+        // they prove different ones, else Unknown.
         let length = members
             .iter()
             .map(|m| m.length)
-            .reduce(|a, b| if a == b { a } else { Length::Unknown })
+            .reduce(|a, b| a.join(b))
             .unwrap_or(Length::Unknown);
         RType {
             mode: Mode::Union,
@@ -874,8 +955,12 @@ impl RType {
             && (self.mode == Mode::Complex || rhs.mode == Mode::Complex)
             && length != Length::Zero
         {
-            let nonempty =
-                |length| matches!(length, Length::One | Length::Known(1..) | Length::Nonempty);
+            let nonempty = |length| {
+                matches!(
+                    length,
+                    Length::One | Length::Known(1..) | Length::Nonempty | Length::AtLeast(_)
+                )
+            };
             if nonempty(self.length) && nonempty(rhs.length) {
                 return None;
             }
@@ -1211,6 +1296,7 @@ impl fmt::Display for Length {
             Length::Known(n) => write!(f, "{n}"),
             Length::Unknown => f.write_str("?"),
             Length::Nonempty => f.write_str("1+"),
+            Length::AtLeast(n) => write!(f, "{n}+"),
         }
     }
 }
@@ -1553,10 +1639,35 @@ mod tests {
     }
 
     #[test]
-    fn join_different_lengths_unknown() {
+    fn join_different_lengths_keeps_lower_bound() {
+        // Issue #649: joining exact lengths 3 and 5 keeps "at least 3"
+        // instead of collapsing to Unknown.
         let a = RType::new(Mode::Integer, Length::Known(3));
         let b = RType::new(Mode::Integer, Length::Known(5));
-        assert_eq!(a.join(b).length, Length::Unknown);
+        assert_eq!(a.join(b).length, Length::AtLeast(3));
+    }
+
+    #[test]
+    fn length_join_and_refine_bounds() {
+        use Length::*;
+        assert_eq!(Known(1).join(One), Known(1));
+        assert_eq!(Known(2).join(Known(3)), AtLeast(2));
+        assert_eq!(Known(1).join(Known(3)), Nonempty);
+        assert_eq!(Zero.join(AtLeast(2)), Unknown);
+        assert_eq!(AtLeast(4).join(AtLeast(2)), AtLeast(2));
+        assert_eq!(AtLeast(4).join(Known(3)), AtLeast(3));
+        assert_eq!(Nonempty.join(AtLeast(3)), Nonempty);
+        assert_eq!(Unknown.refine_at_least(2), AtLeast(2));
+        assert_eq!(Nonempty.refine_at_least(3), AtLeast(3));
+        assert_eq!(AtLeast(2).refine_at_least(5), AtLeast(5));
+        assert_eq!(Known(3).refine_at_least(2), Known(3));
+        assert_eq!(One.refine_at_least(2), One);
+        assert_eq!(Unknown.refine_at_least(1), Nonempty);
+        assert!(AtLeast(2).proven_above_one());
+        assert!(!Nonempty.proven_above_one());
+        assert_eq!(AtLeast(2).binary(Known(3)), AtLeast(3));
+        assert_eq!(AtLeast(2).binary(Unknown), Unknown);
+        assert_eq!(Unknown.refine_at_least(0), Unknown);
     }
 
     #[test]

@@ -709,3 +709,21 @@ diag(-1, names = FALSE)
 diag(c(-1, -2))
 diag(2L)
 diag(-0.5)
+
+## case: RY002: a length lower bound from a guard reaches the condition
+# expect: RY002
+f <- function(flag) { x <- if (flag) c(TRUE, FALSE) else c(TRUE, FALSE, TRUE); if (!x) 1L }
+
+## case: RY001: a guarded length lower bound reaches an if condition
+# expect: RY001
+f <- function(x) { if (length(x) > 1L) { if (x) 1L } }
+
+## case: RY001: a guarded length lower bound reaches a switch selector
+# expect: RY001
+f <- function(x) { if (length(x) > 1L) switch(x, a = 1L) }
+
+## case: RY001: weaker or rebound length guards stay silent
+# no-diag
+f <- function(x) { if (length(x) > 0L) { if (x) 1L } }
+f <- function(x) { if (length(x) > 1L) { if (x[[1]]) 1L } }
+f <- function(x, length = function(y) 5L) { if (length(x) > 1L) { if (x) 1L } }

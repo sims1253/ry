@@ -26,6 +26,7 @@ pub(crate) fn export_type(ty: &RType) -> Value {
         Length::Known(value) => json!({"kind": "known", "value": value}),
         Length::Unknown => json!({"kind": "unknown"}),
         Length::Nonempty => json!({"kind": "nonempty"}),
+        Length::AtLeast(value) => json!({"kind": "at_least", "value": value}),
     };
     let class_names: Vec<_> = ty
         .class
@@ -237,6 +238,10 @@ mod tests {
         assert_eq!(
             export_type(&RType::new(Mode::Integer, Length::Nonempty))["length"],
             json!({"kind": "nonempty"})
+        );
+        assert_eq!(
+            export_type(&RType::new(Mode::Integer, Length::AtLeast(2)))["length"],
+            json!({"kind": "at_least", "value": 2})
         );
     }
 }

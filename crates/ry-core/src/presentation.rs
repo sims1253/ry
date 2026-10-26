@@ -233,6 +233,7 @@ fn length(length: Length) -> String {
         Length::Known(value) => value.to_string(),
         Length::Unknown => "?".into(),
         Length::Nonempty => "1+".into(),
+        Length::AtLeast(value) => format!("{value}+"),
     }
 }
 

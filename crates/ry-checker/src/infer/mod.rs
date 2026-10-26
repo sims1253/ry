@@ -508,11 +508,27 @@ fn r_condition_string_is_accepted(value: &str) -> bool {
     )
 }
 
+/// A non-negative whole-number literal as a count (`2`, `2L`, `2.0`),
+/// shared by the length-guard and negative-exclusion proofs.
+/// Fractional, negative, and non-finite literals prove no count here;
+/// doubles are capped at 2^53, the largest integer R represents
+/// exactly, above which a fractional-part test says nothing.
+pub(crate) fn whole_number_literal(expr: &Expr) -> Option<usize> {
+    match expr {
+        Expr::Integer(n, _) => usize::try_from(*n).ok(),
+        Expr::Double(n, _) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 => {
+            const MAX_EXACT: f64 = 9_007_199_254_740_992.0; // 2^53
+            (*n <= MAX_EXACT).then_some(*n as usize)
+        }
+        _ => None,
+    }
+}
+
 /// Classify a condition without losing the member-level information carried
 /// by unions. In particular, `integer | double` is numeric truthiness, while
 /// `integer | list` is invalid.
 pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
-    if matches!(t.length, Length::Zero) || matches!(t.length, Length::Known(n) if n > 1) {
+    if matches!(t.length, Length::Zero) || t.length.proven_above_one() {
         return Some(ConditionDiagnostic::Invalid);
     }
 
@@ -602,7 +618,10 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
 /// accepts scalars of every other vector mode (a length-1 list is
 /// even legal, if useless) — so only the length dimension can prove
 /// the error, and every unproven length (`Unknown`, `Nonempty`) stays
-/// silent. Unions distribute: any member with a proven-bad length
+/// silent. A proven non-one length rejects every mode, unknown and
+/// non-vector included: R gives the same error for environments,
+/// language objects, and functions whose `length()` is not one.
+/// Unions distribute: any member with a proven-bad length
 /// flags the call, which is how a find-or-NULL helper's
 /// `character | NULL` return reaches the selector (issue #362).
 pub(crate) fn switch_expr_length_rejected(t: &RType) -> bool {
@@ -611,8 +630,7 @@ pub(crate) fn switch_expr_length_rejected(t: &RType) -> bool {
             .members
             .as_ref()
             .is_some_and(|members| members.iter().any(switch_expr_length_rejected)),
-        mode if mode.is_unknown_or_non_vector() => false,
-        _ => matches!(t.length, Length::Zero) || matches!(t.length, Length::Known(n) if n > 1),
+        _ => matches!(t.length, Length::Zero) || t.length.proven_above_one(),
     }
 }
 
@@ -1790,19 +1808,25 @@ impl Checker {
                     }));
         // Preserve the established if-only logical-vector RY002 rule.
         // Other proven multi-value conditions use RY001, never RY003.
+        // A proven lower bound above one (issue #649) is the same proof
+        // without an exact count to print.
         if ctx.allows_length_rule()
             && matches!(ct.mode, Mode::Logical)
-            && let Length::Known(n) = ct.length
-            && n > 1
+            && ct.length.proven_above_one()
         {
             self.emit(
                 Severity::Warning,
                 span_of(cond),
                 "RY002",
-                format!(
-                    "`if` condition has length {}; R requires a length-1 condition",
-                    n
-                ),
+                match ct.length {
+                    Length::AtLeast(n) => format!(
+                        "`if` condition has length at least {n}; R requires a length-1 condition"
+                    ),
+                    _ => format!(
+                        "`if` condition has length {}; R requires a length-1 condition",
+                        ct.length
+                    ),
+                },
             );
         } else if (matches!(condition, Some(ConditionDiagnostic::Invalid))
             || invalid_string_literal

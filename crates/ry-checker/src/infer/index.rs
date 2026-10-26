@@ -1135,7 +1135,8 @@ fn positive_numeric_index(expr: &Expr) -> bool {
     }
 }
 
-/// Exact result length for a single literal negative exclusion. R ignores an
+/// Result length for a single literal negative exclusion: exact for an
+/// exact base, a lower bound for a lower-bounded one. R ignores an
 /// out-of-range exclusion; an in-range exclusion removes exactly one element.
 /// Dynamic or compound negative indices remain unknown until the AST/value
 /// model can prove uniqueness and bounds for every excluded position.
@@ -1148,17 +1149,17 @@ fn literal_negative_exclusion_length(base: Length, expr: &Expr) -> Option<Length
     else {
         return None;
     };
-    let excluded = match expr.as_ref() {
-        Expr::Integer(index, _) if *index > 0 => *index as usize,
-        Expr::Double(index, _) if index.is_finite() && *index > 0.0 && index.fract() == 0.0 => {
-            *index as usize
-        }
-        _ => return None,
-    };
+    let excluded = whole_number_literal(expr).filter(|index| *index > 0)?;
     let base = match base {
         Length::Zero => 0,
         Length::One => 1,
         Length::Known(length) => length,
+        // An in-range exclusion drops the lower bound by one; an
+        // exclusion past the proven bound leaves it standing (the
+        // actual length is the bound, or past the exclusion).
+        Length::AtLeast(n) => {
+            return Some(Length::lower_bound(if excluded <= n { n - 1 } else { n }));
+        }
         // Without an exact count the remaining length cannot be pinned:
         // a nonempty value may hold exactly one element, so excluding
         // one position can empty it.

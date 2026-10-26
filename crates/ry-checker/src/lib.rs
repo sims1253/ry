@@ -162,7 +162,7 @@ fn non_divisible_recycling(lhs: Length, rhs: Length) -> Option<(usize, usize)> {
     let known = |length| match length {
         Length::One => Some(1),
         Length::Known(n) => Some(n),
-        Length::Zero | Length::Unknown | Length::Nonempty => None,
+        Length::Zero | Length::Unknown | Length::Nonempty | Length::AtLeast(_) => None,
     };
     let (a, b) = (known(lhs)?, known(rhs)?);
     if a > 1 && b > 1 && a.max(b) % a.min(b) != 0 {

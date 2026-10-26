@@ -80,6 +80,19 @@ All notable changes to ry are documented in this file.
   bodies, lazily forced defaults, calls under an
   `interactive()`/`getOption()`/`Sys.getenv()` guard, and masked or dynamic
   callees stay quiet.
+- Track length lower bounds (`at least n`) alongside exact lengths. A
+  passing `length(x) > 1L` guard (and its `>=`, mirrored, negated, and
+  early-exit spellings) now reaches RY001/RY002 on `if`/`while`
+  conditions and `switch` selectors; joining a length-2 and a length-3
+  vector keeps "at least 2" instead of collapsing to unknown, and the
+  bound propagates through `c()`, `rep()`, recycling, and negative
+  exclusion. A proven non-one length now also rejects a `switch`
+  selector of unknown or non-vector mode, matching R's error for
+  environments and functions. Computed or fractional bounds, rebound
+  `length`, and upper bounds stay silent (#649).
+- Export length lower bounds from `dump-facts` as
+  `{"kind":"at_least","value":N}`, alongside the existing `known`,
+  `unknown`, and `nonempty` length shapes (#649).
 
 ### Changed
 

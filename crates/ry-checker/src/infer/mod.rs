@@ -1473,7 +1473,8 @@ impl Checker {
     fn proven_na_scalar_mode_at(&self, expr: &Expr, scope: &Scope, depth: usize) -> Option<Mode> {
         // The proof runs before inference's stack-grown walk, so cap
         // its own recursion; deeper conditions simply go unproven.
-        if depth > 128 {
+        const PROVEN_NA_PROOF_MAX_DEPTH: usize = 128;
+        if depth > PROVEN_NA_PROOF_MAX_DEPTH {
             return None;
         }
         match expr {

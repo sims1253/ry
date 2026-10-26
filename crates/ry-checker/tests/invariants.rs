@@ -360,3 +360,23 @@ fn production_code_tests_unknown_mode_through_predicates() {
         offenders.join("\n")
     );
 }
+
+/// RY001's proven-NA fallback keys on an RY119 diagnostic at the
+/// condition's span, which is sound only while RY119 is emitted from
+/// exactly one site: `emit_integer_range_loss`, for a proven
+/// out-of-range scalar `as.integer()` result. A second emitter must
+/// fail loudly here instead of silently forging the proof.
+#[test]
+fn ry119_has_a_single_emitter() {
+    let src = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infer/mod.rs"))
+        .expect("read infer/mod.rs");
+    let sites: Vec<&str> = src
+        .lines()
+        .filter(|line| line.trim() == "\"RY119\",")
+        .collect();
+    assert_eq!(
+        sites.len(),
+        1,
+        "RY119 must be emitted only by emit_integer_range_loss; RY001 keys on it"
+    );
+}

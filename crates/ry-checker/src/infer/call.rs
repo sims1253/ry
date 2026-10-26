@@ -93,21 +93,11 @@ impl Checker {
                 "testthat",
                 &["object", "regexp", "...", "all", "info", "label"],
             ),
-            // `x` is synthetic: the real signature starts with `...`
-            // (the captured code), so a leading slot is needed for
-            // positional probe binding; the real `...` stays next so
-            // post-`...` formals keep R's exact-name matching.
+            // The real signature: `x` is the captured code; there is
+            // no `...`, so partial names bind post-`x` formals as in R.
             "expect_snapshot" => (
                 "testthat",
-                &[
-                    "x",
-                    "...",
-                    "cran",
-                    "error",
-                    "transform",
-                    "variant",
-                    "cnd_class",
-                ],
+                &["x", "cran", "error", "transform", "variant", "cnd_class"],
             ),
             "tryCatch" => ("base", &["expr", "...", "finally"]),
             "try" => ("base", &["expr", "silent", "outFile"]),
@@ -117,21 +107,30 @@ impl Checker {
             return None;
         }
         let matched = match_arguments(formals, args);
+        let arg_named = |param: &str| {
+            formals
+                .iter()
+                .position(|formal| *formal == param)
+                .and_then(|idx| matched.arg_for_param(idx))
+        };
         let asserts = match lookup_name {
             // `regexp = NA` asserts that NO error/warning occurs, the
             // opposite probe; a proven-`NA` regexp refuses, anything
             // else (absent/`NULL`/string/dynamic) keeps the probe.
-            "expect_error" | "expect_warning" => match matched.arg_for_param(1) {
+            "expect_error" | "expect_warning" => match arg_named("regexp") {
                 None => true,
                 Some(arg) => !matches!(args[arg].value, Expr::Na(..)),
             },
-            "expect_snapshot" => matched
-                .arg_for_param(3)
+            "expect_snapshot" => arg_named("error")
                 .is_some_and(|arg| matches!(args[arg].value, Expr::Logical(true, _))),
             // `error` reaches tryCatch via `...`, so R requires the
-            // exact name — partial matching only binds real formals.
+            // exact name — partial matching only binds real formals. A
+            // literal non-function handler (`NULL`, `NA`) catches
+            // nothing in R -- it errors as "attempt to apply
+            // non-function" -- so it does not make `expr` a probe.
             "tryCatch" => args.iter().any(|arg| {
-                arg.name.as_deref() == Some("error") && !matches!(arg.value, Expr::Missing(_))
+                arg.name.as_deref() == Some("error")
+                    && !matches!(arg.value, Expr::Missing(_) | Expr::Null(_) | Expr::Na(..))
             }),
             _ => true,
         };

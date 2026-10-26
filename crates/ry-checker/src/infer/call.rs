@@ -1491,14 +1491,40 @@ impl Checker {
             self.collect_template_literals(&arg.value, scope, &mut literals);
         }
         let mut hits: Vec<(String, String, Span)> = Vec::new();
+        let mut parser: Option<ry_core::RParser> = None;
+        // cli evaluates a template's regions sequentially in one
+        // environment: once a region rebinds a name, later regions no
+        // longer resolve against the caller's scope and stay silent.
+        let mut shadowed = false;
         for (text, span) in literals {
-            for region in cli_template_regions(text) {
+            if shadowed {
+                break;
+            }
+            for (start, end) in cli_template_regions(text) {
                 // Cheap gate: regions without a dimensional callee name
                 // cannot contain the RY125 shape and are never parsed.
+                let region = &text[start..end];
                 if !["ncol", "nrow", "dim"].iter().any(|n| region.contains(n)) {
+                    // A non-candidate region can still rebind a name a
+                    // later region resolves; without parsing it we can
+                    // only see literal assignment operators.
+                    if region.contains("<-") || region.contains("<<-") {
+                        shadowed = true;
+                        break;
+                    }
                     continue;
                 }
-                self.check_template_region(&region, scope, span, &mut hits);
+                if parser.is_none() {
+                    parser = ry_core::RParser::new().ok();
+                }
+                let Some(parser) = parser.as_mut() else {
+                    return;
+                };
+                let region_span = self.template_region_span(text, span, start, end);
+                if self.check_template_region(parser, region, scope, region_span, &mut hits) {
+                    shadowed = true;
+                    break;
+                }
             }
         }
         for (callee, subject, span) in hits {
@@ -1525,13 +1551,11 @@ impl Checker {
                 let Some(callee) = callee_name(func) else {
                     return;
                 };
-                let semantic = scope.function_alias(&callee).unwrap_or(&callee).to_string();
-                let bare = crate::semantic_lists::bare_name(&semantic).to_string();
+                let semantic: &str = scope.function_alias(&callee).unwrap_or(&callee);
+                let bare = crate::semantic_lists::bare_name(semantic);
                 if bare == "c"
                     && matches!(
-                        self.special_call_provenance(
-                            &callee, func, &semantic, &bare, "base", scope
-                        ),
+                        self.special_call_provenance(&callee, func, semantic, bare, "base", scope),
                         crate::resolve::SpecialCallProvenance::Proven
                     )
                 {
@@ -1544,25 +1568,50 @@ impl Checker {
         }
     }
 
+    /// Source span of one interpolation region (`{` through `}`)
+    /// inside a template literal. Byte offsets in the decoded text
+    /// map to source offsets only when the literal contains no escape
+    /// and is not a raw string; otherwise the whole literal's span is
+    /// kept rather than a wrong narrower one.
+    fn template_region_span(&self, text: &str, literal: Span, start: usize, end: usize) -> Span {
+        let Some(source) = self.source_text(literal) else {
+            return literal;
+        };
+        if source.contains('\\') || !(source.starts_with('"') || source.starts_with('\'')) {
+            return literal;
+        }
+        let before = &text[..start];
+        let newlines = before.matches('\n').count();
+        let (line, col) = if newlines == 0 {
+            (literal.line, literal.col + 1 + start)
+        } else {
+            (
+                literal.line + newlines,
+                start - before.rfind('\n').map_or(0, |pos| pos + 1),
+            )
+        };
+        Span::new(literal.start + start, literal.start + end + 2, line, col)
+    }
+
     /// Parse one template region as R code and record every
     /// dimensional call on a definite function it contains. Regions
     /// that do not parse, or that rebind names (assignment, `for`),
     /// are skipped: template fragments we cannot model stay silent.
+    /// Returns whether the region rebinds a name, so the caller can
+    /// stop checking later regions of the same template.
     fn check_template_region(
         &self,
+        parser: &mut ry_core::RParser,
         region: &str,
         scope: &Scope,
         span: Span,
         hits: &mut Vec<(String, String, Span)>,
-    ) {
-        let Ok(mut parser) = ry_core::RParser::new() else {
-            return;
-        };
+    ) -> bool {
         let Ok(file) = parser.parse("<cli-template>", region) else {
-            return;
+            return false;
         };
         if !file.parse_errors.is_empty() {
-            return;
+            return false;
         }
         let mut rebinds = false;
         let mut found: Vec<(String, String, Span)> = Vec::new();
@@ -1581,6 +1630,25 @@ impl Checker {
                     ..
                 }) => rebinds = true,
                 AstNode::Expr(Expr::Call { func, args, .. }) => {
+                    // Quoted code never runs here, and data-mask calls
+                    // resolve names against their mask, not this
+                    // scope: neither subtree is checked.
+                    if let Expr::Ident { name, .. } = func.as_ref()
+                        && matches!(
+                            crate::semantic_lists::bare_name(semantic_argument_name(name)),
+                            "quote"
+                                | "substitute"
+                                | "expression"
+                                | "with"
+                                | "within"
+                                | "transform"
+                                | "subset"
+                                | "eval"
+                                | "evalq"
+                        )
+                    {
+                        return ControlFlow::Continue(Descend::Skip);
+                    }
                     if let Some((callee, subject)) =
                         self.dimensional_function_call(func, args, scope)
                     {
@@ -1594,6 +1662,7 @@ impl Checker {
         if !rebinds {
             hits.extend(found);
         }
+        rebinds
     }
 
     /// The (callee, subject) pair when `func(args)` is a proven-base
@@ -1643,7 +1712,10 @@ impl Checker {
                     return known.then(|| format!("the function `{name}`"));
                 }
                 if let Some(ty) = scope.get(name) {
-                    let plain = ty.mode == Mode::Function && !(ty.class.known && ty.class.len > 0);
+                    // Only a known-empty class proves no `dim` method
+                    // can dispatch: an unknown class (e.g. from
+                    // `structure(f, class = cl)`) may carry one.
+                    let plain = ty.mode == Mode::Function && ty.class.known && ty.class.len == 0;
                     return plain.then(|| format!("the function `{name}`"));
                 }
                 if scope.search_path_unknown
@@ -2853,13 +2925,13 @@ fn qualified_parts(name: &str) -> Option<(&str, &str)> {
 /// their nested interpolations (their own content is literal text),
 /// and pluralization markers (`{?s}`, `{/...}`) are not expressions.
 /// An unbalanced group ends the scan silently.
-fn cli_template_regions(text: &str) -> Vec<String> {
+fn cli_template_regions(text: &str) -> Vec<(usize, usize)> {
     let mut regions = Vec::new();
-    collect_template_regions(text, &mut regions);
+    collect_template_regions(text, 0, &mut regions);
     regions
 }
 
-fn collect_template_regions(text: &str, regions: &mut Vec<String>) {
+fn collect_template_regions(text: &str, base: usize, regions: &mut Vec<(usize, usize)>) {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -2873,9 +2945,10 @@ fn collect_template_regions(text: &str, regions: &mut Vec<String>) {
                 let inner = &text[i + 1..end];
                 let trimmed = inner.trim();
                 if let Some(content) = markup_span_content(trimmed) {
-                    collect_template_regions(content, regions);
+                    let content_offset = content.as_ptr() as usize - text.as_ptr() as usize;
+                    collect_template_regions(content, base + content_offset, regions);
                 } else if !trimmed.starts_with(['?', '/']) {
-                    regions.push(inner.to_string());
+                    regions.push((base + i + 1, base + end));
                 }
                 i = end + 1;
             }
@@ -2919,7 +2992,14 @@ fn markup_span_content(trimmed: &str) -> Option<&str> {
 
 /// Byte offset of the `}` matching the `{` at `open`, tracking nested
 /// braces and skipping R strings, backtick names, and `#` comments.
+/// Markup text is not R code — an apostrophe or `#` in literal prose
+/// makes the string-aware scan run off the end — so on failure the
+/// scan retries with plain brace counting.
 fn matching_brace(text: &str, open: usize) -> Option<usize> {
+    matching_brace_scanned(text, open, true).or_else(|| matching_brace_scanned(text, open, false))
+}
+
+fn matching_brace_scanned(text: &str, open: usize, code_aware: bool) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut depth = 0usize;
     let mut i = open;
@@ -2932,7 +3012,7 @@ fn matching_brace(text: &str, open: usize) -> Option<usize> {
                     return Some(i);
                 }
             }
-            b'"' | b'\'' | b'`' => {
+            b'"' | b'\'' | b'`' if code_aware => {
                 let quote = bytes[i];
                 i += 1;
                 while i < bytes.len() && bytes[i] != quote {
@@ -2942,7 +3022,7 @@ fn matching_brace(text: &str, open: usize) -> Option<usize> {
                     i += 1;
                 }
             }
-            b'#' => {
+            b'#' if code_aware => {
                 while i < bytes.len() && bytes[i] != b'\n' {
                     i += 1;
                 }

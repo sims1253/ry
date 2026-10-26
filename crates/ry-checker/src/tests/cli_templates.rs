@@ -153,3 +153,51 @@ fn bare_cli_name_fires_with_explicit_cli_import() {
     );
     assert!(diags.iter().all(|d| d.code != "RY125"), "{diags:?}");
 }
+
+#[test]
+fn unknown_class_function_values_stay_silent() {
+    // A class chosen at runtime could carry a `dim` method, so the
+    // always-NULL claim needs a known-empty class.
+    let diags = check("f <- function(cl) { g <- structure(function() 1L, class = cl); ncol(g) }\n");
+    assert!(diags.iter().all(|d| d.code != "RY125"), "{diags:?}");
+}
+
+#[test]
+fn quoted_and_masked_template_code_stays_silent() {
+    for source in [
+        // Quoted code never runs.
+        "f <- function(x) cli::cli_text(\"{deparse(quote(ncol(data)))}\")\n",
+        // A data mask resolves `data` against the mask first.
+        "f <- function(df) cli::cli_text(\"{with(df, ncol(data))}\")\n",
+        // An earlier region's rebinding shadows later regions.
+        "f <- function(x) cli::cli_abort(\"{dim <- 'x'; 'y'} {ncol(dim)}\")\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY125"),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn markup_punctuation_does_not_hide_interpolations() {
+    for source in [
+        "f <- function(x) cli::cli_abort(\"{.strong Don't use {ncol(data)}}\")\n",
+        "f <- function(x) cli::cli_abort(\"{.strong #1 issue: {ncol(data)}}\")\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().any(|d| d.code == "RY125"),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn template_hit_span_covers_the_interpolation() {
+    let source = "f <- function(x) cli::cli_abort(\"cols: {ncol(data)} done\")\n";
+    let diags = check(source);
+    let hit = diags.iter().find(|d| d.code == "RY125").unwrap();
+    assert_eq!(&source[hit.span.start..hit.span.end], "{ncol(data)}");
+}

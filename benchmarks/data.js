@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792990898152,
+  "lastUpdate": 1792993220931,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -58005,6 +58005,219 @@ window.BENCHMARK_DATA = {
           {
             "name": "server/unrelated-file/p95",
             "value": 181.899149,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "48421759ecd3999bac44dede31c803deb544ba71",
+          "message": "feat(checker): flag deterministic self-comparisons in testthat equality assertions (#825)\n\n* feat(checker): flag deterministic self-comparisons in testthat equality assertions\n\nAdd RY122 (testthat-self-comparison): warn when a testthat-proven expect_equal/expect_identical compares structurally equivalent operands built only from literals, plain variable reads, one index step from a proven-plain receiver, and base-resolved numeric math calls. Differing operands, RNG/time/I/O or unknown calls, masked assertions, and unproven receivers stay silent.\n\nCloses #572\n\n* fix(checker): let RY122 see base math calls in package tests; exclude rebound negation\n\nThe strict base-resolution guard refused bare round() under the\nattached search path of package test files, silencing the rule's\nmotivating ggplot2 shape exactly where it applies. Use the lenient\nvariant RY100-style recognition already relies on; lexical/project\nredefinitions stay silent. A negated literal also stops counting as\ndeterministic when unary - is rebound.\n\nRefs #572\n\n* style(checker): rustfmt the RY122 leniency comment\n\n* fix(checker): sound RY122 operand matching, receivers, and constant set\n\nBind compared operands with R argument matching (named/partial\nexpected= wins over positionals), require no proven class on $\nreceivers, refuse schema-proven classed elements under Math calls,\nexclude NA/NaN/non-finite constants (deliberate NA assertions) and\nrebound negation, and share the base math list with RY100.\n\nRefs #572\n\n* chore(checker): register BASE_MATH_FNS semantic list; changelog RY122\n\nRefs #572\n\n* fix(checker): proven-unclassed receivers and double-spelled indexes for RY122\n\nRefs #572",
+          "timestamp": "2026-10-26T06:31:55+01:00",
+          "tree_id": "3322c791f716b740a615026557ee5327baecae41",
+          "url": "https://github.com/sims1253/ry/commit/48421759ecd3999bac44dede31c803deb544ba71"
+        },
+        "date": 1792993220818,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 4314848.793520865,
+            "range": "4292279.61–4339811.10",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 1126720.6931857853,
+            "range": "1124911.57–1128649.18",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 3673350.4729160503,
+            "range": "3654052.33–3704810.50",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 539153.604363475,
+            "range": "536518.78–543466.10",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 3689000.6861341274,
+            "range": "3668956.90–3722606.16",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 550428.5904654807,
+            "range": "548975.95–552298.04",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 21872592.344806574,
+            "range": "21804685.11–21943013.21",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 75321289.95,
+            "range": "74961482.26–75919689.24",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 11907752.08134406,
+            "range": "11861425.08–11955503.47",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 75339381.725,
+            "range": "75257641.81–75421815.11",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 12494899.63978738,
+            "range": "12433280.06–12599391.89",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 75848900.9,
+            "range": "74720336.64–77735895.46",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 11619139.50785718,
+            "range": "11580835.42–11660707.29",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 180269613,
+            "range": "177464639.02–182708453.15",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 21002046.096951906,
+            "range": "20877776.01–21131996.68",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 6660623.0477290945,
+            "range": "6653624.75–6668759.65",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 21162775.819910027,
+            "range": "21043516.03–21287913.81",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 8378047.738910617,
+            "range": "8332450.10–8428270.78",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 23082063.27678191,
+            "range": "22906416.37–23297341.92",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 1467674.486129852,
+            "range": "1458674.02–1476887.52",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 11169224,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 366343,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 220172,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 318570,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 124.33597900002496,
+            "range": "104.28–153.74",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 104.2772100000293, 109.20386700000381, 124.33597900002496, 124.98676400003023, 153.74414099997375"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 532.324048999988,
+            "range": "496.46–566.70",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 496.46257000003243, 499.919916999992, 532.324048999988, 555.5925660000066, 566.7011789999669"
+          },
+          {
+            "name": "server/startup-median",
+            "value": 197.337308,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/median",
+            "value": 182.143703,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/p95",
+            "value": 182.292159,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/median",
+            "value": 182.002357,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/p95",
+            "value": 182.112911,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/median",
+            "value": 182.06164,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/p95",
+            "value": 182.157529,
             "unit": "ms"
           }
         ]

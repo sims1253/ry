@@ -375,7 +375,7 @@ fn ry119_has_a_single_emitter() {
     // both are excluded. Every other line naming the literal, in any
     // syntactic position, must be one of exactly two: the emit in
     // `emit_integer_range_loss` and the RY001 read in
-    // `check_condition`.
+    // `emit_condition_diagnostics`.
     fn rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
         for entry in fs::read_dir(dir).expect("read src dir") {
             let path = entry.expect("dir entry").path();

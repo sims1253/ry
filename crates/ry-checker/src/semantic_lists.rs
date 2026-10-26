@@ -615,7 +615,6 @@ pub(crate) fn is_cli_message_function(name: &str) -> bool {
             | "cli_alert_warning"
             | "cli_alert_info"
             | "cli_text"
-            | "cli_par"
             | "cli_h1"
             | "cli_h2"
             | "cli_h3"

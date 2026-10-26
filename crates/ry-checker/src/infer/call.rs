@@ -1460,14 +1460,27 @@ impl Checker {
             return;
         }
         let mut literals: Vec<(&str, Span)> = Vec::new();
+        let mut positional = 0usize;
         for arg in args {
-            // Control arguments (`.frame`, `call`, ...) are not templates.
+            // Control arguments (`.frame`, `call`, `id`, ...) are not
+            // templates: `id` is passed through raw by cli.
             if arg
                 .name
                 .as_deref()
-                .is_some_and(|n| n.starts_with('.') || matches!(n, "call" | "class"))
+                .is_some_and(|n| n.starts_with('.') || matches!(n, "call" | "class" | "id"))
             {
                 continue;
+            }
+            if arg.name.is_none() {
+                // On the rlang-backed message functions a second
+                // positional string binds `class`, not a bullet; the
+                // multi-bullet form is the `c(...)` vector in the
+                // first position.
+                if positional > 0 && matches!(lookup_name, "cli_abort" | "cli_warn" | "cli_inform")
+                {
+                    continue;
+                }
+                positional += 1;
             }
             self.collect_template_literals(&arg.value, scope, &mut literals);
         }
@@ -2928,7 +2941,7 @@ fn qualified_parts(name: &str) -> Option<(&str, &str)> {
 /// top-level `{...}` group that cli evaluates. `{{`/`}}` are escaped
 /// literal braces, `{.class content}` markup spans contribute only
 /// their nested interpolations (their own content is literal text),
-/// and pluralization markers (`{?s}`, `{/...}`) are not expressions.
+/// and pluralization markers (`{?s}`, `{?a/b}`) are not expressions.
 /// An unbalanced group ends the scan silently.
 fn cli_template_regions(text: &str) -> Vec<(usize, usize)> {
     let mut regions = Vec::new();
@@ -2965,7 +2978,9 @@ fn collect_template_regions(text: &str, base: usize, regions: &mut Vec<(usize, u
 /// The literal content of a cli markup span `{.class ...}` (one or
 /// more leading `.class` tokens followed by whitespace), or `None`
 /// when the group is an expression. A lone `{.name}` with no
-/// following whitespace is an interpolated variable, not markup.
+/// following whitespace is not markup with content (current cli
+/// errors on it outside a small compatibility list); treating it
+/// as an expression region is harmless either way here.
 fn markup_span_content(trimmed: &str) -> Option<&str> {
     let mut rest = trimmed;
     loop {
@@ -2982,7 +2997,7 @@ fn markup_span_content(trimmed: &str) -> Option<&str> {
             .unwrap_or(after_dot.len());
         let after_token = &after_dot[token_end..];
         if after_token.is_empty() {
-            // `{.name}` alone: interpolated variable, not markup.
+            // `{.name}` alone: not markup with content.
             return None;
         }
         if !after_token.starts_with(char::is_whitespace) {

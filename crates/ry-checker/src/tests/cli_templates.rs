@@ -231,3 +231,21 @@ fn equals_and_assign_rebindings_shadow_later_regions() {
         );
     }
 }
+
+#[test]
+fn non_template_cli_arguments_stay_silent() {
+    for source in [
+        // `cli_par` has no text argument; a positional string is `id`.
+        "f <- function(x) cli::cli_par(\"{ncol(data)}\")\n",
+        // `id` is passed through raw, never interpolated.
+        "f <- function(x) cli::cli_h1(\"t\", id = \"{ncol(data)}\")\n",
+        // A second positional string on cli_abort binds `class`.
+        "f <- function(x) cli::cli_abort(\"msg\", \"{ncol(data)}\")\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY125"),
+            "{source}: {diags:?}"
+        );
+    }
+}

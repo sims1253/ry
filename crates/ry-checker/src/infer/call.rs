@@ -1942,9 +1942,12 @@ impl Checker {
             return None;
         }
         let value = &rep_args[matched.arg_for_param(0)?].value;
-        // An omitted count defaults to 1: one flat element, as written.
+        // The count must be written: `rep(v)` repeats once (handled
+        // by the `?` above). A count proven at most 1 is already
+        // flat, and a proven invalid count (negative or fractional)
+        // errors in R before any nesting exists.
         let times = &rep_args[matched.arg_for_param(1)?].value;
-        if proven_count(times, scope).is_some_and(|count| count <= 1.0) {
+        if proven_count(times, scope).is_some_and(|count| count <= 1.0 || count.fract() != 0.0) {
             return None;
         }
         // A vector count repeats element-wise, a different operation.
@@ -1973,6 +1976,18 @@ impl Checker {
             // contributes the listed element types repeatedly.
             if self.is_base_call(func, "rep", scope) {
                 let matched = match_arguments(&["x", "times", "length.out", "each"], args);
+                // A proven-zero `times` contributes no elements; a
+                // proven invalid one makes the contribution unproven.
+                if let Some(times) = matched.arg_for_param(1).map(|index| &args[index].value)
+                    && let Some(count) = proven_count(times, scope)
+                {
+                    if count == 0.0 {
+                        return Some(Vec::new());
+                    }
+                    if count < 0.0 || count.fract() != 0.0 {
+                        return None;
+                    }
+                }
                 if matched.is_one_to_one()
                     && let Some(listed) = matched
                         .arg_for_param(0)

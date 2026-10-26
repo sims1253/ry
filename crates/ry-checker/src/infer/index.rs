@@ -493,9 +493,11 @@ impl Checker {
             if arg.name.is_some() || matches!(arg.value, Expr::Missing(_)) {
                 continue;
             }
-            // Endpoint facts are read before any subscript is
-            // inferred, so an earlier subscript that assigns or calls
-            // could already have changed a binding a later sequence
+            // Scope value facts describe bindings as they stand
+            // before this index expression runs. R evaluates
+            // subscripts left to right when the index executes, so
+            // an earlier subscript that assigns (or calls code that
+            // assigns) can change a binding a later sequence
             // endpoint reads. Identifier endpoints therefore count
             // only in the first subscript; literal endpoints are
             // unaffected by evaluation order.

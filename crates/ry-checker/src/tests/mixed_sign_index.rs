@@ -78,6 +78,15 @@ fn unproven_receivers_and_masked_definitions_stay_silent() {
         "f <- function() {\n seq2 <- function(a, b) a:b\n y <- c(1, 2)\n y[seq2(-1, 2)]\n}\n",
         // A rebound unary `-` makes `-1` an unknown value.
         "f <- function() {\n `-` <- function(e1) 3L\n y <- c(1, 2)\n y[1:-1]\n}\n",
+        // A non-function `:` binding trips only `operator_rebound`
+        // (`has_explicit_operator_mask` looks for callable masks),
+        // pinning that gate independently.
+        "f <- function() {\n `:` <- 3L\n y <- c(1, 2)\n y[1:-1]\n}\n",
+        // `seq` calls R rejects before building a sequence ("too
+        // many arguments" / unused argument) do not match
+        // one-to-one, so the mixed-sign claim never forms.
+        "y <- c(1, 2)\ny[seq(1, -1, 2, 5, 9, 7)]\n",
+        "y <- c(1, 2)\ny[seq(1, -1, foo = 3)]\n",
     ] {
         assert_eq!(mixed_sign_errors(source), 0, "{source}");
     }

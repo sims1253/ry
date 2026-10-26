@@ -121,16 +121,30 @@ impl Checker {
                 None => true,
                 Some(arg) => !matches!(args[arg].value, Expr::Na(..)),
             },
-            "expect_snapshot" => arg_named("error")
-                .is_some_and(|arg| matches!(args[arg].value, Expr::Logical(true, _))),
+            // R coerces a non-zero numeric literal in the `error`
+            // condition to TRUE, so `error = 1` asserts like TRUE.
+            "expect_snapshot" => arg_named("error").is_some_and(|arg| {
+                matches!(args[arg].value, Expr::Logical(true, _))
+                    || matches!(args[arg].value, Expr::Integer(n, _) if n != 0)
+                    || matches!(args[arg].value, Expr::Double(x, _) if x != 0.0)
+            }),
             // `error` reaches tryCatch via `...`, so R requires the
             // exact name — partial matching only binds real formals. A
-            // literal non-function handler (`NULL`, `NA`) catches
-            // nothing in R -- it errors as "attempt to apply
-            // non-function" -- so it does not make `expr` a probe.
+            // literal non-function handler (`NULL`, `NA`, `"x"`, `1`,
+            // `TRUE`) catches nothing in R -- it errors as "attempt to
+            // apply non-function" -- so it does not make `expr` a probe.
             "tryCatch" => args.iter().any(|arg| {
                 arg.name.as_deref() == Some("error")
-                    && !matches!(arg.value, Expr::Missing(_) | Expr::Null(_) | Expr::Na(..))
+                    && !matches!(
+                        arg.value,
+                        Expr::Missing(_)
+                            | Expr::Null(_)
+                            | Expr::Na(..)
+                            | Expr::Logical(..)
+                            | Expr::Integer(..)
+                            | Expr::Double(..)
+                            | Expr::String(..)
+                    )
             }),
             _ => true,
         };

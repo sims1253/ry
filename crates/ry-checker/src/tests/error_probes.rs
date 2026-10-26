@@ -31,6 +31,9 @@ fn recognized_error_wrappers_demote_the_probe_one_tier() {
         "testthat::expect_snapshot(x = { 1 + \"\" }, error = TRUE)\n",
         // No `...` in the real signature: partial names bind `error`.
         "expect_snapshot(1 + \"\", err = TRUE)\n",
+        // R coerces a non-zero numeric `error` to TRUE.
+        "expect_snapshot(1 + \"\", error = 1)\n",
+        "expect_snapshot(1 + \"\", error = 1L)\n",
         "tryCatch(1 + \"\", error = function(e) NULL)\n",
         "base::tryCatch(expr = 1 + \"\", error = function(e) NULL)\n",
         "tryCatch(error = function(e) NULL, 1 + \"\")\n",
@@ -64,6 +67,11 @@ fn non_error_wrappers_and_missing_handlers_stay_full_strength() {
         // A literal non-function handler catches nothing in R.
         "tryCatch(1 + \"\", error = NULL)\n",
         "tryCatch(1 + \"\", error = NA)\n",
+        "tryCatch(1 + \"\", error = \"x\")\n",
+        "tryCatch(1 + \"\", error = 1)\n",
+        "tryCatch(1 + \"\", error = TRUE)\n",
+        // Zero coerces to FALSE: no error is asserted.
+        "expect_snapshot(1 + \"\", error = 0)\n",
         "tryCatch(1 + \"\", warning = function(w) NULL)\n",
         "tryCatch(1 + \"\", finally = NULL)\n",
         "expect_equal(1 + \"\", 1)\n",

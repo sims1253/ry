@@ -347,9 +347,15 @@ static PROBES: &[Probe] = &[
     },
     Probe {
         code: "RY125",
-        note: "dimensional call on a definite function, plain and inside a proven cli template; correct-variable and function-interpolation controls stay silent",
-        positive: "f <- function(x) ncol(data)\nf <- function(x) cli::cli_abort(\"cols: {ncol(data)}\")\n",
-        negative: "f <- function(x) ncol(x)\nf <- function(data) cli::cli_abort(\"{ncol(data)}\")\nf <- function(x) cli::cli_abort(\"loader: {data}\")\nf <- function(x) cli::cli_abort(\"{ncol(data)}\", .envir = x)\n",
+        note: "dimensional call on a definite function (plain shape); correct-variable control stays silent",
+        positive: "f <- function(x) ncol(data)\n",
+        negative: "f <- function(x) ncol(x)\nf <- function(data) ncol(data)\n",
+    },
+    Probe {
+        code: "RY125",
+        note: "dimensional call on a definite function inside a proven cli template; function-interpolation and .envir controls stay silent",
+        positive: "f <- function(x) cli::cli_abort(\"cols: {ncol(data)}\")\n",
+        negative: "f <- function(data) cli::cli_abort(\"{ncol(data)}\")\nf <- function(x) cli::cli_abort(\"loader: {data}\")\nf <- function(x) cli::cli_abort(\"{ncol(data)}\", .envir = x)\n",
     },
 ];
 

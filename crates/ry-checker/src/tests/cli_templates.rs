@@ -216,3 +216,18 @@ fn sequential_region_shadowing_is_parse_based() {
     let diags = check("f <- function(x) cli::cli_abort(\"{ncol(data); x <- 1}\")\n");
     assert!(diags.iter().any(|d| d.code == "RY125"), "{diags:?}");
 }
+
+#[test]
+fn equals_and_assign_rebindings_shadow_later_regions() {
+    for source in [
+        "f <- function(x) cli::cli_abort(\"{dim = 'x'} {ncol(dim)}\")\n",
+        "f <- function(x) cli::cli_abort(\"{assign('dim', 'x')} {ncol(dim)}\")\n",
+        "f <- function(x) cli::cli_abort(\"{for (dim in 1) NULL} {ncol(dim)}\")\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY125"),
+            "{source}: {diags:?}"
+        );
+    }
+}

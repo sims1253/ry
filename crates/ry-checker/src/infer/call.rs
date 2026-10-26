@@ -369,7 +369,7 @@ impl Checker {
         self.check_comparison_inside_math_fn(&lookup_name, args);
         self.check_identical_list_subset(&lookup_name, args, scope);
         self.check_testthat_self_comparison(&name, func, &semantic_name, &lookup_name, args, scope);
-        self.check_dimensional_on_function(&name, func, &semantic_name, &lookup_name, args, scope);
+        self.check_dimensional_on_function(func, args, scope);
         self.check_cli_template(&name, func, &semantic_name, &lookup_name, args, scope);
 
         if matches!(lookup_name.as_str(), "hasArg" | "on.exit") {
@@ -1423,33 +1423,14 @@ impl Checker {
     /// RY125: a proven base `ncol()`/`nrow()`/`dim()` whose argument is
     /// a definite function value always returns `NULL` (the broom
     /// `ncol(data)` shape, where `data` resolves to `utils::data`).
-    fn check_dimensional_on_function(
-        &mut self,
-        name: &str,
-        func: &Expr,
-        semantic_name: &str,
-        lookup_name: &str,
-        args: &[Arg],
-        scope: &Scope,
-    ) {
-        if !crate::semantic_lists::is_dimensional_function(lookup_name)
-            || !matches!(
-                self.special_call_provenance(name, func, semantic_name, lookup_name, "base", scope),
-                crate::resolve::SpecialCallProvenance::Proven
-            )
-        {
-            return;
-        }
-        if let Some(arg) = dimensional_argument(args)
-            && let Some(subject) = self.definite_function_value(&arg.value, scope)
+    fn check_dimensional_on_function(&mut self, func: &Expr, args: &[Arg], scope: &Scope) {
+        if let Some((callee, subject, arg_span)) = self.dimensional_function_call(func, args, scope)
         {
             self.emit(
                 Severity::Warning,
-                arg.span,
+                arg_span,
                 "RY125",
-                format!(
-                    "`{lookup_name}()` of {subject} is always `NULL`; a function has no dimensions"
-                ),
+                format!("`{callee}()` of {subject} is always `NULL`; a function has no dimensions"),
             );
         }
     }
@@ -1491,7 +1472,11 @@ impl Checker {
             self.collect_template_literals(&arg.value, scope, &mut literals);
         }
         let mut hits: Vec<(String, String, Span)> = Vec::new();
-        let mut parser: Option<ry_core::RParser> = None;
+        // Parser construction failure degrades the whole template
+        // check uniformly, before any region is examined.
+        let Ok(mut parser) = ry_core::RParser::new() else {
+            return;
+        };
         // cli evaluates a template's regions sequentially in one
         // environment: once a region rebinds a name, later regions no
         // longer resolve against the caller's scope and stay silent.
@@ -1501,30 +1486,28 @@ impl Checker {
                 break;
             }
             for (start, end) in cli_template_regions(text) {
-                // Cheap gate: regions without a dimensional callee name
-                // cannot contain the RY125 shape and are never parsed.
                 let region = &text[start..end];
-                if parser.is_none() {
-                    parser = ry_core::RParser::new().ok();
-                }
-                let Some(parser) = parser.as_mut() else {
-                    return;
-                };
-                if !["ncol", "nrow", "dim"].iter().any(|n| region.contains(n)) {
-                    // A non-candidate region can still rebind a name a
-                    // later region resolves. Detect that by parsing
-                    // (only regions that textually contain an
-                    // assignment operator pay for it): prose like
-                    // `"use x <- 1"` parses to a string literal and
-                    // does not count.
-                    if region.contains("<-") && self.region_rebinds(parser, region) {
-                        shadowed = true;
-                        break;
-                    }
+                // Cheap gates: a region is parsed (once) only when it
+                // can contain the RY125 shape or can rebind a name a
+                // later region resolves. The rebind gate is textual
+                // but the decision is the parse, so prose like
+                // `"use x <- 1"` does not count.
+                let candidate = ["ncol", "nrow", "dim"].iter().any(|n| region.contains(n));
+                let may_rebind = ["<-", "=", "assign", "for"]
+                    .iter()
+                    .any(|n| region.contains(n));
+                if !candidate && !may_rebind {
                     continue;
                 }
                 let region_span = self.template_region_span(text, span, start, end);
-                if self.check_template_region(parser, region, scope, region_span, &mut hits) {
+                if self.check_template_region(
+                    &mut parser,
+                    region,
+                    scope,
+                    region_span,
+                    candidate,
+                    &mut hits,
+                ) {
                     shadowed = true;
                     break;
                 }
@@ -1613,6 +1596,7 @@ impl Checker {
         region: &str,
         scope: &Scope,
         span: Span,
+        collect_hits: bool,
         hits: &mut Vec<(String, String, Span)>,
     ) -> bool {
         let Ok(file) = parser.parse("<cli-template>", region) else {
@@ -1641,6 +1625,14 @@ impl Checker {
                     ..
                 }) => rebinds = true,
                 AstNode::Expr(Expr::Call { func, args, .. }) => {
+                    // `assign("x", ...)` rebinds in the evaluation
+                    // environment just like `<-`.
+                    if let Expr::Ident { name, .. } = func.as_ref()
+                        && crate::semantic_lists::bare_name(semantic_argument_name(name))
+                            == "assign"
+                    {
+                        rebinds = true;
+                    }
                     // Quoted code never runs here, and data-mask calls
                     // resolve names against their mask, not this
                     // scope: neither subtree is checked.
@@ -1662,8 +1654,9 @@ impl Checker {
                     }
                     // Hits evaluated before any in-region rebinding
                     // are real; only later ones are suppressed.
-                    if !rebinds
-                        && let Some((callee, subject)) =
+                    if collect_hits
+                        && !rebinds
+                        && let Some((callee, subject, _)) =
                             self.dimensional_function_call(func, args, scope)
                     {
                         found.push((callee, subject, span));
@@ -1677,46 +1670,14 @@ impl Checker {
         rebinds
     }
 
-    /// Whether a template region parses to code containing an
-    /// assignment or `for` binding. Unparseable counts as rebinding
-    /// only when an assignment operator appears textually.
-    fn region_rebinds(&self, parser: &mut ry_core::RParser, region: &str) -> bool {
-        let Ok(file) = parser.parse("<cli-template>", region) else {
-            return true;
-        };
-        if !file.parse_errors.is_empty() {
-            return true;
-        }
-        let mut rebinds = false;
-        let policy = Walk {
-            assign_targets: false,
-            assign_operands: false,
-            dollar_args: false,
-            fn_bodies: false,
-            control_tests: true,
-        };
-        let _ = ry_core::walk::walk_stmts::<()>(&file.stmts, policy, |node, _| {
-            match node {
-                AstNode::Stmt(Stmt::Assign { .. } | Stmt::For { .. }) => rebinds = true,
-                AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
-                    ..
-                }) => rebinds = true,
-                _ => {}
-            }
-            ControlFlow::Continue(Descend::Into)
-        });
-        rebinds
-    }
-
-    /// The (callee, subject) pair when `func(args)` is a proven-base
-    /// dimensional call on a definite function value.
+    /// The (callee, subject, argument span) triple when `func(args)`
+    /// is a proven-base dimensional call on a definite function value.
     fn dimensional_function_call(
         &self,
         func: &Expr,
         args: &[Arg],
         scope: &Scope,
-    ) -> Option<(String, String)> {
+    ) -> Option<(String, String, Span)> {
         let name = callee_name(func)?;
         let semantic = scope.function_alias(&name).unwrap_or(&name).to_string();
         let lookup = crate::semantic_lists::bare_name(&semantic).to_string();
@@ -1730,7 +1691,7 @@ impl Checker {
         }
         let arg = dimensional_argument(args)?;
         let subject = self.definite_function_value(&arg.value, scope)?;
-        Some((lookup, subject))
+        Some((lookup, subject, arg.span))
     }
 
     /// A description of `expr` when it is provably a plain function
@@ -3038,7 +2999,10 @@ fn markup_span_content(trimmed: &str) -> Option<&str> {
 /// braces and skipping R strings, backtick names, and `#` comments.
 /// Markup text is not R code — an apostrophe or `#` in literal prose
 /// makes the string-aware scan run off the end — so on failure the
-/// scan retries with plain brace counting.
+/// scan retries with plain brace counting. A fallback pairing can be
+/// wrong (a `}` inside a string literal), but the extracted region
+/// must still parse as R and contain the proven shape before
+/// anything reports, so a wrong pairing degrades to silence.
 fn matching_brace(text: &str, open: usize) -> Option<usize> {
     matching_brace_scanned(text, open, true).or_else(|| matching_brace_scanned(text, open, false))
 }

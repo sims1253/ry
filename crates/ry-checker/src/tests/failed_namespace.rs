@@ -71,11 +71,44 @@ fn dynamic_package_name_is_silent() {
 }
 
 #[test]
-fn without_quietly_true_is_silent() {
-    // Without `quietly = TRUE`, base `requireNamespace` itself errors on
-    // failure, so the FALSE branch never runs.
-    assert!(!warns_ry122(
+fn without_quietly_true_also_warns() {
+    // Base `requireNamespace` returns `FALSE` on a failed load with or
+    // without `quietly` (verified in R); `quietly` only controls the
+    // load message, so both spellings select the failed branch.
+    assert!(warns_ry122(
         "if (!requireNamespace(\"pkgx\")) pkgx::thing else 1L\n"
+    ));
+    assert!(warns_ry122(
+        "if (!requireNamespace(\"pkgx\", quietly = FALSE)) pkgx::thing else 1L\n"
+    ));
+}
+
+#[test]
+fn nested_branch_call_does_not_revive_the_fact() {
+    assert!(!warns_ry122(
+        "if (!requireNamespace(\"pkgx\")) { if (TRUE) setup_packages(); y <- pkgx::thing } else { y <- 1L }\n"
+    ));
+    assert!(!warns_ry122(
+        "if (!requireNamespace(\"pkgx\")) { for (i in 1L) setup_packages(); y <- pkgx::thing } else { y <- 1L }\n"
+    ));
+}
+
+#[test]
+fn guard_installed_inside_trycatch_expr_is_silent() {
+    assert!(!warns_ry122(
+        "if (!requireNamespace(\"other\")) { y <- tryCatch({ if (!requireNamespace(\"pkgx\")) pkgx::thing else 1L }, error = function(e) 2L) } else { y <- 3L }\n"
+    ));
+}
+
+#[test]
+fn user_defined_trycatch_and_positional_handler_warn() {
+    // Only base `tryCatch` catches; an unnamed handler errors in R
+    // ("condition handlers must be specified with a condition class").
+    assert!(warns_ry122(
+        "tryCatch <- function(expr, ...) expr\nif (!requireNamespace(\"pkgx\")) tryCatch(pkgx::thing, error = function(e) 1L) else 2L\n"
+    ));
+    assert!(warns_ry122(
+        "if (!requireNamespace(\"pkgx\")) tryCatch(pkgx::thing, function(e) 1L) else 2L\n"
     ));
 }
 

@@ -393,22 +393,29 @@ impl Checker {
         // RY122: an `error` handler deliberately probes failure, so a
         // proven-failed namespace access inside `expr` is the caught
         // error, not a missed fallback. Without an `error` handler the
-        // error still propagates and the fact stays live.
-        let has_error_handler = args
-            .iter()
-            .enumerate()
-            .any(|(i, a)| a.name.as_deref() == Some("error") && matched.param_for_arg[i].is_none());
+        // error still propagates and the fact stays live. Only base
+        // `tryCatch` installs handlers; a user function of that name
+        // catches nothing. (A positional unnamed handler is not one:
+        // R errors "condition handlers must be specified with a
+        // condition class".)
+        let has_error_handler = self.resolves_to_base("tryCatch", scope)
+            && args.iter().enumerate().any(|(i, a)| {
+                a.name.as_deref() == Some("error") && matched.param_for_arg[i].is_none()
+            });
         let mut types: Vec<RType> = Vec::new();
         for (i, a) in args.iter().enumerate() {
             if Some(i) == expr_index {
                 // Only `expr` is protected by the handler; `finally` and
                 // handler bodies keep the surrounding fact (function
-                // bodies discard it on entry regardless).
-                let probed =
-                    has_error_handler.then(|| std::mem::take(&mut scope.failed_namespaces));
+                // bodies discard it on entry regardless). Probe depth,
+                // not fact removal, so guards installed inside `expr`
+                // are covered too.
+                if has_error_handler {
+                    self.caught_namespace_probe_depth += 1;
+                }
                 types.push(self.infer(&a.value, scope));
-                if let Some(probed) = probed {
-                    scope.failed_namespaces = probed;
+                if has_error_handler {
+                    self.caught_namespace_probe_depth -= 1;
                 }
             } else if a.name.is_some() && matched.param_for_arg[i].is_none() {
                 if let Some(rt) = self.callback_return_type(&a.value, &[RType::unknown()], scope) {

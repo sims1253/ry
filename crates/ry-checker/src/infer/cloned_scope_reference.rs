@@ -92,6 +92,17 @@ impl Checker {
                     || else_diverges
                     || else_scope.scalar_asserted_bindings.contains(name))
         });
+        scope.failed_namespaces = scope
+            .failed_namespaces
+            .iter()
+            .chain(then_scope.failed_namespaces.iter())
+            .chain(else_scope.failed_namespaces.iter())
+            .filter(|package| {
+                (then_diverges || then_scope.failed_namespaces.contains(*package))
+                    && (else_diverges || else_scope.failed_namespaces.contains(*package))
+            })
+            .cloned()
+            .collect();
         scope.uncertainty |= then_scope.uncertainty.continuing(then_diverges)
             | else_scope.uncertainty.continuing(else_diverges);
         let mut loop_vectors_after = FxSet::default();

@@ -852,6 +852,7 @@ mod tests {
             right.scalar_asserted_bindings
         );
         assert_eq!(left.loop_vector_bindings, right.loop_vector_bindings);
+        assert_eq!(left.failed_namespaces, right.failed_namespaces);
         assert_eq!(
             left.default_parameter_bindings,
             right.default_parameter_bindings

@@ -1685,6 +1685,7 @@ impl Checker {
         }
         apply_failed_namespace_branch(scope, failed_ns, NarrowingBranch::Then);
         let then_value = self.walk_journal_arm(then, literal_cond == Some(false), scope, &mut walk);
+        let then_failed_namespaces = scope.failed_namespaces.clone();
         let mut then_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let mark = scope.begin_snapshot();
@@ -1697,6 +1698,7 @@ impl Checker {
             Some(arm) => self.walk_journal_arm(arm, literal_cond == Some(true), scope, &mut walk),
             None => RType::new(Mode::Null, Length::Zero),
         };
+        let else_failed_namespaces = scope.failed_namespaces.clone();
         let mut else_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let has_else = else_.is_some();
@@ -1778,6 +1780,22 @@ impl Checker {
         for name in lost_scalar_assertions {
             scope.clear_scalar_asserted(&name);
         }
+        // A failed-namespace fact reaches the join only if every
+        // continuing arm still holds it: an arm-local clear (a call that
+        // may have loaded the namespace) must not be undone by restoring
+        // the pre-`if` snapshot, and an arm-local install escapes only
+        // when its sibling diverges.
+        scope.failed_namespaces = scope
+            .failed_namespaces
+            .iter()
+            .chain(then_failed_namespaces.iter())
+            .chain(else_failed_namespaces.iter())
+            .filter(|package| {
+                (then_diverges || then_failed_namespaces.contains(*package))
+                    && (else_diverges || else_failed_namespaces.contains(*package))
+            })
+            .cloned()
+            .collect();
         // A proven vector alternative survives the join when any continuing
         // arm still carries it.
         let mut vector_candidates: HashSet<String> =
@@ -3292,6 +3310,11 @@ impl Checker {
                 // there, so the function-value rungs below are shadowed.
                 let functions_shadowed_by_mask =
                     under_unknown_data_mask || scope.data_mask_columns_first();
+                // RY122 ahead of the value rungs: a typeshed-known
+                // qualified value still needs its namespace loaded.
+                if name.contains("::") {
+                    self.check_failed_namespace_access(name, *span, scope);
+                }
                 // Typed package values take precedence over existence-only
                 // import bindings so constants retain their declared type.
                 if let Some(value_type) = self.resolve_typeshed_value(name) {
@@ -3412,7 +3435,6 @@ impl Checker {
                 // RY010. The `contains("::")` test matches both
                 // `::` and `:::`.
                 if name.contains("::") {
-                    self.check_failed_namespace_access(name, *span, scope);
                     return RType::unknown();
                 }
                 // Special/operator names referenced via backticks

@@ -523,7 +523,7 @@ pub struct Scope {
     /// only possible, so a call head of that name keeps its stub (#722).
     /// Monotone: a stale entry only restores the stub fallback.
     pub(crate) possible_block_writes: FxSet<String>,
-    /// Literal packages whose `base::requireNamespace(pkg, quietly = TRUE)`
+    /// Literal packages whose `base::requireNamespace(pkg)`
     /// returned `FALSE` on the branch dominating this point (RY122). A
     /// branch-local fact: journal snapshots restore it, unknown calls and
     /// fresh execution frames clear it.
@@ -1416,6 +1416,10 @@ pub struct Checker {
     journal_delta_cache: scope_journal::BranchChanges,
     /// See [`infer::HeldCast`].
     pub(crate) held_cast: Option<infer::HeldCast>,
+    /// Depth inside a base `tryCatch` `expr` guarded by an `error`
+    /// handler: failed-namespace accesses there are deliberate probes
+    /// (RY122 stays silent), including guards installed inside `expr`.
+    pub(crate) caught_namespace_probe_depth: usize,
     #[cfg(test)]
     journal_branches: bool,
     pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
@@ -1764,6 +1768,7 @@ impl Checker {
             loop_frames: Vec::new(),
             journal_delta_cache: scope_journal::BranchChanges::default(),
             held_cast: None,
+            caught_namespace_probe_depth: 0,
             #[cfg(test)]
             journal_branches: true,
             pipe_argument_types: HashMap::new(),

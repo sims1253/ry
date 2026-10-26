@@ -350,7 +350,7 @@ pub const RULES: &[Rule] = &[
         code: "RY123",
         name: "failed-namespace-access",
         default_severity: Severity::Warning,
-        summary: "A `pkg::name` or `pkg:::name` access runs on the branch where `requireNamespace(\"pkg\", quietly = TRUE)` returned `FALSE`, so the namespace is not loaded and the access errors instead of selecting the fallback. Reported only for a literal package name whose `base::requireNamespace` result dominates the access.",
+        summary: "A `pkg::name` or `pkg:::name` access runs on the branch where `requireNamespace(\"pkg\")` returned `FALSE`, so the namespace is not loaded and the access errors instead of selecting the fallback. Reported only for a literal package name whose `base::requireNamespace` result dominates the access.",
     },
 ];
 

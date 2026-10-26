@@ -1234,11 +1234,12 @@ impl Checker {
 
     /// A literal-package `requireNamespace` test whose result selects a
     /// branch (RY122): the package and whether the `then` branch is the
-    /// one where loading failed. Only `quietly = TRUE` returns `FALSE` on
-    /// failure; without it base `requireNamespace` errors first, so the
-    /// `FALSE` branch never runs. A masked `requireNamespace` (anything
-    /// [`Checker::resolves_to_base`] rejects) and a dynamic package name
-    /// prove nothing.
+    /// one where loading failed. Base `requireNamespace` returns `FALSE`
+    /// on a failed load with or without `quietly = TRUE` (it wraps
+    /// `loadNamespace` in `tryCatch`; `quietly` only suppresses the
+    /// message), so no `quietly` shape is required. A masked
+    /// `requireNamespace` (anything [`Checker::resolves_to_base`]
+    /// rejects) and a dynamic package name prove nothing.
     pub(crate) fn failed_namespace_guard(
         &self,
         cond: &Expr,
@@ -1268,20 +1269,20 @@ impl Checker {
         {
             return None;
         }
-        let named_package: Vec<&Arg> = args
+        let mut named_package = args
             .iter()
-            .filter(|arg| arg.name.as_deref() == Some("package"))
-            .collect();
-        let package_arg = match named_package.as_slice() {
-            [arg] => {
+            .filter(|arg| arg.name.as_deref() == Some("package"));
+        let named_package = [named_package.next(), named_package.next()];
+        let package_arg = match named_package {
+            [Some(arg), None] => {
                 // A named `package` plus an unnamed first argument is a
                 // duplicate match in R, not a guard.
                 if args.first().is_some_and(|first| first.name.is_none()) {
                     return None;
                 }
-                *arg
+                arg
             }
-            [] => args.first().filter(|first| first.name.is_none())?,
+            [None, None] => args.first().filter(|first| first.name.is_none())?,
             _ => return None,
         };
         let Expr::String(package, _) = &package_arg.value else {
@@ -1290,21 +1291,14 @@ impl Checker {
         if package.is_empty() {
             return None;
         }
-        let mut quietly = args
-            .iter()
-            .filter(|arg| arg.name.as_deref() == Some("quietly"));
-        let quietly_true = matches!(
-            (quietly.next(), quietly.next()),
-            (Some(arg), None) if matches!(arg.value, Expr::Logical(true, _))
-        );
-        quietly_true.then(|| (package.clone(), negated))
+        Some((package.clone(), negated))
     }
 
     /// RY122: a `pkg::name` / `pkg:::name` access whose package is proven
     /// unloaded on this branch. A rebound `::`/`:::` operator runs instead
     /// of the namespace lookup, so it proves nothing.
     pub(crate) fn check_failed_namespace_access(&mut self, name: &str, span: Span, scope: &Scope) {
-        if scope.failed_namespaces.is_empty() {
+        if scope.failed_namespaces.is_empty() || self.caught_namespace_probe_depth > 0 {
             return;
         }
         let clean = name
@@ -1326,7 +1320,7 @@ impl Checker {
             span,
             "RY122",
             format!(
-                "`{name}` needs the `{package}` namespace, but `requireNamespace(\"{package}\", quietly = TRUE)` returned `FALSE` on this branch"
+                "`{name}` needs the `{package}` namespace, but `requireNamespace(\"{package}\")` returned `FALSE` on this branch"
             ),
         );
     }

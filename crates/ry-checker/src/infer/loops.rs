@@ -34,6 +34,9 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
         .scalar_asserted_bindings
         .retain(|name| incoming.scalar_asserted_bindings.contains(name));
     joined
+        .failed_namespaces
+        .retain(|name| incoming.failed_namespaces.contains(name));
+    joined
         .loop_vector_bindings
         .extend(incoming.loop_vector_bindings.iter().cloned());
     // A lexical function on either path may shadow a same-spelled flat
@@ -169,6 +172,16 @@ impl Checker {
         };
         let reaches = exits.is_some() && !(always_true && !has_transfer && body_unreachable);
         if let Some(exit) = exits {
+            // A failed-namespace fact survives the loop only if the
+            // joined exit state still holds it (and, for a loop that may
+            // not run at all, the entry state held it too).
+            if entered {
+                scope.failed_namespaces = exit.failed_namespaces.clone();
+            } else {
+                scope
+                    .failed_namespaces
+                    .retain(|name| exit.failed_namespaces.contains(name));
+            }
             let scalar_before = scope.scalar_asserted_bindings.clone();
             let vector_before = scope.loop_vector_bindings.clone();
             scope.uncertainty |= exit.uncertainty;

@@ -307,3 +307,27 @@ fn guarded_or_scalar_default_selector_stays_quiet() {
         );
     }
 }
+
+#[test]
+fn authored_default_selector_shadowing_and_captures() {
+    // The outer frame writes its own `type`; the inner formal
+    // shadows it, so the inner default still errors.
+    let source = "outer <- function(type = \"a\") { type <- \"a\"; inner <- function(type = c(\"a\", \"b\")) switch(type, a = 1L, b = 2L); inner() }";
+    {
+        let (diagnostics, _) = check_with_scope(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // A default reading a captured binding evaluates whatever
+    // it holds at call time, not its definition-time value.
+    let source = "x <- c(\"a\", \"b\")\nf <- function(type = x) switch(type, a = 1L, b = 2L)";
+    {
+        let (diagnostics, _) = check_with_scope(source);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

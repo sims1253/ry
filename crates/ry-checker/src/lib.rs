@@ -1418,6 +1418,12 @@ pub(crate) struct EnclosingFormals {
     /// `switch` selector check (#323); empty for injected
     /// literals, whose formals were never authored here.
     pub(crate) authored_defaults: FxMap<String, RType>,
+    /// Names this frame's body may write (the `frame_writes`
+    /// entry pushed with it, cloned at body entry so the two
+    /// stacks cannot drift apart at injected-literal frames).
+    /// The switch default check scopes its write guard to the
+    /// frames from the read through the formal's owner.
+    pub(crate) body_writes: collect::WriteSet,
 }
 
 /// Which condition an assertion wrapper proves about its probe

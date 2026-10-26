@@ -39,6 +39,12 @@ All notable changes to ry are documented in this file.
   rather than a diagonal entry (GPArotation's scalar `diag(d)` defect), so
   R errors before any matrix is built. Vector `x`, entries mode, classed
   `x`, and computed signs such as `diag(sign(...))` stay silent (#320).
+- RY001 now also reports a `switch` selector that is still a formal
+  whose authored default is proven not length 1 (`function(type =
+  c("a", "b")) switch(type, ...)` without `match.arg()`): the
+  no-argument call forces the default and R errors. Closed defaults
+  only; rebound or captured-binding defaults stay silent. This
+  closes one oracle known gap (#323).
 - RY001 now reports an `if`/`while` condition that is a proven scalar
   `NA`: an `NA` literal (including the typed `NA_*_` constants), closed
   literal shapes over one (unary `!`/`-`, a comparison or `+`/`-`/`*`

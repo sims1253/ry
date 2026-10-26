@@ -683,3 +683,13 @@ c(x[[2L]], list(rep(3L, 2L)))
 # expect: RY127
 x <- list(1L, 3L)
 c(x[[2]], list(rep(3L, 2L)))
+
+## case: RY127: mixed named/unnamed schema keys are not positions
+# no-diag
+x <- list(a = "a", 1L)
+c(x[[1L]], list(rep(3L, 2L)))
+
+## case: RY127: the unnamed tail of a mixed list peeks by position
+# expect: RY127
+x <- list(a = "a", 1L)
+c(x[[2L]], list(rep(3L, 2L)))

@@ -2147,12 +2147,26 @@ impl Checker {
                     }
                     _ => return None,
                 };
-                // `build_named_schema` keys positional elements
-                // "[[i]]" in canonical decimal; compare the key's
-                // digits with the index instead of formatting one.
-                // Only the canonical spelling matches: a *named*
-                // key like "[[02]]" or "[[+2]]" is a string name,
-                // which R's numeric `[[` never selects.
+                // A complete schema lists every element in
+                // source order, so the numeric index selects by
+                // position. (The "[[i]]" keys `build_named_schema`
+                // assigns count only unnamed slots, so key digits
+                // are not absolute positions in a mixed list.)
+                // Width-checked: an index beyond usize is
+                // unproven, never truncated.
+                if schema.complete {
+                    return usize::try_from(index)
+                        .ok()
+                        .and_then(|index| schema.columns.get(index - 1))
+                        .map(|(_, ty)| ty.clone());
+                }
+                // For an incomplete schema the canonical "[[i]]"
+                // key is the remaining positional evidence;
+                // compare its digits with the index instead of
+                // formatting one. Only the canonical spelling
+                // matches: a *named* key like "[[02]]" or
+                // "[[+2]]" is a string name, which R's numeric
+                // `[[` never selects.
                 schema
                     .columns
                     .iter()
@@ -2168,14 +2182,6 @@ impl Checker {
                             == Some(index)
                     })
                     .map(|(_, ty)| ty.clone())
-                    .or_else(|| {
-                        // Width-checked: an index beyond usize
-                        // is unproven, never truncated.
-                        usize::try_from(index)
-                            .ok()
-                            .and_then(|index| schema.columns.get(index - 1))
-                            .map(|(_, ty)| ty.clone())
-                    })
             }
             Expr::Call { func, args, .. } if self.is_base_call(func, "list", scope) => {
                 let length = known_length(args.len());

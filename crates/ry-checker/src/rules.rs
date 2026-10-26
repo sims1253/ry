@@ -365,6 +365,12 @@ pub const RULES: &[Rule] = &[
         summary: "A proven base `ncol()`/`nrow()`/`dim()` call receives a definite function value (such as the search-path `utils::data` where a data variable was meant), so the result is always `NULL`. Also reported for the same shape inside a literal template argument to a proven cli message function (`cli_abort()` and siblings). Silent for data or unknown arguments, masked callees, classed function values, dynamic templates, and cli calls carrying `.envir`.",
     },
     Rule {
+        code: "RY126",
+        name: "mixed-sign-sequence-index",
+        default_severity: Severity::Error,
+        summary: "A `:`/`seq()`/`seq.int()`/`rlang::seq2()` sequence used as a `[` subscript (or a `[[` subscript on an atomic vector) whose proven whole-number endpoints straddle zero, so the index mixes positive and negative subscripts and R errors (\"only 0's may be mixed with negative subscripts\"). Silent for descending all-positive or all-negative sequences, computed endpoints, `seq_len()`/`seq_along()`, non-index uses, masked operators, and receivers ry cannot prove use base subsetting.",
+    },
+    Rule {
         code: "RY127",
         name: "nested-rep-in-concat",
         default_severity: Severity::Warning,

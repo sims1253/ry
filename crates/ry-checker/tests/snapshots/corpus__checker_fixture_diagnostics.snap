@@ -847,6 +847,80 @@ expression: snapshots
         start: 16
   fixture: err_missing_required_argument.R
 - diagnostics:
+    - code: RY126
+      message: "sequence index `1:-1` runs from 1 to -1, mixing positive and negative subscripts; `[` errors with \"only 0's may be mixed with negative subscripts\""
+      severity: error
+      span:
+        column: 2
+        end: 406
+        line: 7
+        start: 402
+    - code: RY126
+      message: "sequence index `seq(1, -1)` runs from 1 to -1, mixing positive and negative subscripts; `[` errors with \"only 0's may be mixed with negative subscripts\""
+      severity: error
+      span:
+        column: 2
+        end: 420
+        line: 8
+        start: 410
+    - code: RY126
+      message: "sequence index `seq.int(2, -3)` runs from 2 to -3, mixing positive and negative subscripts; `[` errors with \"only 0's may be mixed with negative subscripts\""
+      severity: error
+      span:
+        column: 2
+        end: 438
+        line: 9
+        start: 424
+    - code: RY126
+      message: "sequence index `rlang::seq2(-1, 2)` runs from -1 to 2, mixing positive and negative subscripts; `[` errors with \"only 0's may be mixed with negative subscripts\""
+      severity: error
+      span:
+        column: 2
+        end: 460
+        line: 10
+        start: 442
+    - code: RY126
+      message: "sequence index `1:n` runs from 1 to -2, mixing positive and negative subscripts; `[` errors with \"only 0's may be mixed with negative subscripts\""
+      severity: error
+      span:
+        column: 2
+        end: 476
+        line: 12
+        start: 473
+    - code: RY126
+      message: "sequence index `1:-1` runs from 1 to -1; `[[` on an atomic vector takes one positive subscript, so this always errors"
+      severity: error
+      span:
+        column: 3
+        end: 485
+        line: 13
+        start: 481
+    - code: RY126
+      message: "sequence index `1:-1` runs from 1 to -1, mixing positive and negative subscripts; `[` errors with \"only 0's may be mixed with negative subscripts\""
+      severity: error
+      span:
+        column: 2
+        end: 494
+        line: 14
+        start: 490
+    - code: RY126
+      message: "sequence index `1:-1` runs from 1 to -1, mixing positive and negative subscripts; `[` errors with \"only 0's may be mixed with negative subscripts\""
+      severity: error
+      span:
+        column: 4
+        end: 545
+        line: 17
+        start: 541
+    - code: RY126
+      message: "sequence index `base::seq(-1, 2)` runs from -1 to 2, mixing positive and negative subscripts; `[` errors with \"only 0's may be mixed with negative subscripts\""
+      severity: error
+      span:
+        column: 4
+        end: 567
+        line: 18
+        start: 551
+  fixture: err_mixed_sign_sequence_index.R
+- diagnostics:
     - code: RY107
       message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > -1)`"
       severity: warning
@@ -2456,6 +2530,8 @@ expression: snapshots
   fixture: ok_mirai_status_dollar.R
 - diagnostics: []
   fixture: ok_missing_formal_rebound.R
+- diagnostics: []
+  fixture: ok_mixed_sign_sequence_index_controls.R
 - diagnostics: []
   fixture: ok_multi_assign.R
 - diagnostics: []

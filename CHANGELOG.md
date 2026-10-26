@@ -25,6 +25,10 @@ All notable changes to ry are documented in this file.
 - Add RY122 for testthat equality assertions that compare a deterministic
   expression to itself (`expect_equal(round(breaks$major, 3),
   round(breaks$major, 3))`), which cannot check two different values (#572).
+- Add RY126 for sequence subscripts proven to mix positive and negative
+  values (`x[1:-1]`, `x[seq(1, -1)]`, `x[rlang::seq2(-1, 2)]`), which R
+  always rejects on plain vectors and lists. Descending one-sided
+  sequences such as `x[3:1]` and computed endpoints stay silent (#355).
 - Add RY127 for `list(rep(v, n))` nested in a base `c()`/`append()` whose
   sibling elements are proven flat values of `v`'s classless atomic type:
   the shape contributes one element holding the whole repeated vector, not

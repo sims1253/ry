@@ -368,16 +368,42 @@ fn production_code_tests_unknown_mode_through_predicates() {
 /// fail loudly here instead of silently forging the proof.
 #[test]
 fn ry119_has_a_single_emitter() {
-    let src = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infer/mod.rs"))
-        .expect("read infer/mod.rs");
-    // Count every line mentioning the code literal, in any syntactic
-    // position, so an inline or reformatted second emitter cannot
-    // slip past: exactly the emit in `emit_integer_range_loss` and
-    // the RY001 read in `check_condition` may name it.
-    let sites: Vec<&str> = src
-        .lines()
-        .filter(|line| line.contains("\"RY119\""))
-        .collect();
+    // Scan every production source file, not just infer/mod.rs:
+    // `Checker::emit` is pub(crate), so a second emitter could land
+    // in any sibling module. The registry in rules.rs names the code
+    // without emitting it, and src/tests only reads diagnostics, so
+    // both are excluded. Every other line naming the literal, in any
+    // syntactic position, must be one of exactly two: the emit in
+    // `emit_integer_range_loss` and the RY001 read in
+    // `check_condition`.
+    fn rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).expect("read src dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                if path.file_name().is_none_or(|name| name != "tests") {
+                    rust_files(&path, files);
+                }
+            } else if path.extension().is_some_and(|ext| ext == "rs")
+                && path.file_name().is_none_or(|name| name != "rules.rs")
+            {
+                files.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    rust_files(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    let mut sites = Vec::new();
+    for file in &files {
+        let src = fs::read_to_string(file).expect("read source file");
+        for line in src.lines() {
+            if line.contains("\"RY119\"") {
+                sites.push(format!("{}: {}", file.display(), line.trim()));
+            }
+        }
+    }
     assert_eq!(
         sites.len(),
         2,

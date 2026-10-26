@@ -992,10 +992,7 @@ impl Checker {
                 );
                 let narrowing = self.extract_branch_narrowing(cond, scope);
                 let failed_ns = self.failed_namespace_guard(cond, scope);
-                let literal_cond = match cond {
-                    Expr::Logical(value, _) => Some(*value),
-                    _ => None,
-                };
+                let literal_cond = network::literal_logical(cond);
                 #[cfg(test)]
                 if !self.journal_branches {
                     self.walk_cloned_if(
@@ -1065,15 +1062,7 @@ impl Checker {
                 // A literal-FALSE body never runs: walk it for its
                 // bindings under the same dead-arm silence as `if`.
                 let outer_dead = self.in_dead_arm;
-                self.in_dead_arm |= matches!(cond, Expr::Logical(false, _))
-                    || matches!(
-                        cond,
-                        Expr::UnaryOp {
-                            op: UnaryOpKind::Not,
-                            expr,
-                            ..
-                        } if matches!(expr.as_ref(), Expr::Logical(true, _))
-                    );
+                self.in_dead_arm |= network::literal_logical(cond) == Some(false);
                 self.walk_block(body, &mut inner, returns.as_deref_mut());
                 self.in_dead_arm = outer_dead;
                 let always_true = matches!(cond, Expr::Logical(true, _));

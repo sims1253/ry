@@ -330,3 +330,27 @@ fn negated_true_while_and_masked_probes() {
         0
     );
 }
+
+#[test]
+fn masked_wrapper_heads_and_double_negation() {
+    // A locally defined `isTRUE` makes the guard unconditional.
+    assert_eq!(
+        network_warnings(
+            "isTRUE <- function(x) TRUE\nif (isTRUE(interactive())) utils::download.file('https://example.invalid/x', tempfile())"
+        ),
+        1
+    );
+    // Double negation of a literal is still a literal.
+    assert_eq!(
+        network_warnings(
+            "while (!!FALSE) utils::download.file('https://example.invalid/x', tempfile())"
+        ),
+        0
+    );
+    assert_eq!(
+        network_warnings(
+            "if (!TRUE) utils::download.file('https://example.invalid/x', tempfile())"
+        ),
+        0
+    );
+}

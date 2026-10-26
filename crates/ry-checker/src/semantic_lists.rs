@@ -364,7 +364,15 @@ pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyen
 /// only unmasked: the diverging `stop` and the opt-in probes. A
 /// local or file-level binding of any of these names shadows the
 /// base meaning the guard logic relies on.
-pub const GUARD_SHADOWED_HEADS: &[&str] = &["stop", "interactive", "getOption", "Sys.getenv"];
+pub const GUARD_SHADOWED_HEADS: &[&str] = &[
+    "stop",
+    "interactive",
+    "getOption",
+    "Sys.getenv",
+    "isTRUE",
+    "nzchar",
+    "identical",
+];
 
 pub const BASE_MATH_FNS: &[&str] = &[
     "abs", "sqrt", "exp", "log", "log2", "log10", "log1p", "floor", "ceiling", "round", "trunc",
@@ -473,7 +481,7 @@ pub fn registry() -> Vec<SemanticList> {
             name: "GUARD_SHADOWED_HEADS",
             items: GUARD_SHADOWED_HEADS,
             check: CheckKind::TypeshedAgreement,
-            claim: "base heads RY124 guard indexing trusts only when unmasked (diverging stop and opt-in probes)",
+            claim: "base heads RY124 guard indexing trusts only when unmasked (diverging stop, opt-in probes, and their wrapper heads)",
         },
         SemanticList {
             name: "BASE_MATH_FNS",

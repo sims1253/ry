@@ -462,6 +462,14 @@ fn probe_established(expr: &Expr, when_true: bool, masked: &dyn Fn(&str, Span) -
             if probe_call_name(expr, masked).is_some() {
                 return when_true;
             }
+            // A bare wrapper head masked by a local binding is not
+            // base's predicate and establishes nothing.
+            let head_masked = matches!(func.as_ref(), Expr::Ident { name, .. }
+                if matches!(Callee::parse(name), Callee::Bare(_)))
+                && base_call_member(func).is_some_and(|member| masked(member, span_of(func)));
+            if head_masked {
+                return false;
+            }
             match base_call_member(func) {
                 Some("isTRUE") => {
                     when_true
@@ -487,7 +495,7 @@ fn probe_established(expr: &Expr, when_true: bool, masked: &dyn Fn(&str, Span) -
 }
 
 /// The `TRUE`/`FALSE` value of a literal logical, through `!`.
-fn literal_logical(expr: &Expr) -> Option<bool> {
+pub(crate) fn literal_logical(expr: &Expr) -> Option<bool> {
     match expr {
         Expr::Logical(value, _) => Some(*value),
         Expr::UnaryOp {

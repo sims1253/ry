@@ -1562,14 +1562,19 @@ impl Checker {
         if !scalar {
             return None;
         }
-        if proven_count(expr, scope).is_some_and(|value| value < 0.0) {
+        // R converts the dimension with `as.integer` (truncation
+        // toward zero) before the negative check, so only values
+        // at or below -1 are invalid: `diag(-0.5)` is a valid
+        // 0x0 matrix.
+        if proven_count(expr, scope).is_some_and(|value| value <= -1.0) {
             return Some(InvalidDimension::Negative);
         }
-        // Not a single proven value, but every observed value is
-        // negative: the dimension is invalid whatever it holds.
+        // Not a single proven value, but every observed value
+        // truncates to a negative integer: the dimension is
+        // invalid whatever it holds.
         if let Expr::Ident { name, .. } = expr
             && let Some((_, high)) = scope.get(name).and_then(|ty| ty.value_facts.numeric_bounds)
-            && f64::from_bits(high) < 0.0
+            && f64::from_bits(high) <= -1.0
         {
             return Some(InvalidDimension::Negative);
         }

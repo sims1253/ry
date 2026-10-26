@@ -370,13 +370,18 @@ fn production_code_tests_unknown_mode_through_predicates() {
 fn ry119_has_a_single_emitter() {
     let src = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infer/mod.rs"))
         .expect("read infer/mod.rs");
+    // Count every line mentioning the code literal, in any syntactic
+    // position, so an inline or reformatted second emitter cannot
+    // slip past: exactly the emit in `emit_integer_range_loss` and
+    // the RY001 read in `check_condition` may name it.
     let sites: Vec<&str> = src
         .lines()
-        .filter(|line| line.trim() == "\"RY119\",")
+        .filter(|line| line.contains("\"RY119\""))
         .collect();
     assert_eq!(
         sites.len(),
-        1,
-        "RY119 must be emitted only by emit_integer_range_loss; RY001 keys on it"
+        2,
+        "RY119 may be named only by its single emitter and the RY001 read; found:\n{}",
+        sites.join("\n")
     );
 }

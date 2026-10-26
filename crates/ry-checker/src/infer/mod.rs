@@ -1582,7 +1582,15 @@ impl Checker {
                     (lhs, left_na)
                 };
                 let other_is_plain = plain_numeric_literal(other) && neg_ok(other);
-                if !other_is_plain && other_na.is_none_or(|mode| mode == Mode::Character) {
+                // Admit a plain literal or another proven NA of any
+                // numeric mode (complex included, for the ladder
+                // below); a character NA proves nothing here.
+                let other_admissible = other_is_plain
+                    || matches!(
+                        other_na,
+                        Some(Mode::Logical | Mode::Integer | Mode::Double | Mode::Complex)
+                    );
+                if !other_admissible {
                     return None;
                 }
                 // R's arithmetic coercion ladder, counting a plain

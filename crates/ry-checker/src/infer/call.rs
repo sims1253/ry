@@ -1875,7 +1875,12 @@ impl Checker {
         }
         for candidate in candidates {
             let arg = &args[candidate];
-            // A named `c()` element is a deliberate single named slot.
+            // A named `c()` element is a deliberate single named
+            // slot: the name lands on the constructed element, so
+            // nesting there reads as intent. `append()`'s candidate
+            // is the `values` formal instead: writing it by name is
+            // ordinary formal naming, names no inserted element,
+            // and is not the same evidence.
             if lookup_name == "c" && arg.name.is_some() {
                 continue;
             }

@@ -93,8 +93,6 @@ fn guarded_calls_stay_quiet() {
         // Dead bodies never run.
         "if (FALSE) utils::download.file('https://example.invalid/x', tempfile())",
         "while (FALSE) utils::download.file('https://example.invalid/x', tempfile())",
-        // Vectorized `&` does not short-circuit: its rhs always runs
-        // and must warn (asserted separately below).
         "if (interactive()) utils::download.file('https://example.invalid/x', tempfile())",
         "if (isTRUE(getOption('mypkg.download'))) utils::download.file('https://example.invalid/x', tempfile())",
         "if (nzchar(Sys.getenv('MYPKG_DOWNLOAD'))) utils::download.file('https://example.invalid/x', tempfile())",
@@ -162,8 +160,9 @@ fn connection_open_uses_argument_matching() {
         1
     );
     for source in [
-        // `o` does not prove an opened connection: it is an ambiguous
-        // partial name (`open`/`options`) in current R.
+        // Neither proves an opened connection: `o` is an ambiguous
+        // partial name (`open`/`options`) in current R, and `ope = ''`
+        // unambiguously binds `open` to "do not open".
         "base::socketConnection('localhost', port = 80L, o = '')",
         "base::socketConnection('localhost', port = 80L, ope = '')",
         // A computed `open` reached by partial matching stays silent.

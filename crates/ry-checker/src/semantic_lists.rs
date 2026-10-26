@@ -356,14 +356,12 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
 /// Checked by R oracle: `is.environment()` holds for each zero-argument call.
 pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyenv", "baseenv"];
 
-/// Base numeric math functions recognized by RY100 (comparison inside
-/// a math call) and RY122 (deterministic operand inside a self-
-/// comparison): the single-argument `Math`-group primitives plus
-/// `round`, which take a numeric first argument.
 /// Base heads whose bare spelling RY124's guard indexing trusts
-/// only unmasked: the diverging `stop` and the opt-in probes. A
-/// local or file-level binding of any of these names shadows the
-/// base meaning the guard logic relies on.
+/// only unmasked: the diverging `stop`, the opt-in probes, and
+/// the wrapper heads (`isTRUE`, `nzchar`, `identical`) through
+/// which a probe result is established. A local or file-level
+/// binding of any of these names shadows the base meaning the
+/// guard logic relies on.
 pub const GUARD_SHADOWED_HEADS: &[&str] = &[
     "stop",
     "interactive",
@@ -374,6 +372,10 @@ pub const GUARD_SHADOWED_HEADS: &[&str] = &[
     "identical",
 ];
 
+/// Base numeric math functions recognized by RY100 (comparison inside
+/// a math call) and RY122 (deterministic operand inside a self-
+/// comparison): the single-argument `Math`-group primitives plus
+/// `round`, which take a numeric first argument.
 pub const BASE_MATH_FNS: &[&str] = &[
     "abs", "sqrt", "exp", "log", "log2", "log10", "log1p", "floor", "ceiling", "round", "trunc",
 ];

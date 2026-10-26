@@ -551,11 +551,17 @@ fn no_unregistered_hardcoded_lists() {
     //   matrix stays reviewable.
     // * `UNUSED_IGNORE_AUDITABLE_CODES`: checker diagnostic IDs whose
     //   absence can be audited from local syntax, not R runtime names.
+    // * `NON_LOAD_TREES`: the package directory trees RY124 does not
+    //   treat as package-load execution (`tests/`, `demo/`, ...) are
+    //   CRAN package layout, like `DEMOTED`, not an R semantic fact;
+    //   `data-raw/` is deliberately absent because those scripts run
+    //   as written.
     let known_non_semantic: &[&str] = &[
         "BASE_DATABASE_PACKAGES",
         "DEMOTED",
         "CANDIDATE_PACKAGES",
         "UNUSED_IGNORE_AUDITABLE_CODES",
+        "NON_LOAD_TREES",
     ];
 
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

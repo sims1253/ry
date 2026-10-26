@@ -487,6 +487,19 @@ impl Checker {
         // The argument-validation stage.
         self.check_call_arguments(&name, &lookup_name, &call.head, &call.arg_types, args, span);
 
+        // RY124 reads the same resolved head, so masked and dynamic
+        // callees stay silent exactly where the arity checks do.
+        self.check_top_level_network_call(
+            &name,
+            func,
+            &semantic_name,
+            &lookup_name,
+            &call.head,
+            args,
+            scope,
+            span,
+        );
+
         // The dynamic-loader stage; also records `locally_shadows_stub`
         // on the resolution for the assertion stage below.
         self.note_dynamic_loader_scope(&name, &mut call, args, scope);
@@ -2818,7 +2831,7 @@ impl Checker {
 
     fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
         match expr {
-            Expr::Function { params, body, .. } => {
+            Expr::Function { params, body, span } => {
                 let mut inner = scope.function_execution_scope();
                 for parameter in params {
                     inner.insert_parameter(parameter.name.clone(), RType::unknown());
@@ -2826,7 +2839,16 @@ impl Checker {
                 for name in assigned_names_in_body(body) {
                     inner.insert(name, RType::unknown());
                 }
+                // An injected function literal (an R6 method, say) is a
+                // function body like any other: record its frame so
+                // frame-sensitive analyses do not read its body as the
+                // enclosing (possibly top-level) execution.
+                // Paired pop: `push_enclosing_formals` mutates only
+                // `enclosing_formals` (see its definition), unlike
+                // `enter_function_body`'s wider frame state.
+                self.push_enclosing_formals(params, *span);
                 self.walk_block(body, &mut inner, None);
+                self.enclosing_formals.pop();
                 RType::scalar(Mode::Function)
             }
             Expr::Call { args, .. } => {

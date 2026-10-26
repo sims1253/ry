@@ -23,6 +23,7 @@ pub(crate) mod ifelse;
 pub(crate) mod index;
 pub(crate) mod loops;
 mod narrow;
+pub(crate) mod network;
 pub(crate) mod pipe;
 pub(crate) mod quoting;
 pub(crate) mod recall;
@@ -991,10 +992,7 @@ impl Checker {
                 );
                 let narrowing = self.extract_branch_narrowing(cond, scope);
                 let failed_ns = self.failed_namespace_guard(cond, scope);
-                let literal_cond = match cond {
-                    Expr::Logical(value, _) => Some(*value),
-                    _ => None,
-                };
+                let literal_cond = network::literal_logical(cond);
                 #[cfg(test)]
                 if !self.journal_branches {
                     self.walk_cloned_if(
@@ -1061,7 +1059,12 @@ impl Checker {
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
+                // A literal-FALSE body never runs: walk it for its
+                // bindings under the same dead-arm silence as `if`.
+                let outer_dead = self.in_dead_arm;
+                self.in_dead_arm |= network::literal_logical(cond) == Some(false);
                 self.walk_block(body, &mut inner, returns.as_deref_mut());
+                self.in_dead_arm = outer_dead;
                 let always_true = matches!(cond, Expr::Logical(true, _));
                 self.finish_loop(scope, inner, always_true, always_true);
             }
@@ -1258,6 +1261,10 @@ impl Checker {
         for name in &assigned {
             default_scope.insert(name.clone(), RType::unknown());
         }
+        // Defaults are forced lazily, only when a call omits the
+        // argument and the body reads it: they are not load-time
+        // execution for RY124, even at the top level of a file.
+        self.lazy_context_depth += 1;
         for p in params {
             let t = match &p.default {
                 Some(e) => {
@@ -1307,9 +1314,24 @@ impl Checker {
         // nested closures inherit them through `fn_scope`.
         self.superassigned_captures
             .push(index::nested_superassignment_writes(body));
+        self.lazy_context_depth -= 1;
         self.push_enclosing_formals(params, span);
+        // RY124: only a top-level `.onLoad`/`.onAttach` binding is a
+        // package load hook; R calls those two names from the finished
+        // namespace, so their bodies are load-time execution.
+        let is_load_hook = named_binding
+            && self.enclosing_formals.len() == 1
+            && function_name.is_some_and(|name| {
+                matches!(semantic_argument_name(name), ".onLoad" | ".onAttach")
+            });
+        if is_load_hook {
+            self.load_hook_frames.push(self.enclosing_formals.len());
+        }
         self.check_discarded_branch_results(body);
         self.walk_block(body, &mut fn_scope, None);
+        if is_load_hook {
+            self.load_hook_frames.pop();
+        }
         self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
         self.superassigned_captures.pop();

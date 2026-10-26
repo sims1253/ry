@@ -346,6 +346,12 @@ static PROBES: &[Probe] = &[
         negative: "page <- if (requireNamespace(\"bslib\", quietly = TRUE)) bslib::page_fluid else shiny::fluidPage\nf <- function(p) if (!requireNamespace(p)) bslib::page_fluid else 1L\npage2 <- if (!requireNamespace(\"bslib\")) tryCatch(bslib::page_fluid, error = function(e) 1L) else 2L\n",
     },
     Probe {
+        code: "RY124",
+        note: "a proven download evaluated while package code loads",
+        positive: "season <- utils::download.file('https://example.invalid/x.csv', tempfile())\n",
+        negative: "fetch <- function(u) utils::download.file(u, tempfile())\n",
+    },
+    Probe {
         code: "RY125",
         note: "dimensional call on a definite function (plain shape); correct-variable control stays silent",
         positive: "f <- function(x) ncol(data)\n",

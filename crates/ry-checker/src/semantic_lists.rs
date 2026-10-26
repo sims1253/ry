@@ -356,6 +356,22 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
 /// Checked by R oracle: `is.environment()` holds for each zero-argument call.
 pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyenv", "baseenv"];
 
+/// Base heads whose bare spelling RY124's guard indexing trusts
+/// only unmasked: the diverging `stop`, the opt-in probes, and
+/// the wrapper heads (`isTRUE`, `nzchar`, `identical`) through
+/// which a probe result is established. A local or file-level
+/// binding of any of these names shadows the base meaning the
+/// guard logic relies on.
+pub const GUARD_SHADOWED_HEADS: &[&str] = &[
+    "stop",
+    "interactive",
+    "getOption",
+    "Sys.getenv",
+    "isTRUE",
+    "nzchar",
+    "identical",
+];
+
 /// Base numeric math functions recognized by RY100 (comparison inside
 /// a math call) and RY122 (deterministic operand inside a self-
 /// comparison): the single-argument `Math`-group primitives plus
@@ -462,6 +478,12 @@ pub fn registry() -> Vec<SemanticList> {
             items: FRAME_REFLECTION,
             check: CheckKind::ROracle,
             claim: "base, methods, or rlang functions that can reach a frame's promises without naming the formal",
+        },
+        SemanticList {
+            name: "GUARD_SHADOWED_HEADS",
+            items: GUARD_SHADOWED_HEADS,
+            check: CheckKind::TypeshedAgreement,
+            claim: "base heads RY124 guard indexing trusts only when unmasked (diverging stop, opt-in probes, and their wrapper heads)",
         },
         SemanticList {
             name: "BASE_MATH_FNS",

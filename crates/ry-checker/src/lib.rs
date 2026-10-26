@@ -1642,6 +1642,27 @@ pub struct Checker {
     // Literals whose closure later receives `environment(x) <-` (issue
     // #716) are walked without the defining frame's bindings.
     dynamic_closure_literals: infer::dynamic_closure::DynamicClosures,
+    // RY124: `enclosing_formals` lengths of the `.onLoad`/`.onAttach`
+    // bodies currently being walked, so a call directly in a load hook
+    // counts as load-time execution while a closure nested in the hook
+    // (deferred until called) does not.
+    load_hook_frames: Vec<usize>,
+    // RY124: source ranges an `interactive()`/`getOption()`/`Sys.getenv()`
+    // condition guards, indexed once per pass-3 run from the file's own
+    // syntax (`infer::network::index_guarded_spans`).
+    network_guarded_spans: Vec<Span>,
+    // RY124: whether this file's top level is load-time execution,
+    // computed once per pass-3 run (`infer::network::load_context_file`)
+    // rather than re-derived from the path at every call.
+    network_load_context_file: bool,
+    // RY124: per-pass memo of wrapper-body scans, keyed by the wrapper
+    // definition's span; cleared with `network_guarded_spans`.
+    network_wrapper_cache: HashMap<Span, bool>,
+    // RY124: depth inside lazily forced parameter defaults, where
+    // evaluation at load cannot be assumed. (`delayedAssign` values
+    // need no depth: `infer_local_delayed_assign_call` never walks
+    // the value expression, so no diagnostic can fire inside one.)
+    lazy_context_depth: usize,
 }
 
 impl Checker {
@@ -1820,6 +1841,11 @@ impl Checker {
             formal_shadows: Vec::new(),
             formal_reads: FxMap::default(),
             dynamic_closure_literals: Default::default(),
+            load_hook_frames: Vec::new(),
+            network_guarded_spans: Vec::new(),
+            network_load_context_file: false,
+            network_wrapper_cache: HashMap::new(),
+            lazy_context_depth: 0,
         }
     }
 
@@ -1972,6 +1998,21 @@ impl Checker {
         infer::dynamic_closure::index_dynamic_closure_literals(
             &file.stmts,
             &mut self.dynamic_closure_literals,
+        );
+        self.network_guarded_spans.clear();
+        self.network_wrapper_cache.clear();
+        // Push/pop-balanced per file today; reset anyway so an early
+        // unwind can never leak load-time framing into the next file.
+        self.load_hook_frames.clear();
+        self.lazy_context_depth = 0;
+        self.network_load_context_file = infer::network::load_context_file(
+            &self.path,
+            self.package_facts.source_package.is_some(),
+        );
+        infer::network::index_guarded_spans(
+            &file.stmts,
+            &self.stmt_continuations,
+            &mut self.network_guarded_spans,
         );
         // Encoding problems come first: an undecodable or BOM-prefixed
         // file is the most fundamental way input can be malformed, and

@@ -54,6 +54,12 @@ All notable changes to ry are documented in this file.
   comments on RY034 and RY102; enable it with `--warn RY113` (#600).
 - Document checking against a uvr project library through `R_LIBS` (#615)
   and the Arch Linux AUR packages (#590).
+- Add RY124 for proven network/download calls evaluated while package code
+  loads: at the top level of package or `data-raw` code and in
+  `.onLoad`/`.onAttach`. Connections R has not opened, ordinary function
+  bodies, lazily forced defaults, calls under an
+  `interactive()`/`getOption()`/`Sys.getenv()` guard, and masked or dynamic
+  callees stay quiet.
 
 ### Changed
 

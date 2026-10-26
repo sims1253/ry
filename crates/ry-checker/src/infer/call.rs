@@ -1504,22 +1504,25 @@ impl Checker {
                 // Cheap gate: regions without a dimensional callee name
                 // cannot contain the RY125 shape and are never parsed.
                 let region = &text[start..end];
-                if !["ncol", "nrow", "dim"].iter().any(|n| region.contains(n)) {
-                    // A non-candidate region can still rebind a name a
-                    // later region resolves; without parsing it we can
-                    // only see literal assignment operators.
-                    if region.contains("<-") || region.contains("<<-") {
-                        shadowed = true;
-                        break;
-                    }
-                    continue;
-                }
                 if parser.is_none() {
                     parser = ry_core::RParser::new().ok();
                 }
                 let Some(parser) = parser.as_mut() else {
                     return;
                 };
+                if !["ncol", "nrow", "dim"].iter().any(|n| region.contains(n)) {
+                    // A non-candidate region can still rebind a name a
+                    // later region resolves. Detect that by parsing
+                    // (only regions that textually contain an
+                    // assignment operator pay for it): prose like
+                    // `"use x <- 1"` parses to a string literal and
+                    // does not count.
+                    if region.contains("<-") && self.region_rebinds(parser, region) {
+                        shadowed = true;
+                        break;
+                    }
+                    continue;
+                }
                 let region_span = self.template_region_span(text, span, start, end);
                 if self.check_template_region(parser, region, scope, region_span, &mut hits) {
                     shadowed = true;
@@ -1580,14 +1583,19 @@ impl Checker {
         if source.contains('\\') || !(source.starts_with('"') || source.starts_with('\'')) {
             return literal;
         }
-        let before = &text[..start];
+        // The region covers `{` through `}`: in text offsets the
+        // brace sits at `start - 1` and the closer at `end`, so the
+        // byte range is [literal.start + start, literal.start + end + 2)
+        // once the opening quote is counted. Line/col key on the brace.
+        let brace = start - 1;
+        let before = &text[..brace];
         let newlines = before.matches('\n').count();
         let (line, col) = if newlines == 0 {
-            (literal.line, literal.col + 1 + start)
+            (literal.line, literal.col + 1 + brace)
         } else {
             (
                 literal.line + newlines,
-                start - before.rfind('\n').map_or(0, |pos| pos + 1),
+                brace - before.rfind('\n').map_or(0, |pos| pos + 1),
             )
         };
         Span::new(literal.start + start, literal.start + end + 2, line, col)
@@ -1608,10 +1616,13 @@ impl Checker {
         hits: &mut Vec<(String, String, Span)>,
     ) -> bool {
         let Ok(file) = parser.parse("<cli-template>", region) else {
-            return false;
+            return region.contains("<-");
         };
         if !file.parse_errors.is_empty() {
-            return false;
+            // An unparseable region may still rebind a name later
+            // regions resolve; without a parse, a textual assignment
+            // operator is treated as shadowing (conservative silence).
+            return region.contains("<-");
         }
         let mut rebinds = false;
         let mut found: Vec<(String, String, Span)> = Vec::new();
@@ -1649,8 +1660,11 @@ impl Checker {
                     {
                         return ControlFlow::Continue(Descend::Skip);
                     }
-                    if let Some((callee, subject)) =
-                        self.dimensional_function_call(func, args, scope)
+                    // Hits evaluated before any in-region rebinding
+                    // are real; only later ones are suppressed.
+                    if !rebinds
+                        && let Some((callee, subject)) =
+                            self.dimensional_function_call(func, args, scope)
                     {
                         found.push((callee, subject, span));
                     }
@@ -1659,9 +1673,39 @@ impl Checker {
             }
             ControlFlow::Continue(Descend::Into)
         });
-        if !rebinds {
-            hits.extend(found);
+        hits.extend(found);
+        rebinds
+    }
+
+    /// Whether a template region parses to code containing an
+    /// assignment or `for` binding. Unparseable counts as rebinding
+    /// only when an assignment operator appears textually.
+    fn region_rebinds(&self, parser: &mut ry_core::RParser, region: &str) -> bool {
+        let Ok(file) = parser.parse("<cli-template>", region) else {
+            return true;
+        };
+        if !file.parse_errors.is_empty() {
+            return true;
         }
+        let mut rebinds = false;
+        let policy = Walk {
+            assign_targets: false,
+            assign_operands: false,
+            dollar_args: false,
+            fn_bodies: false,
+            control_tests: true,
+        };
+        let _ = ry_core::walk::walk_stmts::<()>(&file.stmts, policy, |node, _| {
+            match node {
+                AstNode::Stmt(Stmt::Assign { .. } | Stmt::For { .. }) => rebinds = true,
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    ..
+                }) => rebinds = true,
+                _ => {}
+            }
+            ControlFlow::Continue(Descend::Into)
+        });
         rebinds
     }
 

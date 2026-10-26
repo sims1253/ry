@@ -199,5 +199,20 @@ fn template_hit_span_covers_the_interpolation() {
     let source = "f <- function(x) cli::cli_abort(\"cols: {ncol(data)} done\")\n";
     let diags = check(source);
     let hit = diags.iter().find(|d| d.code == "RY125").unwrap();
-    assert_eq!(&source[hit.span.start..hit.span.end], "{ncol(data)}");
+    let slice = source
+        .get(hit.span.start..hit.span.end)
+        .unwrap_or_else(|| panic!("span {:?} not on char boundaries", hit.span));
+    assert_eq!(slice, "{ncol(data)}");
+}
+
+#[test]
+fn sequential_region_shadowing_is_parse_based() {
+    // Prose containing `<-` in an earlier region is not a rebinding:
+    // the later region still reports.
+    let diags =
+        check("f <- function(warn) cli::cli_abort(\"{if (warn) 'use x <- 1'} {ncol(data)}\")\n");
+    assert!(diags.iter().any(|d| d.code == "RY125"), "{diags:?}");
+    // A hit evaluated before an in-region rebinding still reports.
+    let diags = check("f <- function(x) cli::cli_abort(\"{ncol(data); x <- 1}\")\n");
+    assert!(diags.iter().any(|d| d.code == "RY125"), "{diags:?}");
 }

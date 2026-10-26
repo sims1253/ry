@@ -288,3 +288,9 @@ fn rightward_and_eval_rebindings_shadow_later_regions() {
     let diags = check("f <- function(x) cli::cli_text(\"a\", \"{ncol(data)}\")\n");
     assert!(diags.iter().any(|d| d.code == "RY125"), "{diags:?}");
 }
+
+#[test]
+fn pipe_assign_rebinding_shadows_later_regions() {
+    let diags = check("f <- function(df) cli::cli_text(\"{data %<>% as.matrix} {ncol(data)}\")\n");
+    assert!(diags.iter().all(|d| d.code != "RY125"), "{diags:?}");
+}

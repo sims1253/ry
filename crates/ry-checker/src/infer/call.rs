@@ -1638,7 +1638,7 @@ impl Checker {
             match node {
                 AstNode::Stmt(Stmt::Assign { .. } | Stmt::For { .. }) => rebinds = true,
                 AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign,
                     ..
                 }) => rebinds = true,
                 AstNode::Expr(Expr::Call { func, args, .. }) => {
@@ -2971,6 +2971,12 @@ fn dimensional_argument(args: &[Arg]) -> Option<&Arg> {
 /// their nested interpolations (their own content is literal text),
 /// and pluralization markers (`{?s}`, `{?a/b}`) are not expressions.
 /// An unbalanced group ends the scan silently.
+fn cli_template_regions(text: &str) -> Vec<(usize, usize)> {
+    let mut regions = Vec::new();
+    collect_template_regions(text, 0, &mut regions);
+    regions
+}
+
 /// Cheap textual pre-filter for "this region might rebind a name":
 /// an assignment operator (either spelling), an `assign()` call, or
 /// a `for` loop variable. The parse decides; this only gates it.
@@ -2978,12 +2984,6 @@ fn region_may_rebind_textually(region: &str) -> bool {
     ["<-", "->", "%<>%", "=", "assign", "for"]
         .iter()
         .any(|hint| region.contains(hint))
-}
-
-fn cli_template_regions(text: &str) -> Vec<(usize, usize)> {
-    let mut regions = Vec::new();
-    collect_template_regions(text, 0, &mut regions);
-    regions
 }
 
 fn collect_template_regions(text: &str, base: usize, regions: &mut Vec<(usize, usize)>) {

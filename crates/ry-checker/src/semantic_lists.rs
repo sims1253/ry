@@ -592,6 +592,44 @@ pub(crate) fn is_testthat_block_verb(name: &str) -> bool {
     matches!(name, "test_that" | "describe" | "it")
 }
 
+/// Base dimensional calls whose result on a function value is always
+/// `NULL` (RY125). `NROW`/`NCOL`/`length` are excluded: they return 1
+/// for a closure, so the NULL claim would be wrong.
+pub(crate) fn is_dimensional_function(name: &str) -> bool {
+    matches!(name, "ncol" | "nrow" | "dim")
+}
+
+/// cli message functions whose character arguments are glue-style
+/// templates evaluated in the caller's environment (RY125, #570).
+/// Verbatim/code display functions (`cli_code`, `cli_verbatim`) are
+/// excluded: their text is not interpolated.
+pub(crate) fn is_cli_message_function(name: &str) -> bool {
+    matches!(
+        name,
+        "cli_abort"
+            | "cli_warn"
+            | "cli_inform"
+            | "cli_alert"
+            | "cli_alert_success"
+            | "cli_alert_danger"
+            | "cli_alert_warning"
+            | "cli_alert_info"
+            | "cli_text"
+            | "cli_h1"
+            | "cli_h2"
+            | "cli_h3"
+            | "cli_li"
+            | "cli_ul"
+            | "cli_ol"
+            | "cli_dl"
+            | "cli_bullets"
+            | "cli_blockquote"
+            | "cli_status"
+            | "cli_progress_message"
+            | "cli_progress_step"
+    )
+}
+
 /// Extract the bare function name from a potentially qualified callee,
 /// stripping any `pkg::` or `pkg:::` prefix.
 pub(crate) fn bare_name(name: &str) -> &str {

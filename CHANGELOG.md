@@ -33,6 +33,11 @@ All notable changes to ry are documented in this file.
   `as.character()` coercions over one), and a definite RY119 cast used directly as the
   condition. Bindings and possibly-NA conditions stay silent; their
   value facts are not a sound always-NA proof (#354).
+- Add RY125 for proven `ncol()`/`nrow()`/`dim()` calls on definite function
+  values (such as `ncol(data)` resolving to `utils::data`), which always
+  return `NULL`. The same shape is reported inside literal template
+  arguments to proven cli message functions, with cli markup, escaped
+  braces, `.envir`, masked callees, and dynamic strings left silent (#570).
 - Set per-file rule severities with ordered `[[rule-overrides]]` tables in
   `ry.toml`, while keeping matching files in project analysis (#583).
 - Check a source buffer with `ry check - --stdin-filename PATH`. The buffer

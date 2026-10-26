@@ -42,7 +42,7 @@ pub const RULES: &[Rule] = &[
         code: "RY001",
         name: "invalid-condition",
         default_severity: Severity::Warning,
-        summary: "`if` / `while` condition is not a length-1 logical or a value R coerces to one, including a condition that is a proven scalar `NA` (an `NA` literal or a closed literal shape over one), which R always rejects as a condition. Also covers a `switch(EXPR, ...)` whose EXPR is provably not a length-1 vector, the crash a NULL component of a union return produces (\"EXPR must be a length 1 vector\").",
+        summary: "`if` / `while` condition cannot be a length-1 logical. Includes proven scalar `NA` conditions (an `NA` literal or a closed literal shape over one), which R always rejects. Also covers `switch(EXPR, ...)` with an EXPR provably not a length-1 vector, including the NULL component of a union return (\"EXPR must be a length 1 vector\").",
     },
     Rule {
         code: "RY002",

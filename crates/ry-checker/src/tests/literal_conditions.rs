@@ -302,3 +302,59 @@ fn null_free_unions_and_non_condition_uses_stay_silent() {
         "non-condition uses must stay silent: {diagnostics:?}"
     );
 }
+
+#[test]
+fn operator_rebound_inside_the_condition_stays_silent() {
+    // The proven-NA proof reads the pre-inference scope, but its
+    // closed grammar (NA literals, unary/binary ops over plain
+    // literals, single-argument base calls) never descends into a
+    // block or an assignment, so an operator rebound inside the
+    // condition itself cannot be proven over: R runs the custom
+    // `+` and the condition is 1L, not NA.
+    for source in [
+        "if ({ `+` <- function(e1, e2) 1L; NA + 1L }) 1L",
+        "if ({ `!` <- function(x) TRUE; !NA }) 1L",
+        "if ({ x <- NA; x }) 1L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| !(d.code == "RY001" && d.message.contains("always `NA`"))),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn proven_na_mode_ladder_composes() {
+    // The mode the ladder assigns decides what the proof admits
+    // next: `!` accepts integer/double NA but not complex NA.
+    for source in [
+        // integer NA + double literal -> double NA, still `!`-able.
+        "if (!(NA_integer_ + 1.5)) 1L",
+        // logical NA + logical literal -> integer NA.
+        "if (!(NA + TRUE)) 1L",
+        // double NA on either side -> double NA.
+        "if (!(NA_real_ + 1L)) 1L",
+        "if (!(1L + NA_real_)) 1L",
+        // complex NA through equality -> logical NA.
+        "if (!(NA_complex_ == 1)) 1L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "RY001" && d.message.contains("always `NA`")),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // Complex NA itself is not `!`-able in the proof.
+    let diagnostics = check("if (!NA_complex_) 1L");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == "RY001" && d.message.contains("always `NA`"))),
+        "{diagnostics:?}"
+    );
+}

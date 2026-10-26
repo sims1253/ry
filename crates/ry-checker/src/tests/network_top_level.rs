@@ -353,3 +353,14 @@ fn masked_wrapper_heads_and_double_negation() {
         0
     );
 }
+
+#[test]
+fn value_position_if_dead_arm_stays_quiet() {
+    // The value-position `if` walker folds negated literals too.
+    assert_eq!(
+        network_warnings(
+            "x <- if (!FALSE) 1L else utils::download.file('https://example.invalid/x', tempfile())"
+        ),
+        0
+    );
+}

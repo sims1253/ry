@@ -332,10 +332,7 @@ impl Checker {
         let narrowing = self.extract_branch_narrowing(cond, scope);
         let failed_ns = self.failed_namespace_guard(cond, scope);
         // The arm a literal condition never takes is inferred silently.
-        let literal_cond = match cond {
-            Expr::Logical(value, _) => Some(*value),
-            _ => None,
-        };
+        let literal_cond = super::network::literal_logical(cond);
         self.walk_journal_if(
             scope,
             &narrowing,

@@ -168,10 +168,14 @@ impl Checker {
     /// Whether a bare head may use `package` provenance without an
     /// explicit import or attachment. Base-database packages are on
     /// every search path; other packages must be named by the call or
-    /// a NAMESPACE `importFrom`, or be attached on *this file's* search
-    /// path (`bare_loaded`). The project-wide `loaded` union does not
-    /// prove provenance at load time: another file's `library()` call
-    /// has not necessarily run while this file's namespace is built.
+    /// a NAMESPACE `importFrom`, or be attached on this file's search
+    /// path. `bare_loaded` is the per-file attachment set the CLI
+    /// installs (`Project::set_bare_loaded` is keyed by path); direct
+    /// `Project` users without precise per-file paths fall back to
+    /// the declared union, the deliberate coarser semantics. The
+    /// project-wide `loaded` union does not prove provenance at load
+    /// time: another file's `library()` call has not necessarily run
+    /// while this file's namespace is built.
     fn bare_package_in_scope(&self, lookup_name: &str, package: &str) -> bool {
         crate::resolve::BASE_DATABASE_PACKAGES.contains(&package)
             || self
@@ -655,15 +659,43 @@ pub(crate) fn index_guarded_spans(
             .iter()
             .any(|name| semantic_argument_name(name) == wanted)
     };
-    let file_assigned = assigned_names_in_body(stmts);
-    let file_shadowed = |wanted: &str| binds(&file_assigned, wanted);
+    // File-level shadowing respects source order for top-level code:
+    // a binding masks only probes at or after its assignment, plus
+    // probes inside any function body (which may run after the whole
+    // top level). Assignments are collected outside function bodies.
+    let mut file_assign_spans: Vec<(Span, &'static str)> = Vec::new();
+    let no_fn_bodies = Walk {
+        fn_bodies: false,
+        ..Walk::ALL
+    };
+    let _: ControlFlow<()> = walk_stmts(stmts, no_fn_bodies, |node, _| {
+        let (target, span) = match node {
+            AstNode::Stmt(Stmt::Assign { target, span, .. }) => (target, span),
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                lhs,
+                span,
+                ..
+            }) => (lhs.as_ref(), span),
+            _ => return ControlFlow::Continue(Descend::Into),
+        };
+        if let Expr::Ident { name, .. } = target {
+            let bound = semantic_argument_name(name);
+            if let Some(wanted) = shadowed_heads.iter().copied().find(|w| *w == bound) {
+                file_assign_spans.push((*span, wanted));
+            }
+        }
+        ControlFlow::Continue(Descend::Into)
+    });
     let mut shadow_spans: Vec<(Span, &'static str)> = Vec::new();
+    let mut fn_spans: Vec<Span> = Vec::new();
     let _: ControlFlow<()> = walk_stmts(stmts, Walk::ALL, |node, _| {
         let (params, body, span) = match node {
             AstNode::Stmt(Stmt::FunctionDef { params, body, span }) => (params, body, span),
             AstNode::Expr(Expr::Function { params, body, span }) => (params, body, span),
             _ => return ControlFlow::Continue(Descend::Into),
         };
+        fn_spans.push(*span);
         let body_assigned = assigned_names_in_body(body);
         for wanted in shadowed_heads.iter().copied() {
             if params
@@ -677,7 +709,12 @@ pub(crate) fn index_guarded_spans(
         ControlFlow::Continue(Descend::Into)
     });
     let masked = |wanted: &str, span: Span| {
-        file_shadowed(wanted)
+        let in_fn = fn_spans
+            .iter()
+            .any(|f| span.start >= f.start && span.end <= f.end);
+        file_assign_spans
+            .iter()
+            .any(|(assign, name)| *name == wanted && (in_fn || span.start >= assign.start))
             || shadow_spans.iter().any(|(shadow, name)| {
                 *name == wanted && span.start >= shadow.start && span.end <= shadow.end
             })

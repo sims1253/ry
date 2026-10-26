@@ -364,3 +364,21 @@ fn value_position_if_dead_arm_stays_quiet() {
         0
     );
 }
+
+#[test]
+fn file_shadowing_respects_source_order() {
+    // A mask defined AFTER the guard does not un-guard earlier code.
+    assert_eq!(
+        network_warnings(
+            "if (interactive()) utils::download.file('https://example.invalid/x', tempfile())\ninteractive <- function() FALSE"
+        ),
+        0
+    );
+    // The same mask defined before the guard does.
+    assert_eq!(
+        network_warnings(
+            "interactive <- function() FALSE\nif (interactive()) utils::download.file('https://example.invalid/x', tempfile())"
+        ),
+        1
+    );
+}

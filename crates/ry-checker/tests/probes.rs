@@ -345,6 +345,12 @@ static PROBES: &[Probe] = &[
         positive: "page <- if (!requireNamespace(\"bslib\", quietly = TRUE)) bslib::page_fluid else shiny::fluidPage\n",
         negative: "page <- if (requireNamespace(\"bslib\", quietly = TRUE)) bslib::page_fluid else shiny::fluidPage\nf <- function(p) if (!requireNamespace(p)) bslib::page_fluid else 1L\npage2 <- if (!requireNamespace(\"bslib\")) tryCatch(bslib::page_fluid, error = function(e) 1L) else 2L\n",
     },
+    Probe {
+        code: "RY125",
+        note: "dimensional call on a definite function, plain and inside a proven cli template; correct-variable and function-interpolation controls stay silent",
+        positive: "f <- function(x) ncol(data)\nf <- function(x) cli::cli_abort(\"cols: {ncol(data)}\")\n",
+        negative: "f <- function(x) ncol(x)\nf <- function(data) cli::cli_abort(\"{ncol(data)}\")\nf <- function(x) cli::cli_abort(\"loader: {data}\")\nf <- function(x) cli::cli_abort(\"{ncol(data)}\", .envir = x)\n",
+    },
 ];
 
 #[test]

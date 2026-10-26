@@ -352,6 +352,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A `pkg::name` or `pkg:::name` access runs on the branch where `requireNamespace(\"pkg\")` returned `FALSE`, so the namespace is not loaded and the access errors instead of selecting the fallback. Reported only for a literal package name whose `base::requireNamespace` result dominates the access.",
     },
+    Rule {
+        code: "RY125",
+        name: "dimensional-call-on-function",
+        default_severity: Severity::Warning,
+        summary: "A proven base `ncol()`/`nrow()`/`dim()` call receives a definite function value (such as the search-path `utils::data` where a data variable was meant), so the result is always `NULL`. Also reported for the same shape inside a literal template argument to a proven cli message function (`cli_abort()` and siblings). Silent for data or unknown arguments, masked callees, classed function values, dynamic templates, and cli calls carrying `.envir`.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

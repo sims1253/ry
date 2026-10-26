@@ -369,6 +369,8 @@ impl Checker {
         self.check_comparison_inside_math_fn(&lookup_name, args);
         self.check_identical_list_subset(&lookup_name, args, scope);
         self.check_testthat_self_comparison(&name, func, &semantic_name, &lookup_name, args, scope);
+        self.check_dimensional_on_function(&name, func, &semantic_name, &lookup_name, args, scope);
+        self.check_cli_template(&name, func, &semantic_name, &lookup_name, args, scope);
 
         if matches!(lookup_name.as_str(), "hasArg" | "on.exit") {
             let package = if lookup_name == "hasArg" {
@@ -1415,6 +1417,262 @@ impl Checker {
                     "both operands of `{lookup_name}()` are the same deterministic expression; the assertion does not check two different values"
                 ),
             );
+        }
+    }
+
+    /// RY125: a proven base `ncol()`/`nrow()`/`dim()` whose argument is
+    /// a definite function value always returns `NULL` (the broom
+    /// `ncol(data)` shape, where `data` resolves to `utils::data`).
+    fn check_dimensional_on_function(
+        &mut self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) {
+        if !crate::semantic_lists::is_dimensional_function(lookup_name)
+            || !matches!(
+                self.special_call_provenance(name, func, semantic_name, lookup_name, "base", scope),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+        {
+            return;
+        }
+        if let Some(arg) = dimensional_argument(args)
+            && let Some(subject) = self.definite_function_value(&arg.value, scope)
+        {
+            self.emit(
+                Severity::Warning,
+                arg.span,
+                "RY125",
+                format!(
+                    "`{lookup_name}()` of {subject} is always `NULL`; a function has no dimensions"
+                ),
+            );
+        }
+    }
+
+    /// RY125 in cli templates (#570): literal template arguments to a
+    /// proven cli message function have their `{...}` expression
+    /// regions checked for the dimensional-call-on-function shape in
+    /// the caller's lexical scope. `.envir`, masked callees, and
+    /// dynamic (non-literal) strings stay silent; free names are
+    /// never reported on their own.
+    fn check_cli_template(
+        &mut self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) {
+        if !crate::semantic_lists::is_cli_message_function(lookup_name)
+            || args.iter().any(|arg| arg.name.as_deref() == Some(".envir"))
+            || !matches!(
+                self.special_call_provenance(name, func, semantic_name, lookup_name, "cli", scope),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+        {
+            return;
+        }
+        let mut literals: Vec<(&str, Span)> = Vec::new();
+        for arg in args {
+            // Control arguments (`.frame`, `call`, ...) are not templates.
+            if arg
+                .name
+                .as_deref()
+                .is_some_and(|n| n.starts_with('.') || matches!(n, "call" | "class"))
+            {
+                continue;
+            }
+            self.collect_template_literals(&arg.value, scope, &mut literals);
+        }
+        let mut hits: Vec<(String, String, Span)> = Vec::new();
+        for (text, span) in literals {
+            for region in cli_template_regions(text) {
+                // Cheap gate: regions without a dimensional callee name
+                // cannot contain the RY125 shape and are never parsed.
+                if !["ncol", "nrow", "dim"].iter().any(|n| region.contains(n)) {
+                    continue;
+                }
+                self.check_template_region(&region, scope, span, &mut hits);
+            }
+        }
+        for (callee, subject, span) in hits {
+            self.emit(
+                Severity::Warning,
+                span,
+                "RY125",
+                format!("`{callee}()` of {subject} is always `NULL`; a function has no dimensions"),
+            );
+        }
+    }
+
+    /// Literal strings that reach a cli template slot: a bare string,
+    /// or the elements of a proven-base `c(...)` bullet vector.
+    fn collect_template_literals<'a>(
+        &self,
+        expr: &'a Expr,
+        scope: &Scope,
+        out: &mut Vec<(&'a str, Span)>,
+    ) {
+        match expr {
+            Expr::String(text, span) => out.push((text, *span)),
+            Expr::Call { func, args, .. } => {
+                let Some(callee) = callee_name(func) else {
+                    return;
+                };
+                let semantic = scope.function_alias(&callee).unwrap_or(&callee).to_string();
+                let bare = crate::semantic_lists::bare_name(&semantic).to_string();
+                if bare == "c"
+                    && matches!(
+                        self.special_call_provenance(
+                            &callee, func, &semantic, &bare, "base", scope
+                        ),
+                        crate::resolve::SpecialCallProvenance::Proven
+                    )
+                {
+                    for arg in args {
+                        self.collect_template_literals(&arg.value, scope, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Parse one template region as R code and record every
+    /// dimensional call on a definite function it contains. Regions
+    /// that do not parse, or that rebind names (assignment, `for`),
+    /// are skipped: template fragments we cannot model stay silent.
+    fn check_template_region(
+        &self,
+        region: &str,
+        scope: &Scope,
+        span: Span,
+        hits: &mut Vec<(String, String, Span)>,
+    ) {
+        let Ok(mut parser) = ry_core::RParser::new() else {
+            return;
+        };
+        let Ok(file) = parser.parse("<cli-template>", region) else {
+            return;
+        };
+        if !file.parse_errors.is_empty() {
+            return;
+        }
+        let mut rebinds = false;
+        let mut found: Vec<(String, String, Span)> = Vec::new();
+        let policy = Walk {
+            assign_targets: false,
+            assign_operands: false,
+            dollar_args: false,
+            fn_bodies: false,
+            control_tests: true,
+        };
+        let _ = ry_core::walk::walk_stmts::<()>(&file.stmts, policy, |node, _| {
+            match node {
+                AstNode::Stmt(Stmt::Assign { .. } | Stmt::For { .. }) => rebinds = true,
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    ..
+                }) => rebinds = true,
+                AstNode::Expr(Expr::Call { func, args, .. }) => {
+                    if let Some((callee, subject)) =
+                        self.dimensional_function_call(func, args, scope)
+                    {
+                        found.push((callee, subject, span));
+                    }
+                }
+                _ => {}
+            }
+            ControlFlow::Continue(Descend::Into)
+        });
+        if !rebinds {
+            hits.extend(found);
+        }
+    }
+
+    /// The (callee, subject) pair when `func(args)` is a proven-base
+    /// dimensional call on a definite function value.
+    fn dimensional_function_call(
+        &self,
+        func: &Expr,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Option<(String, String)> {
+        let name = callee_name(func)?;
+        let semantic = scope.function_alias(&name).unwrap_or(&name).to_string();
+        let lookup = crate::semantic_lists::bare_name(&semantic).to_string();
+        if !crate::semantic_lists::is_dimensional_function(&lookup)
+            || !matches!(
+                self.special_call_provenance(&name, func, &semantic, &lookup, "base", scope),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+        {
+            return None;
+        }
+        let arg = dimensional_argument(args)?;
+        let subject = self.definite_function_value(&arg.value, scope)?;
+        Some((lookup, subject))
+    }
+
+    /// A description of `expr` when it is provably a plain function
+    /// value: a function literal, a lexical binding typed as an
+    /// unclassed function, or a name that resolves only to a known
+    /// package/project function. Project variables, external
+    /// bindings, data-mask columns, and classed values (which could
+    /// carry a `dim` method) are all excluded.
+    fn definite_function_value(&self, expr: &Expr, scope: &Scope) -> Option<String> {
+        if scope.data_mask_unknown || scope.data_mask_columns_first() {
+            return None;
+        }
+        match expr {
+            Expr::Function { .. } => Some("a function literal".to_string()),
+            Expr::Ident { name, .. } => {
+                if let Some((pkg, member)) = qualified_parts(name) {
+                    let known = if crate::resolve::BASE_DATABASE_PACKAGES.contains(&pkg) {
+                        self.typeshed.functions.contains_key(member)
+                    } else {
+                        self.package_typeshed(pkg)
+                            .is_some_and(|t| t.functions.contains_key(member))
+                    };
+                    return known.then(|| format!("the function `{name}`"));
+                }
+                if let Some(ty) = scope.get(name) {
+                    let plain = ty.mode == Mode::Function && !(ty.class.known && ty.class.len > 0);
+                    return plain.then(|| format!("the function `{name}`"));
+                }
+                if scope.search_path_unknown
+                    || self.external_bindings.contains(name)
+                    || self.known_vars.contains(name)
+                {
+                    return None;
+                }
+                if let Some(value) = self.resolve_typeshed_value(name) {
+                    return (value.mode == Mode::Function)
+                        .then(|| format!("the function `{name}`"));
+                }
+                let known = self.typeshed.functions.contains_key(name)
+                    || self.fn_table.functions.binds(name)
+                    || self.bare_loaded.iter().any(|pkg| {
+                        self.package_is_known(pkg)
+                            && self
+                                .package_typeshed(pkg)
+                                .is_some_and(|t| t.functions.contains_key(name))
+                    })
+                    || self
+                        .typeshed
+                        .globals
+                        .ambient_functions
+                        .iter()
+                        .any(|f| f == name);
+                known.then(|| format!("the function `{name}`"))
+            }
+            _ => None,
         }
     }
 
@@ -2573,6 +2831,128 @@ pub(crate) fn callee_name(func: &Expr) -> Option<String> {
         Expr::Ident { name, .. } | Expr::String(name, _) => Some(name.clone()),
         _ => None,
     }
+}
+
+/// The argument bound to the single `x` formal of a dimensional call,
+/// under R's exact/partial/positional matching (RY125).
+fn dimensional_argument(args: &[Arg]) -> Option<&Arg> {
+    let matched = match_arguments(&["x"], args);
+    let arg = &args[matched.arg_for_param(0)?];
+    (!matches!(arg.value, Expr::Missing(_))).then_some(arg)
+}
+
+/// (`package`, `member`) of a `pkg::member` / `pkg:::member` name.
+fn qualified_parts(name: &str) -> Option<(&str, &str)> {
+    let (pkg, member) = name.rsplit_once("::")?;
+    Some((pkg.trim_end_matches(':'), member))
+}
+
+/// Expression regions of a cli/glue template: the contents of every
+/// top-level `{...}` group that cli evaluates. `{{`/`}}` are escaped
+/// literal braces, `{.class content}` markup spans contribute only
+/// their nested interpolations (their own content is literal text),
+/// and pluralization markers (`{?s}`, `{/...}`) are not expressions.
+/// An unbalanced group ends the scan silently.
+fn cli_template_regions(text: &str) -> Vec<String> {
+    let mut regions = Vec::new();
+    collect_template_regions(text, &mut regions);
+    regions
+}
+
+fn collect_template_regions(text: &str, regions: &mut Vec<String>) {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' if bytes.get(i + 1) == Some(&b'{') => i += 2,
+            b'}' if bytes.get(i + 1) == Some(&b'}') => i += 2,
+            b'{' => {
+                let Some(end) = matching_brace(text, i) else {
+                    return;
+                };
+                let inner = &text[i + 1..end];
+                let trimmed = inner.trim();
+                if let Some(content) = markup_span_content(trimmed) {
+                    collect_template_regions(content, regions);
+                } else if !trimmed.starts_with(['?', '/']) {
+                    regions.push(inner.to_string());
+                }
+                i = end + 1;
+            }
+            _ => i += 1,
+        }
+    }
+}
+
+/// The literal content of a cli markup span `{.class ...}` (one or
+/// more leading `.class` tokens followed by whitespace), or `None`
+/// when the group is an expression. A lone `{.name}` with no
+/// following whitespace is an interpolated variable, not markup.
+fn markup_span_content(trimmed: &str) -> Option<&str> {
+    let mut rest = trimmed;
+    loop {
+        let after_dot = rest.strip_prefix('.')?;
+        if !after_dot
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            return None;
+        }
+        let token_end = after_dot
+            .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+            .unwrap_or(after_dot.len());
+        let after_token = &after_dot[token_end..];
+        if after_token.is_empty() {
+            // `{.name}` alone: interpolated variable, not markup.
+            return None;
+        }
+        if !after_token.starts_with(char::is_whitespace) {
+            return None;
+        }
+        rest = after_token.trim_start();
+        if !rest.starts_with('.') {
+            return Some(rest);
+        }
+    }
+}
+
+/// Byte offset of the `}` matching the `{` at `open`, tracking nested
+/// braces and skipping R strings, backtick names, and `#` comments.
+fn matching_brace(text: &str, open: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            b'"' | b'\'' | b'`' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    if bytes[i] == b'\\' && quote != b'`' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            b'#' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// The two operands an `expect_equal`/`expect_identical` call compares,

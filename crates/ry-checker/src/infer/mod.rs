@@ -1785,17 +1785,13 @@ impl Checker {
         // may have loaded the namespace) must not be undone by restoring
         // the pre-`if` snapshot, and an arm-local install escapes only
         // when its sibling diverges.
-        scope.failed_namespaces = scope
-            .failed_namespaces
-            .iter()
-            .chain(then_failed_namespaces.iter())
-            .chain(else_failed_namespaces.iter())
-            .filter(|package| {
-                (then_diverges || then_failed_namespaces.contains(*package))
-                    && (else_diverges || else_failed_namespaces.contains(*package))
-            })
-            .cloned()
-            .collect();
+        scope.failed_namespaces = join_failed_namespaces(
+            &scope.failed_namespaces,
+            &then_failed_namespaces,
+            &else_failed_namespaces,
+            then_diverges,
+            else_diverges,
+        );
         // A proven vector alternative survives the join when any continuing
         // arm still carries it.
         let mut vector_candidates: HashSet<String> =
@@ -3251,6 +3247,15 @@ impl Checker {
     // Keep reference observation after every exit from the existing value
     // lookup ladder. Calls retain their distinct function-lookup path.
     fn infer_identifier(&mut self, name: &str, span: &Span, scope: &mut Scope) -> RType {
+        // RY122 before the lookup ladder: a qualified access performs a
+        // namespace load at runtime even when an import/typeshed entry
+        // surfaces it as a bound name. A backticked `` `pkg::f` `` or a
+        // lexical definition under that spelling is an ordinary local
+        // binding instead.
+        if name.contains("::") && !name.starts_with('`') && scope.lexical_definition(name).is_none()
+        {
+            self.check_failed_namespace_access(name, *span, scope);
+        }
         let mut found_lexical = false;
         let mut unresolved = false;
         if scope.is_parameter(name) || scope.get(name).is_none() {
@@ -3310,11 +3315,6 @@ impl Checker {
                 // there, so the function-value rungs below are shadowed.
                 let functions_shadowed_by_mask =
                     under_unknown_data_mask || scope.data_mask_columns_first();
-                // RY122 ahead of the value rungs: a typeshed-known
-                // qualified value still needs its namespace loaded.
-                if name.contains("::") {
-                    self.check_failed_namespace_access(name, *span, scope);
-                }
                 // Typed package values take precedence over existence-only
                 // import bindings so constants retain their declared type.
                 if let Some(value_type) = self.resolve_typeshed_value(name) {

@@ -176,6 +176,9 @@ impl Checker {
             // joined exit state still holds it (and, for a loop that may
             // not run at all, the entry state held it too).
             if entered {
+                // Sound wholesale because the fact keys on a literal
+                // package name: any iteration that could load it cleared
+                // it from the joined exit state.
                 scope.failed_namespaces = exit.failed_namespaces.clone();
             } else {
                 scope

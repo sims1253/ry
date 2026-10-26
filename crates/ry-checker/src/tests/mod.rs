@@ -75,11 +75,10 @@ mod structure_constructor;
 
 mod deferred_calls;
 
+mod failed_namespace;
+mod integer_range;
+mod literal_conditions;
 mod missing_args;
 mod printf_provenance;
 mod s4_dispatch;
 mod switch_selection;
-
-mod failed_namespace;
-mod integer_range;
-mod literal_conditions;

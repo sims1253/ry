@@ -99,9 +99,10 @@ impl Checker {
             _ => scope.clear_condition_aliases(),
         }
         // A failed-namespace fact (RY122) dies with any call that could
-        // load a namespace; only the audited inert calls keep it.
+        // load a namespace, including one that runs caller code (a
+        // callback may itself load the package); only inert calls keep it.
         match effect {
-            CallEffect::None | CallEffect::RunsCallerCode => {}
+            CallEffect::None => {}
             _ => scope.failed_namespaces.clear(),
         }
         match effect {

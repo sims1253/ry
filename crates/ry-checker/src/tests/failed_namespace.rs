@@ -143,6 +143,23 @@ fn closure_body_does_not_inherit_the_fact() {
 }
 
 #[test]
+fn caller_code_and_known_values() {
+    // A call that runs caller code may itself load the namespace.
+    assert!(!warns_ry122(
+        "if (!requireNamespace(\"pkgx\")) { local({}); y <- pkgx::thing } else { y <- 1L }\n"
+    ));
+    // A typeshed-known qualified value still needs its namespace.
+    assert!(warns_ry122(
+        "x <- if (!requireNamespace(\"datasets\")) datasets::iris else 1L\n"
+    ));
+    // A backticked local binding spelled like a qualified name is not
+    // a namespace access.
+    assert!(!warns_ry122(
+        "`pkgx::thing` <- 1L\nif (!requireNamespace(\"pkgx\")) { y <- `pkgx::thing` } else { y <- 1L }\n"
+    ));
+}
+
+#[test]
 fn nested_positive_guard_clears_the_fact() {
     assert!(!warns_ry122(
         "if (!requireNamespace(\"pkgx\", quietly = TRUE)) { if (requireNamespace(\"pkgx\", quietly = TRUE)) pkgx::thing else 1L } else 2L\n"

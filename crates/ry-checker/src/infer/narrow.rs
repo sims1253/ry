@@ -710,6 +710,30 @@ pub(crate) fn apply_failed_namespace_branch(
     }
 }
 
+/// The if-join for failed-namespace facts (RY122): a fact reaches the
+/// continuation only if every continuing arm still holds it — an
+/// arm-local clear (a call that may have loaded the namespace) is not
+/// undone, and an arm-local install escapes only when its sibling
+/// diverges. Shared by the journal and cloned-scope walkers so their
+/// joins cannot drift.
+pub(crate) fn join_failed_namespaces(
+    base: &crate::FxSet<String>,
+    then_set: &crate::FxSet<String>,
+    else_set: &crate::FxSet<String>,
+    then_diverges: bool,
+    else_diverges: bool,
+) -> crate::FxSet<String> {
+    base.iter()
+        .chain(then_set.iter())
+        .chain(else_set.iter())
+        .filter(|package| {
+            (then_diverges || then_set.contains(*package))
+                && (else_diverges || else_set.contains(*package))
+        })
+        .cloned()
+        .collect()
+}
+
 /// Apply all facts proved by the selected branch and return their binding names.
 pub(crate) fn apply_narrowing_branch<'a>(
     scope: &mut Scope,

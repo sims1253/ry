@@ -667,10 +667,10 @@ impl Checker {
     /// non-error finding (a warning assertion does not catch an
     /// error, so a proven error inside it stays full confidence).
     pub(crate) fn probe_demotes(&self, span: Span, severity: Severity) -> bool {
-        self.error_probe_spans.iter().any(|(probe, kind)| {
+        self.assertion_probe_spans.iter().any(|(probe, kind)| {
             probe.start <= span.start
                 && span.end <= probe.end
-                && (*kind == ProbeKind::Error || severity != Severity::Error)
+                && (kind.catches_errors() || severity != Severity::Error)
         })
     }
 

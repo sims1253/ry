@@ -218,7 +218,7 @@ fn declaration_finding_probe_demotion_survives_conversion() {
     let span = Span::new(0, 1, 0, 0);
     let mut demoted =
         DeclarationFinding::new(DeclarationFindingKind::Mismatch, "R/x.R", span, "mismatch");
-    demoted.probe_demoted = true;
+    demoted.probe = Some(crate::ProbeKind::Error);
     let plain =
         DeclarationFinding::new(DeclarationFindingKind::Mismatch, "R/x.R", span, "mismatch");
     let mut output = vec![("R/x.R".to_string(), Vec::new())];

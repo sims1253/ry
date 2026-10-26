@@ -1132,7 +1132,7 @@ impl Checker {
         // An enclosing error probe (#344) catches errors from creating
         // this closure, not from calling it later, so its demotion does
         // not reach the body; probes inside the body still apply.
-        let saved_error_probes = std::mem::take(&mut self.error_probe_spans);
+        let saved_error_probes = std::mem::take(&mut self.assertion_probe_spans);
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
         // A new frame's own bindings start with nothing run in it. Bindings
@@ -1262,7 +1262,7 @@ impl Checker {
         if let Some(saved) = saved_vacuous_map {
             self.vacuous_map_results = saved;
         }
-        self.error_probe_spans = saved_error_probes;
+        self.assertion_probe_spans = saved_error_probes;
         if let Some(kind) = self
             .dynamic_closure_literals
             .placeholders

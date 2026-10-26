@@ -1411,6 +1411,14 @@ pub(crate) enum ProbeKind {
     Warning,
 }
 
+impl ProbeKind {
+    /// Whether this assertion catches errors from its probe, so even
+    /// error-severity findings inside it are the asserted behavior.
+    pub(crate) fn catches_errors(self) -> bool {
+        self == ProbeKind::Error
+    }
+}
+
 pub struct Checker {
     journal_delta_cache: scope_journal::BranchChanges,
     /// See [`infer::HeldCast`].
@@ -1464,7 +1472,7 @@ pub struct Checker {
     // (`expect_warning`) demotes only non-error findings: it does not
     // catch errors, so a proven error inside it is a genuine defect.
     // Balanced by `infer_call`; empty between calls.
-    error_probe_spans: Vec<(Span, ProbeKind)>,
+    assertion_probe_spans: Vec<(Span, ProbeKind)>,
     // User-defined functions collected in pass 1. Stored behind an `Arc`
     // so the multi-file `Project` can share the refined tables across
     // per-file pass-3 emitters without deep-cloning them.
@@ -1747,7 +1755,7 @@ impl Checker {
             escaped_external_bindings: false,
             discarding: false,
             in_dead_arm: false,
-            error_probe_spans: Vec::new(),
+            assertion_probe_spans: Vec::new(),
             fn_table,
             known_vars: Arc::new(HashSet::new()),
             namespace_superassigned: None,
@@ -1931,7 +1939,7 @@ impl Checker {
         self.stmt_continuations.clear();
         self.formal_shadows.clear();
         self.formal_reads.clear();
-        self.error_probe_spans.clear();
+        self.assertion_probe_spans.clear();
         infer::vacuous::index_statement_continuations(
             &file.stmts,
             &mut self.stmt_continuations,

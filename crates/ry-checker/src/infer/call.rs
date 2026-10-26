@@ -17,15 +17,14 @@ impl Checker {
         // so an error-assertion wrapper (#344) is recognized here too.
         // The wrapper owns the probe push/pop so early returns in the
         // body cannot leak a span onto the stack.
-        let probe = self.error_probe_span(func, args, scope);
-        if let Some(probe) = probe {
-            self.error_probe_spans.push(probe);
+        if let Some(probe) = self.error_probe_span(func, args, scope) {
+            self.assertion_probe_spans.push(probe);
+            let result = self.infer_call_body(func, args, scope, span);
+            self.assertion_probe_spans.pop();
+            result
+        } else {
+            self.infer_call_body(func, args, scope, span)
         }
-        let result = self.infer_call_body(func, args, scope, span);
-        if probe.is_some() {
-            self.error_probe_spans.pop();
-        }
-        result
     }
 
     fn infer_call_body(

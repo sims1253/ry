@@ -1048,10 +1048,13 @@ impl Checker {
                     // `file.path` family: ?file.path returns a path for
                     // every element only when all arguments have positive
                     // length — any zero-length argument makes the result
-                    // empty (unlike paste, which recycles "" for zeros).
+                    // empty (unlike paste, which recycles "" for zeros), so
+                    // an argument that may be empty leaves no lower bound.
                     Some(JsonLength::LongestArgOrZero) => {
                         if arg_types.iter().any(|ty| matches!(ty.length, Length::Zero)) {
                             Length::Zero
+                        } else if arg_types.iter().any(|ty| ty.length.min_possible() == 0) {
+                            Length::Unknown
                         } else {
                             longest_arg_length(arg_types)
                         }
@@ -1282,12 +1285,20 @@ pub(crate) fn semantic_return_length(
                 }
             }
             if let Some(index) = bound_control(&spec.recycle0.param)
-                && matches!(args[index].value, Expr::Logical(true, _))
-                && value_types
-                    .iter()
-                    .any(|ty| matches!(ty.length, Length::Zero))
+                && !matches!(args[index].value, Expr::Logical(false, _))
             {
-                return Some(Length::Zero);
+                // A `recycle0` that may be TRUE empties the result on a
+                // zero-length value, so a possibly-empty one leaves no bound.
+                if matches!(args[index].value, Expr::Logical(true, _))
+                    && value_types
+                        .iter()
+                        .any(|ty| matches!(ty.length, Length::Zero))
+                {
+                    return Some(Length::Zero);
+                }
+                if value_types.iter().any(|ty| ty.length.min_possible() == 0) {
+                    return Some(Length::Unknown);
+                }
             }
             if value_types.is_empty()
                 || value_types

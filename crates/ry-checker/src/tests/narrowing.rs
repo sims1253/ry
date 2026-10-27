@@ -409,6 +409,8 @@ fn length_lower_bound_guard_reaches_condition_rules() {
         "f <- function(x) { if (1L < length(x)) { if (x) 1L } }",
         "f <- function(x) { if (!(length(x) < 2L)) { if (x) 1L } }",
         "f <- function(x) { if (length(x) <= 1L) stop('short'); if (x) 1L }",
+        "f <- function(x) { if (!(length(x) > 1L)) stop('short'); if (x) 1L }",
+        "f <- function(x, ready) { if (ready && length(x) > 1L && TRUE) { if (x) 1L } }",
         "f <- function(x) { if (length(x) > 1L) { while (x) 1L } }",
         "f <- function(x) { if (length(x) > 1L) switch(x, a = 1L) }",
     ] {
@@ -457,6 +459,9 @@ fn length_lower_bound_guard_controls_stay_silent() {
         "f <- function() { x <- structure(TRUE, class = 'foo'); if (length(x) > 1L) { if (x) 1L } }",
         "`>` <- function(e1, e2) TRUE\nf <- function(x) { if (length(x) > 1L) { if (x) 1L } }",
         "f <- function(x, y) { if (length(x) > 1L && { x <- y; TRUE }) { if (x) 1L } }",
+        // An argument that may be empty empties these results.
+        "f <- function(x, y) { if (length(x) > 1L) { z <- file.path(x, y); if (c(z, 'TRUE')) 1L } }",
+        "f <- function(x, y) { if (length(x) > 1L) { z <- paste0(x, y, recycle0 = TRUE); if (c(z, 'TRUE')) 1L } }",
     ] {
         let diagnostics = check(source);
         assert!(

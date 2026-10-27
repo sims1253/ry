@@ -224,6 +224,14 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             if let Some(fact) = length_lower_bound_fact(expr, false) {
                 return fact;
             }
+            // `!(length(x) > 1L)` is false where the comparison holds.
+            if let Some(fact) = length_lower_bound_fact(expr, true) {
+                return Narrowing::Compound {
+                    base: Box::new(Narrowing::None),
+                    on_true: Vec::new(),
+                    on_false: vec![fact],
+                };
+            }
             if let Some(var) = length_guard_var(expr) {
                 return Narrowing::NonNullElse { var };
             }
@@ -387,8 +395,20 @@ fn non_null_then(var: String) -> Narrowing {
 /// The facts a true conjunct contributes to a conjunction: the
 /// non-NULL facts below, or a proven length lower bound.
 fn conjunct_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
+    let is_bound = |fact: &Narrowing| matches!(fact, Narrowing::LengthAtLeast { .. });
     match conjunct {
-        fact @ Narrowing::LengthAtLeast { .. } => vec![fact],
+        fact if is_bound(&fact) => vec![fact],
+        // A nested conjunction (`a && length(x) > 1L && b`) keeps its
+        // bounds alongside its non-NULL facts.
+        Narrowing::Compound { base, on_true, .. }
+            if matches!(*base, Narrowing::None)
+                && !on_true.is_empty()
+                && on_true
+                    .iter()
+                    .all(|fact| is_bound(fact) || is_non_null_fact(fact)) =>
+        {
+            on_true
+        }
         conjunct => non_null_then_facts(conjunct),
     }
 }

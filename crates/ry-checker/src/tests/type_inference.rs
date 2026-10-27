@@ -577,6 +577,28 @@ fn literal_constructors_pin_exact_lengths() {
         ("x <- rep(c(1, 2, 3), each = 2)\n", None, Length::Known(6)),
         ("x <- rep(c(1, 2), 3, each = 2)\n", None, Length::Known(12)),
         ("n <- 2\nx <- rep(1:3, n)\n", None, Length::Unknown),
+        // `length.out` (third positional, or a partial name) overrides
+        // `times` and `each`; a zero-length `x` pads with `NA`.
+        (
+            "x <- rep(1:3, length.out = 1)\n",
+            Some(Mode::Integer),
+            Length::One,
+        ),
+        ("x <- rep(1:2, 2, 3)\n", None, Length::Known(3)),
+        ("x <- rep(1:3, len = 2)\n", None, Length::Known(2)),
+        ("x <- rep(1:3, each = 2, l = 4)\n", None, Length::Known(4)),
+        ("x <- rep(1:3, length.out = 0)\n", None, Length::Zero),
+        (
+            "x <- rep(integer(0), length.out = 3)\n",
+            None,
+            Length::Known(3),
+        ),
+        (
+            "n <- 2\nx <- rep(1:3, length.out = n)\n",
+            None,
+            Length::Unknown,
+        ),
+        ("x <- rep(1:2, ti = 2)\n", None, Length::Known(4)),
         // `seq`/`seq.int`: `by`, `length.out`, and the by-one
         // default; whole-number double `by` still pins; a
         // non-literal endpoint stays Unknown.
@@ -661,6 +683,23 @@ fn rep_zero_times_yields_length_zero() {
     let x = scope.get("x").expect("x should be bound");
     assert_eq!(x.mode, Mode::Integer, "got {:?}", x);
     assert_eq!(x.length, Length::Zero, "got {:?}", x);
+}
+
+#[test]
+fn rep_length_out_caps_the_condition_length() {
+    // Each call returns one element in R, so the condition is legal.
+    for call in [
+        "rep(c(TRUE, FALSE), length.out = 1)",
+        "rep(c(TRUE, FALSE), 2, 1)",
+        "rep(c(TRUE, FALSE), len = 1)",
+        "rep(c(TRUE, FALSE), times = 3, each = 2, length.out = 1)",
+    ] {
+        let diags = check(&format!("y <- {call}\nif (y) 1L else 2L\n"));
+        assert!(diags.iter().all(|d| d.code != "RY002"), "{call}: {diags:?}");
+    }
+    // A literal `length.out` still pins a length the condition rejects.
+    let diags = check("y <- rep(TRUE, length.out = 2)\nif (y) 1L else 2L\n");
+    assert!(diags.iter().any(|d| d.code == "RY002"), "{diags:?}");
 }
 
 #[test]

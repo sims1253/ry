@@ -1,0 +1,2058 @@
+{
+  "schema_version": "2",
+  "package": "lubridate",
+  "version": "0.0.1",
+  "functions": {
+    "%--%": {
+      "params": [
+        "start",
+        "end"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%m-%": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%m+%": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%within%": {
+      "params": [
+        "a",
+        "b"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "add_with_rollback": {
+      "params": [
+        "e1",
+        "e2",
+        "roll_to_first",
+        "preserve_hms"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "am": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Arith": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_date": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_datetime": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.difftime": {
+      "params": [
+        "tim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.duration": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.interval": {
+      "params": [
+        "x",
+        "start",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.period": {
+      "params": [
+        "x",
+        "unit",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ceiling_date": {
+      "params": [
+        "x",
+        "unit",
+        "change_on_boundary",
+        "week_start"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Compare": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cyclic_encoding": {
+      "params": [
+        "x",
+        "periods",
+        "encoders",
+        "week_start"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "date": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Date": {
+      "params": [
+        "length"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "date_decimal": {
+      "params": [
+        "decimal",
+        "tz"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "date<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "day": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "day<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "days": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "days_in_month": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ddays": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "decimal_date": {
+      "params": [
+        "date"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dhours": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dmicroseconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dmilliseconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dminutes": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dmonths": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dmy": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dmy_h": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dmy_hm": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dmy_hms": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dnanoseconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dpicoseconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dseconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dst": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "duration": {
+      "params": [
+        "num",
+        "units",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dweeks": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dyears": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dym": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "epiweek": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "epiyear": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fast_strptime": {
+      "params": [
+        "x",
+        "format",
+        "tz",
+        "lt",
+        "cutoff_2000"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fit_to_timeline": {
+      "params": [
+        "lt",
+        "class",
+        "simple"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "floor_date": {
+      "params": [
+        "x",
+        "unit",
+        "week_start"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "force_tz": {
+      "params": [
+        "time",
+        "tzone",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "force_tzs": {
+      "params": [
+        "time",
+        "tzones",
+        "tzone_out",
+        "roll_dst",
+        "roll"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format_ISO8601": {
+      "params": [
+        "x",
+        "usetz",
+        "precision",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guess_formats": {
+      "params": [
+        "x",
+        "orders",
+        "locale",
+        "preproc_wday",
+        "print_matches"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hm": {
+      "params": [
+        "...",
+        "quiet",
+        "roll"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hms": {
+      "params": [
+        "...",
+        "quiet",
+        "roll"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hour": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hour<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hours": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_aligns": {
+      "params": [
+        "int1",
+        "int2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_diff": {
+      "params": [
+        "times"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_end": {
+      "params": [
+        "int"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_end<-": {
+      "params": [
+        "int",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_flip": {
+      "params": [
+        "int"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_length": {
+      "params": [
+        "int"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_overlaps": {
+      "params": [
+        "int1",
+        "int2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_shift": {
+      "params": [
+        "int",
+        "by"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_standardize": {
+      "params": [
+        "int"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_start": {
+      "params": [
+        "int"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "int_start<-": {
+      "params": [
+        "int",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "intersect": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "interval": {
+      "params": [
+        "start",
+        "end",
+        "tzone"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.Date": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.difftime": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.duration": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.instant": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.interval": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.period": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.POSIXct": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.POSIXlt": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.POSIXt": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.timepoint": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.timespan": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isoweek": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isoyear": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "leap_year": {
+      "params": [
+        "date"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_time": {
+      "params": [
+        "dt",
+        "tz",
+        "units"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "make_date": {
+      "params": [
+        "year",
+        "month",
+        "day"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "make_datetime": {
+      "params": [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "min",
+        "sec",
+        "tz"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "make_difftime": {
+      "params": [
+        "num",
+        "units",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mday": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mday<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mdy": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mdy_h": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mdy_hm": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mdy_hms": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "microseconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "milliseconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "minute": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "minute<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "minutes": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "month": {
+      "params": [
+        "x",
+        "label",
+        "abbr",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "month<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ms": {
+      "params": [
+        "...",
+        "quiet",
+        "roll"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "my": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "myd": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nanoseconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "now": {
+      "params": [
+        "tzone"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_date_time": {
+      "params": [
+        "x",
+        "orders",
+        "tz",
+        "truncated",
+        "quiet",
+        "locale",
+        "select_formats",
+        "exact",
+        "train",
+        "drop"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_date_time2": {
+      "params": [
+        "x",
+        "orders",
+        "tz",
+        "exact",
+        "lt",
+        "cutoff_2000"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "period": {
+      "params": [
+        "num",
+        "units",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "period_to_seconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "picoseconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pm": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "POSIXct": {
+      "params": [
+        "length",
+        "tz"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pretty_dates": {
+      "params": [
+        "x",
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qday": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qday<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "quarter": {
+      "params": [
+        "x",
+        "type",
+        "fiscal_start",
+        "with_year"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reclass_date": {
+      "params": [
+        "new",
+        "orig"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reclass_timespan": {
+      "params": [
+        "new",
+        "orig"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollback": {
+      "params": [
+        "dates",
+        "roll_to_first",
+        "preserve_hms"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollbackward": {
+      "params": [
+        "dates",
+        "roll_to_first",
+        "preserve_hms"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollforward": {
+      "params": [
+        "dates",
+        "roll_to_first",
+        "preserve_hms"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "round_date": {
+      "params": [
+        "x",
+        "unit",
+        "week_start"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "second": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "second<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "seconds": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "seconds_to_period": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "semester": {
+      "params": [
+        "x",
+        "with_year"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setdiff": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "show": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stamp": {
+      "params": [
+        "x",
+        "orders",
+        "locale",
+        "quiet",
+        "exact"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stamp_date": {
+      "params": [
+        "x",
+        "locale",
+        "quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stamp_time": {
+      "params": [
+        "x",
+        "locale",
+        "quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "time_length": {
+      "params": [
+        "x",
+        "unit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "today": {
+      "params": [
+        "tzone"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tz": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tz<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "union": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "wday": {
+      "params": [
+        "x",
+        "label",
+        "abbr",
+        "week_start",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "wday<-": {
+      "params": [
+        "x",
+        "week_start",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "week": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "week<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "weeks": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "with_tz": {
+      "params": [
+        "time",
+        "tzone",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yday": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yday<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ydm": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ydm_h": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ydm_hm": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ydm_hms": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "year": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "year<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "years": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ym": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ymd": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ymd_h": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ymd_hm": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ymd_hms": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale",
+        "truncated"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yq": {
+      "params": [
+        "...",
+        "quiet",
+        "tz",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    ".__C__Duration": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__Interval": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__Period": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__Timespan": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__[:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__[[:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__[[<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__[<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__*:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__/:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__%/%:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__%%:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__%m-%:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__%m+%:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__%within%:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__+:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__$:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__$<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Arith:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as_date:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as_datetime:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.character:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.difftime:generics": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.duration:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.integer:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.interval:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.numeric:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.period:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Compare:methods": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__date<-:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__day<-:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__format_ISO8601:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__hour<-:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__minute<-:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__month<-:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qday<-:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__reclass_timespan:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__rep:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__second<-:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__show:methods": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__time_length:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__year<-:lubridate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "lakers": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "NA_Date_": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "NA_POSIXct_": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "origin": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

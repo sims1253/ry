@@ -462,6 +462,7 @@ fn length_lower_bound_guard_controls_stay_silent() {
         // An argument that may be empty empties these results.
         "f <- function(x, y) { if (length(x) > 1L) { z <- file.path(x, y); if (c(z, 'TRUE')) 1L } }",
         "f <- function(x, y) { if (length(x) > 1L) { z <- paste0(x, y, recycle0 = TRUE); if (c(z, 'TRUE')) 1L } }",
+        "f <- function(x, y) { if (length(x) > 1L) { z <- sprintf('%s-%s', x, y); if (c(z, 'TRUE')) 1L } }",
     ] {
         let diagnostics = check(source);
         assert!(

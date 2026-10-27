@@ -96,6 +96,9 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- Vendor r-typeshed 0565da9: `sprintf()` is empty when `fmt` or any value
+  is, like `file.path()`, instead of claiming the longest argument's
+  length.
 - Vendor r-typeshed e528dbb: lubridate and knitr export inventories.
   `library(lubridate)`, `library(knitr)` and their `import()` directives
   resolve those packages' names and formals instead of treating them as

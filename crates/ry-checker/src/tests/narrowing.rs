@@ -444,6 +444,11 @@ fn length_lower_bound_guard_controls_stay_silent() {
         "a <- c(1L, use.names = FALSE)\nif (a) 1L",
         "a <- c(1L, recursive = FALSE)\nif (a) 1L",
         "f <- function(x) { if (length(x) > 0L) { y <- c(x, use.names = FALSE); if (y) 1L } }",
+        // A `recursive` that may be TRUE can flatten an opaque `x` that
+        // is a list (`list(1, NULL)` becomes length 1), and `length.out`
+        // fixes the length whatever `x`'s bound.
+        "f <- function(x, r) { if (length(x) > 1L) { y <- c(x, recursive = r); switch(y, a = 1L) } }",
+        "f <- function(x) { if (length(x) > 1L) { y <- rep(x, times = 3, length.out = 1); if (y) 1L } }",
     ] {
         let diagnostics = check(source);
         assert!(
@@ -451,6 +456,16 @@ fn length_lower_bound_guard_controls_stay_silent() {
             "{source}: {diagnostics:?}"
         );
     }
+}
+
+#[test]
+fn recursive_c_that_may_flatten_a_list_claims_no_list_mode() {
+    // `c(list(1, "x"), recursive = TRUE)` is the character vector
+    // c("1", "x"), not a list.
+    let (_, scope) = check_with_scope("y <- c(list(1, 'x'), recursive = TRUE)\n");
+    let y = scope.get("y").expect("y should be bound");
+    assert_ne!(y.mode, Mode::List, "{y:?}");
+    assert_eq!(y.length, Length::Unknown, "{y:?}");
 }
 
 #[test]

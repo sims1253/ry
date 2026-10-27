@@ -503,14 +503,17 @@ impl Checker {
                     .filter(|(arg, _)| !is_control(arg))
                     .map(|(arg, ty)| (arg.clone(), ty.clone()))
                     .unzip();
-                let mut result = self.infer_c(&elem_args, &elem_types);
+                // Any element not proven atomic may be a list that the
+                // flattening empties or turns atomic
+                // (`c(list(1, NULL), recursive = TRUE)` is the double 1).
                 if may_flatten
                     && elem_types
                         .iter()
-                        .any(|ty| matches!(ty.mode, Mode::List | Mode::Union))
+                        .any(|ty| !(ty.mode.is_atomic() || ty.mode == Mode::Null))
                 {
-                    result.length = Length::Unknown;
+                    return Some(RType::unknown());
                 }
+                let result = self.infer_c(&elem_args, &elem_types);
                 if let Some(schema) = build_named_schema(&elem_types, &elem_args)
                     .filter(|_| elem_args.iter().any(|argument| argument.name.is_some()))
                 {

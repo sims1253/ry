@@ -1228,9 +1228,6 @@ impl Checker {
                 expr,
                 ..
             } => Self::compound_guard_facts(expr, !truth),
-            Expr::BinOp { .. } => length_lower_bound_fact(cond, truth)
-                .map(|fact| vec![fact])
-                .unwrap_or_default(),
             Expr::Call { func, args, .. } => {
                 let Some(target) =
                     ident_name(func).and_then(|name| compound_predicate_target(name, args))

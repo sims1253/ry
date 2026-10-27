@@ -450,7 +450,8 @@ fn may_assign(expr: &Expr, name: &str) -> bool {
             fn_bodies: false,
             ..Walk::ALL
         },
-        |node, _| match node {
+        |node, _| {
+            match node {
             AstNode::Expr(Expr::BinOp {
                 op: BinOpKind::Assign | BinOpKind::SuperAssign,
                 lhs,
@@ -458,16 +459,24 @@ fn may_assign(expr: &Expr, name: &str) -> bool {
             }) if binds(lhs) => ControlFlow::Break(()),
             AstNode::Stmt(Stmt::Assign { target, .. }) if binds(target) => ControlFlow::Break(()),
             AstNode::Stmt(Stmt::For { name: bound, .. }) if bound == name => ControlFlow::Break(()),
+            // `assign()` under any prefix, with `x` bound as R binds it; a
+            // computed name may be this one.
             AstNode::Expr(Expr::Call { func, args, .. })
-                if ident_name(func) == Some("assign")
-                    && matches!(
-                        args.first().map(|arg| &arg.value),
-                        Some(Expr::String(bound, _)) if bound == name
-                    ) =>
+                if ident_name(func)
+                    .is_some_and(|callee| crate::semantic_lists::bare_name(callee) == "assign")
+                    && match_arguments(
+                        &["x", "value", "pos", "envir", "inherits", "immediate"],
+                        args,
+                    )
+                    .arg_for_param(0)
+                    .is_none_or(|index| {
+                        !matches!(&args[index].value, Expr::String(bound, _) if bound != name)
+                    }) =>
             {
                 ControlFlow::Break(())
             }
             _ => ControlFlow::Continue(Descend::Into),
+        }
         },
     )
     .is_break()

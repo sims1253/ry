@@ -433,7 +433,17 @@ fn non_null_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
 /// `<<-`, `assign("name", v)`) or a `for` over it at any depth outside
 /// function bodies, including inside nested control flow.
 fn may_assign(expr: &Expr, name: &str) -> bool {
-    let binds = |target: &Expr| matches!(target, Expr::Ident { name: bound, .. } if bound == name);
+    // A replacement (`length(x) <- 1L`, `x[1] <- v`, `x$a <- v`) rebinds
+    // its root variable.
+    fn root(target: &Expr) -> Option<&str> {
+        match target {
+            Expr::Ident { name, .. } => Some(name),
+            Expr::Index { base, .. } => root(base),
+            Expr::Call { args, .. } => args.first().and_then(|arg| root(&arg.value)),
+            _ => None,
+        }
+    }
+    let binds = |target: &Expr| root(target) == Some(name);
     walk_expr(
         expr,
         Walk {
@@ -1308,6 +1318,7 @@ impl Checker {
                     .iter()
                     .any(|op| super::ops_chooser::operator_rebound(self, op, scope))
                 || !self.equality_length_guard_proves_scalar(var, cond, scope)
+                || may_assign(cond, var)
         });
         if rebound.is_empty() {
             narrowing

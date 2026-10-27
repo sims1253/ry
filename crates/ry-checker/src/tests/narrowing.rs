@@ -463,6 +463,8 @@ fn length_lower_bound_guard_controls_stay_silent() {
         "f <- function(x, y) { if (length(x) > 1L) { z <- file.path(x, y); if (c(z, 'TRUE')) 1L } }",
         "f <- function(x, y) { if (length(x) > 1L) { z <- paste0(x, y, recycle0 = TRUE); if (c(z, 'TRUE')) 1L } }",
         "f <- function(x, y) { if (length(x) > 1L) { z <- sprintf('%s-%s', x, y); if (c(z, 'TRUE')) 1L } }",
+        "f <- function(x) { if (length(x) > 1L && { length(x) <- 1L; TRUE }) { if (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1L) { y <- x == c(integer()); if (c(y, TRUE)) 1L } }",
     ] {
         let diagnostics = check(source);
         assert!(

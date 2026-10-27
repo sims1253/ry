@@ -286,7 +286,8 @@ impl Length {
     pub fn binary(self, other: Length) -> Length {
         use Length::*;
         match (self, other) {
-            (Zero, _) | (_, Zero) => Zero,
+            // `Known(0)` (as from `c(integer())`) is empty too.
+            (Zero | Known(0), _) | (_, Zero | Known(0)) => Zero,
             (One, x) | (x, One) => x,
             // R recycles to max(a, b). The checker separately reports the
             // warning case where neither length divides the other.

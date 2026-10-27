@@ -1,0 +1,1411 @@
+{
+  "schema_version": "2",
+  "package": "knitr",
+  "version": "0.0.2",
+  "functions": {
+    "all_labels": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "all_rcpp_labels": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "asis_output": {
+      "params": [
+        "x",
+        "meta",
+        "cacheable"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "clean_cache": {
+      "params": [
+        "clean",
+        "path"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "combine_words": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "convert_chunk_header": {
+      "params": [
+        "input",
+        "output",
+        "type",
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "current_input": {
+      "params": [
+        "dir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dep_auto": {
+      "params": [
+        "path",
+        "labels"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dep_prev": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "download_image": {
+      "params": [
+        "url",
+        "path",
+        "use_file",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "engine_output": {
+      "params": [
+        "options",
+        "code",
+        "out",
+        "extra"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "extract_raw_output": {
+      "params": [
+        "text",
+        "markers"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fig_chunk": {
+      "params": [
+        "label",
+        "ext",
+        "number",
+        "fig.path"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fig_path": {
+      "params": [
+        "suffix",
+        "options",
+        "number"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_ffmpeg_html": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_gifski": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_mogrify": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_movecode": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_optipng": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_pdfcrop": {
+      "params": [
+        "before",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_plot_asciidoc": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_plot_custom": {
+      "params": [
+        "before",
+        "options",
+        "envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_plot_html": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_plot_md": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_plot_rst": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_plot_tex": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_plot_textile": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_plot_typst": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_pngquant": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_purl": {
+      "params": [
+        "before",
+        "options",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_r2swf": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hook_scianimator": {
+      "params": [
+        "x",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_asciidoc": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_html": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_jekyll": {
+      "params": [
+        "highlight",
+        "extra"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_latex": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_listings": {
+      "params": [
+        "envirs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_markdown": {
+      "params": [
+        "strict",
+        "fence_char"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_rst": {
+      "params": [
+        "strict"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_sweave": {
+      "params": [
+        "envirs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_textile": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hooks_typst": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "image_uri": {
+      "params": [
+        "f"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "imgur_upload": {
+      "params": [
+        "file",
+        "key",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "include_app": {
+      "params": [
+        "url",
+        "height"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "include_graphics": {
+      "params": [
+        "path",
+        "auto_pdf",
+        "dpi",
+        "rel_path",
+        "error"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "include_url": {
+      "params": [
+        "url",
+        "height"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "inline_expr": {
+      "params": [
+        "code",
+        "syntax"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_html_output": {
+      "params": [
+        "fmt",
+        "excludes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_latex_output": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_low_change": {
+      "params": [
+        "p1",
+        "p2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "kable": {
+      "params": [
+        "x",
+        "format",
+        "digits",
+        "row.names",
+        "col.names",
+        "align",
+        "caption",
+        "label",
+        "format.args",
+        "escape",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "kables": {
+      "params": [
+        "x",
+        "format",
+        "caption",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit": {
+      "params": [
+        "input",
+        "output",
+        "tangle",
+        "text",
+        "quiet",
+        "envir",
+        "encoding"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_child": {
+      "params": [
+        "...",
+        "options",
+        "envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_exit": {
+      "params": [
+        "append",
+        "fully"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_expand": {
+      "params": [
+        "file",
+        "...",
+        "text",
+        "delim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_filter": {
+      "params": [
+        "ifile",
+        "encoding"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_global": {
+      "params": [
+        "envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_meta": {
+      "params": [
+        "class",
+        "clean"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_meta_add": {
+      "params": [
+        "meta",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_params": {
+      "params": [
+        "text",
+        "evaluate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_params_yaml": {
+      "params": [
+        "yaml",
+        "evaluate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_print": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_rd": {
+      "params": [
+        "pkg",
+        "links",
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_rd_all": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit_watch": {
+      "params": [
+        "input",
+        "compile",
+        "interval",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit2html": {
+      "params": [
+        "input",
+        "output",
+        "...",
+        "envir",
+        "text",
+        "quiet",
+        "encoding",
+        "force_v1"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit2pandoc": {
+      "params": [
+        "input",
+        "output",
+        "tangle",
+        "text",
+        "quiet",
+        "envir",
+        "to",
+        "pandoc_wrapper",
+        "...",
+        "encoding"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit2pdf": {
+      "params": [
+        "input",
+        "output",
+        "compiler",
+        "envir",
+        "quiet",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "knit2wp": {
+      "params": [
+        "input",
+        "title",
+        "...",
+        "envir",
+        "shortcode",
+        "action",
+        "postid",
+        "publish"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "load_cache": {
+      "params": [
+        "label",
+        "object",
+        "notfound",
+        "path",
+        "dir",
+        "envir",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "normal_print": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pandoc": {
+      "params": [
+        "input",
+        "format",
+        "config",
+        "ext"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pandoc_from": {
+      "params": [
+        "exact"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pandoc_to": {
+      "params": [
+        "fmt",
+        "exact"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "partition_chunk": {
+      "params": [
+        "engine",
+        "code"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pat_asciidoc": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pat_brew": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pat_html": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pat_md": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pat_rnw": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pat_rst": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pat_tex": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pat_textile": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pat_typst": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "plot_crop": {
+      "params": [
+        "x",
+        "quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "purl": {
+      "params": [
+        "...",
+        "documentation"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "raw_block": {
+      "params": [
+        "x",
+        "type",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "raw_html": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "raw_latex": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "raw_output": {
+      "params": [
+        "x",
+        "markers",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_chunk": {
+      "params": [
+        "path",
+        "lines",
+        "labels",
+        "from",
+        "to",
+        "from.offset",
+        "to.offset",
+        "roxygen_comments"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_demo": {
+      "params": [
+        "topic",
+        "package",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_asciidoc": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_html": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_jekyll": {
+      "params": [
+        "highlight",
+        "extra"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_latex": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_listings": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_markdown": {
+      "params": [
+        "strict",
+        "fence_char"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_rst": {
+      "params": [
+        "strict"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_sweave": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_textile": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_typst": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "restore_raw_output": {
+      "params": [
+        "text",
+        "chunks",
+        "markers"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rnw2pdf": {
+      "params": [
+        "input",
+        "output",
+        "compiler",
+        "envir",
+        "quiet",
+        "clean",
+        "error",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rocco": {
+      "params": [
+        "input",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rst2pdf": {
+      "params": [
+        "input",
+        "command",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_alias": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_header": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_parent": {
+      "params": [
+        "parent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sew": {
+      "params": [
+        "x",
+        "options",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "spin": {
+      "params": [
+        "hair",
+        "knit",
+        "report",
+        "text",
+        "envir",
+        "format",
+        "doc",
+        "inline",
+        "comment",
+        "precious"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "spin_child": {
+      "params": [
+        "input",
+        "format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stitch": {
+      "params": [
+        "script",
+        "template",
+        "output",
+        "text",
+        "envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stitch_rhtml": {
+      "params": [
+        "...",
+        "envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stitch_rmd": {
+      "params": [
+        "...",
+        "envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Sweave2knitr": {
+      "params": [
+        "file",
+        "output",
+        "text"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "wrap_rmd": {
+      "params": [
+        "file",
+        "width",
+        "text",
+        "backup"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_bib": {
+      "params": [
+        "...",
+        "prefix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "all_patterns": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "cache_engines": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "knit_code": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "knit_engines": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "knit_hooks": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "knit_patterns": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "knit_theme": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "opts_chunk": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "opts_current": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "opts_hooks": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "opts_knit": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "opts_template": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "rand_seed": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

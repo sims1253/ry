@@ -83,6 +83,21 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- Vendor r-typeshed e528dbb: lubridate and knitr export inventories.
+  `library(lubridate)`, `library(knitr)` and their `import()` directives
+  resolve those packages' names and formals instead of treating them as
+  unstubbed packages that may supply any name, so a script attaching them
+  can now get RY010 for names neither package exports. `library(tidyverse)`
+  resolves lubridate through its attach list. knitr's `all_labels()` and
+  `all_rcpp_labels()` capture their filters, so `all_labels(engine == "R")`
+  stays quiet. The data.table inventory (r-typeshed 08efb9f) is not
+  vendored yet: ry does not model data.table's `[` scoping for receivers it
+  cannot prove are data.tables, so it would report columns as unbound
+  variables.
+- `dump-facts` documents that enumerated string values are open within a
+  schema version: new values (such as the `environment` and `language`
+  modes) and new object fields can appear without a schema bump, and
+  consumers should read an unrecognized value as missing evidence.
 - Demote diagnostics inside an error-assertion probe one confidence tier:
   testthat's `expect_error()`, `expect_warning()`, and
   `expect_snapshot(error = TRUE, ...)`, plus base `try()` and

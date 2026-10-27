@@ -29,8 +29,15 @@ If a native filename collision prevents attachment, annotation export fails
 with RY117 and writes no JSON, even when only the UTF-8 filename was selected.
 Exporting a directory that includes a non-UTF-8 path also fails. Remove the
 collision or disable annotation export to obtain the older fact schemas.
-Without `--annotations`, schema 1 output remains unchanged; `--references`
+Without `--annotations`, output keeps the schema 1 layout; `--references`
 alone still selects schema 2.
+
+Within a schema version, enumerated string values are open. A ry release can
+add a new value to a field such as a type's `mode` or `length` `kind`, a
+reference `reason`, or a blocker `kind`, and can add object fields. Consumers
+should read an unrecognized value as missing evidence, not reject the output.
+Removing a field or value, or changing what an existing value means, raises
+the schema version.
 
 ```sh
 ry dump-facts R/ --format json > facts.json

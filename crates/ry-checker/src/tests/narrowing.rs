@@ -449,6 +449,14 @@ fn length_lower_bound_guard_controls_stay_silent() {
         // fixes the length whatever `x`'s bound.
         "f <- function(x, r) { if (length(x) > 1L) { y <- c(x, recursive = r); switch(y, a = 1L) } }",
         "f <- function(x) { if (length(x) > 1L) { y <- rep(x, times = 3, length.out = 1); if (y) 1L } }",
+        // The scalar guard's screens (docs/scalar-guards.md) apply: a
+        // `length` method or classed value may not report the storage
+        // length, a project comparison may not compare, and a later
+        // conjunct may rebind the subject.
+        "length.foo <- function(x) 2L\nf <- function(x) { if (length(x) > 1L) { if (x) 1L } }",
+        "f <- function() { x <- structure(TRUE, class = 'foo'); if (length(x) > 1L) { if (x) 1L } }",
+        "`>` <- function(e1, e2) TRUE\nf <- function(x) { if (length(x) > 1L) { if (x) 1L } }",
+        "f <- function(x, y) { if (length(x) > 1L && { x <- y; TRUE }) { if (x) 1L } }",
     ] {
         let diagnostics = check(source);
         assert!(

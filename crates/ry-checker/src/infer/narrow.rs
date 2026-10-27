@@ -91,6 +91,31 @@ impl Narrowing {
         }
     }
 
+    /// This narrowing without the length lower bounds whose subject
+    /// `untrusted` rejects.
+    fn without_length_bounds(self, untrusted: &dyn Fn(&str) -> bool) -> Narrowing {
+        let keep = |facts: Vec<Narrowing>| -> Vec<Narrowing> {
+            facts
+                .into_iter()
+                .map(|fact| fact.without_length_bounds(untrusted))
+                .filter(|fact| !matches!(fact, Narrowing::None))
+                .collect()
+        };
+        match self {
+            Narrowing::Compound {
+                base,
+                on_true,
+                on_false,
+            } => Narrowing::Compound {
+                base: Box::new(base.without_length_bounds(untrusted)),
+                on_true: keep(on_true),
+                on_false: keep(on_false),
+            },
+            Narrowing::LengthAtLeast { ref var, .. } if untrusted(var) => Narrowing::None,
+            fact => fact,
+        }
+    }
+
     /// This narrowing without its facts about `names`.
     fn without(self, names: &HashSet<String>) -> Narrowing {
         let keep = |facts: Vec<Narrowing>| -> Vec<Narrowing> {
@@ -1253,6 +1278,17 @@ impl Checker {
         let mut rebound = HashSet::new();
         self.rebound_guard_subjects(cond, scope, &mut rebound);
         let narrowing = self.extract_unscreened_type_narrowing(cond, scope);
+        // A length bound needs the scalar guard's screens
+        // (docs/scalar-guards.md): base comparisons, a `length` that
+        // reports the storage length, and no rebinding of the subject
+        // within the condition.
+        let narrowing = narrowing.without_length_bounds(&|var| {
+            self.project_defines_comparison_method()
+                || ["<", "<=", ">", ">="]
+                    .iter()
+                    .any(|op| super::ops_chooser::operator_rebound(self, op, scope))
+                || !self.equality_length_guard_proves_scalar(var, cond, scope)
+        });
         if rebound.is_empty() {
             narrowing
         } else {

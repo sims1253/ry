@@ -321,11 +321,17 @@ pub(crate) fn longest_arg_length(arg_types: &[RType]) -> Length {
             (Length::Zero, x) | (x, Length::Zero) => x,
             (Length::One, x) | (x, Length::One) => x,
             (Length::Known(a), Length::Known(b)) => Length::Known(a.max(b)),
+            (Length::AtLeast(a), Length::AtLeast(b)) => Length::AtLeast(a.max(b)),
+            (Length::AtLeast(a), Length::Known(b)) | (Length::Known(b), Length::AtLeast(a)) => {
+                Length::AtLeast(a.max(b))
+            }
+            // max(>= a, anything) keeps the >= a lower bound: a
+            // possibly-empty operand cannot pull the maximum down.
+            (Length::AtLeast(a), Length::Nonempty | Length::Unknown)
+            | (Length::Nonempty | Length::Unknown, Length::AtLeast(a)) => Length::AtLeast(a),
             (Length::Nonempty, Length::Known(_))
             | (Length::Known(_), Length::Nonempty)
             | (Length::Nonempty, Length::Nonempty) => Length::Nonempty,
-            // max(>= 1, unknown) keeps the >= 1 lower bound: a
-            // possibly-empty operand cannot pull the maximum to zero.
             (Length::Nonempty, Length::Unknown) | (Length::Unknown, Length::Nonempty) => {
                 Length::Nonempty
             }

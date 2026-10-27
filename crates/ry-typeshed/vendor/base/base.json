@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -7164,7 +7164,7 @@
       ],
       "return": {
         "mode": "character",
-        "length": "longest_arg",
+        "length": "longest_arg_or_zero",
         "na": true
       }
     },

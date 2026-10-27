@@ -391,3 +391,125 @@ fn compound_guard_oracle_has_no_atomic_access_errors() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn length_lower_bound_guard_reaches_condition_rules() {
+    // Issue #649 founding case: the guard proves length >= 2, so the
+    // inner condition is a proven length error in R.
+    let source = "f <- function(x) {\n  if (is.logical(x) && length(x) > 1L) {\n    if (x) 1L else 0L\n  }\n}";
+    let diagnostics = check(source);
+    let hits: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY001").collect();
+    assert_eq!(hits.len(), 1, "{diagnostics:?}");
+    assert_eq!(&source[hits[0].span.start..hits[0].span.end], "x");
+
+    // Every spelling of the same bound: >=, mirrored, negated,
+    // early-exit continuation, loop conditions, switch selectors.
+    for source in [
+        "f <- function(x) { if (length(x) >= 2L) { if (x) 1L } }",
+        "f <- function(x) { if (1L < length(x)) { if (x) 1L } }",
+        "f <- function(x) { if (!(length(x) < 2L)) { if (x) 1L } }",
+        "f <- function(x) { if (length(x) <= 1L) stop('short'); if (x) 1L }",
+        "f <- function(x) { if (!(length(x) > 1L)) stop('short'); if (x) 1L }",
+        "f <- function(x, ready) { if (ready && length(x) > 1L && TRUE) { if (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1L) { while (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1L) switch(x, a = 1L) }",
+    ] {
+        let diagnostics = check(source);
+        assert_eq!(
+            diagnostics.iter().filter(|d| d.code == "RY001").count(),
+            1,
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn length_lower_bound_guard_controls_stay_silent() {
+    for source in [
+        // > 0 proves nonempty, not above one.
+        "f <- function(x) { if (length(x) > 0L) { if (x) 1L } }",
+        // The element, not the vector, is the condition.
+        "f <- function(x) { if (length(x) > 1L) { if (x[[1]]) 1L } }",
+        // Rebinding inside the branch replaces the narrowed type.
+        "f <- function(x) { if (length(x) > 1L) { x <- TRUE; if (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1L) { x <- x[1]; if (x) 1L } }",
+        // The bound is about another binding.
+        "f <- function(x, y) { if (length(y) > 1L) { if (x) 1L } }",
+        // A computed or fractional bound proves nothing here.
+        "f <- function(x, k) { if (length(x) > k) { if (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1.5) { if (x) 1L } }",
+        // A rebound `length` is not base length.
+        "length <- function(x) 5L\nf <- function(x) { if (length(x) > 1L) { if (x) 1L } }",
+        "f <- function(x, length = function(y) 5L) { if (length(x) > 1L) { if (x) 1L } }",
+        // `c()` controls matched after `...` are not elements, so
+        // they add neither an exact element nor a lower bound.
+        "a <- c(1L, use.names = FALSE)\nif (a) 1L",
+        "a <- c(1L, recursive = FALSE)\nif (a) 1L",
+        "f <- function(x) { if (length(x) > 0L) { y <- c(x, use.names = FALSE); if (y) 1L } }",
+        // A `recursive` that may be TRUE can flatten an opaque `x` that
+        // is a list (`list(1, NULL)` becomes length 1), and `length.out`
+        // fixes the length whatever `x`'s bound.
+        "f <- function(x, r) { if (length(x) > 1L) { y <- c(x, recursive = r); switch(y, a = 1L) } }",
+        "f <- function(x) { if (length(x) > 1L) { y <- rep(x, times = 3, length.out = 1); if (y) 1L } }",
+        // The scalar guard's screens (docs/scalar-guards.md) apply: a
+        // `length` method or classed value may not report the storage
+        // length, a project comparison may not compare, and a later
+        // conjunct may rebind the subject.
+        "length.foo <- function(x) 2L\nf <- function(x) { if (length(x) > 1L) { if (x) 1L } }",
+        "f <- function() { x <- structure(TRUE, class = 'foo'); if (length(x) > 1L) { if (x) 1L } }",
+        "`>` <- function(e1, e2) TRUE\nf <- function(x) { if (length(x) > 1L) { if (x) 1L } }",
+        "f <- function(x, y) { if (length(x) > 1L && { x <- y; TRUE }) { if (x) 1L } }",
+        // An argument that may be empty empties these results.
+        "f <- function(x, y) { if (length(x) > 1L) { z <- file.path(x, y); if (c(z, 'TRUE')) 1L } }",
+        "f <- function(x, y) { if (length(x) > 1L) { z <- paste0(x, y, recycle0 = TRUE); if (c(z, 'TRUE')) 1L } }",
+        "f <- function(x, y) { if (length(x) > 1L) { z <- sprintf('%s-%s', x, y); if (c(z, 'TRUE')) 1L } }",
+        "f <- function(x) { if (length(x) > 1L && { length(x) <- 1L; TRUE }) { if (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1L && { base::assign('x', TRUE); TRUE }) { if (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1L && { assign(value = TRUE, x = 'x'); TRUE }) { if (x) 1L } }",
+        "f <- function(x) { if (length(x) > 1L) { y <- x == c(integer()); if (c(y, TRUE)) 1L } }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn recursive_c_that_may_flatten_a_list_claims_no_list_mode() {
+    // `c(list(1, "x"), recursive = TRUE)` is the character vector
+    // c("1", "x"), not a list.
+    let (_, scope) = check_with_scope("y <- c(list(1, 'x'), recursive = TRUE)\n");
+    let y = scope.get("y").expect("y should be bound");
+    assert_ne!(y.mode, Mode::List, "{y:?}");
+    assert_eq!(y.length, Length::Unknown, "{y:?}");
+}
+
+#[test]
+fn length_lower_bound_propagates_through_construction_and_joins() {
+    // Choosing between length-2 and length-3 vectors keeps "at least
+    // 2" through the join and the negation; a logical `if` condition
+    // with a proven length above one is RY002.
+    let diagnostics = check(
+        "f <- function(flag) { x <- if (flag) c(TRUE, FALSE) else c(TRUE, FALSE, TRUE); if (!x) 1L }",
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == "RY002").count(),
+        1,
+        "{diagnostics:?}"
+    );
+
+    // c() sums lower bounds; rep() scales them.
+    for source in [
+        "f <- function(x) { if (length(x) > 1L) { y <- c(x, TRUE); if (y) 1L } }",
+        "f <- function(x) { if (length(x) > 1L) { y <- rep(x, 2); if (y) 1L } }",
+    ] {
+        let diagnostics = check(source);
+        assert_eq!(
+            diagnostics.iter().filter(|d| d.code == "RY001").count(),
+            1,
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

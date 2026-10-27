@@ -59,12 +59,7 @@ impl Checker {
                     // Constructors may retain Known(1), so compare numeric
                     // lengths rather than treating every Known value as plural.
                     // A nonempty-but-unknown length has no exact count.
-                    let exact_length = |length| match length {
-                        Length::Zero => Some(0),
-                        Length::One => Some(1),
-                        Length::Known(n) => Some(n),
-                        Length::Unknown | Length::Nonempty => None,
-                    };
+                    let exact_length = |length: Length| length.exact();
                     let result_class = match (exact_length(lt.length), exact_length(rt.length)) {
                         (Some(0), _) | (_, Some(0)) => ClassVector::empty(),
                         (Some(a), Some(b)) if b > a => rt.class.clone(),
@@ -1156,7 +1151,7 @@ impl Checker {
     /// dispatch facts (a `length.<class>` method can report a length that
     /// is not the storage length) and invalidation after effects (the
     /// operand must not be reassigned before its guarded use).
-    fn equality_length_guard_proves_scalar(
+    pub(super) fn equality_length_guard_proves_scalar(
         &self,
         parameter: &str,
         guarded_operand: &Expr,

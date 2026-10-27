@@ -548,3 +548,23 @@ expression: rows
       severity: error
 - case: "RY128: entries mode and vector diagonals stay silent"
   diagnostics: []
+- case: "RY002: a length lower bound from a guard reaches the condition"
+  diagnostics:
+    - code: RY002
+      line: 715
+      message: "`if` condition has length at least 2; R requires a length-1 condition"
+      severity: warning
+- case: "RY001: a guarded length lower bound reaches an if condition"
+  diagnostics:
+    - code: RY001
+      line: 719
+      message: "`if` condition is `opaque<len=2+>:?`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: "RY001: a guarded length lower bound reaches a switch selector"
+  diagnostics:
+    - code: RY001
+      line: 723
+      message: "`switch` EXPR is `opaque<len=2+>:?`, which is not a length-1 vector; R errors with \"EXPR must be a length 1 vector\""
+      severity: warning
+- case: "RY001: weaker or rebound length guards stay silent"
+  diagnostics: []

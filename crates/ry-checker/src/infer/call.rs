@@ -2101,7 +2101,7 @@ impl Checker {
         if let Some(times_type) = self.peek_type(times, scope)
             && matches!(
                 times_type.length,
-                Length::Zero | Length::Known(_) | Length::Nonempty
+                Length::Zero | Length::Known(_) | Length::Nonempty | Length::AtLeast(_)
             )
         {
             return None;
@@ -2355,7 +2355,9 @@ impl Checker {
                         Length::Zero => {}
                         Length::One => length += 1,
                         Length::Known(n) => length += n,
-                        Length::Unknown | Length::Nonempty => exact_length = false,
+                        Length::Unknown | Length::Nonempty | Length::AtLeast(_) => {
+                            exact_length = false
+                        }
                     }
                 }
                 let mode = mode?;

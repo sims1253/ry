@@ -47,6 +47,9 @@ pub(crate) enum Narrowing {
     /// `!missing(x)`: the caller supplied `x` in the then branch, so a
     /// defaulted parameter's omitted-call type does not describe it.
     Supplied { var: String },
+    /// A passing length comparison (`length(x) > 1L`) proves `var`
+    /// holds at least `min` elements on the selected path (issue #649).
+    LengthAtLeast { var: String, min: usize },
     /// R never enters this branch with `var`'s recorded type, so code there
     /// sees an unknown value (base `is.numeric()` on a Date).
     Unreached { var: String },
@@ -83,7 +86,33 @@ impl Narrowing {
             | Narrowing::ScalarElse { var, .. }
             | Narrowing::ScalarThen { var }
             | Narrowing::Supplied { var }
+            | Narrowing::LengthAtLeast { var, .. }
             | Narrowing::Unreached { var } => about(var),
+        }
+    }
+
+    /// This narrowing without the length lower bounds whose subject
+    /// `untrusted` rejects.
+    fn without_length_bounds(self, untrusted: &dyn Fn(&str) -> bool) -> Narrowing {
+        let keep = |facts: Vec<Narrowing>| -> Vec<Narrowing> {
+            facts
+                .into_iter()
+                .map(|fact| fact.without_length_bounds(untrusted))
+                .filter(|fact| !matches!(fact, Narrowing::None))
+                .collect()
+        };
+        match self {
+            Narrowing::Compound {
+                base,
+                on_true,
+                on_false,
+            } => Narrowing::Compound {
+                base: Box::new(base.without_length_bounds(untrusted)),
+                on_true: keep(on_true),
+                on_false: keep(on_false),
+            },
+            Narrowing::LengthAtLeast { ref var, .. } if untrusted(var) => Narrowing::None,
+            fact => fact,
         }
     }
 
@@ -148,6 +177,19 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
     if let Some(var) = non_empty_length_guard_var(cond) {
         return non_null_then(var);
     }
+    if let Some(fact) = length_lower_bound_fact(cond, true) {
+        return fact;
+    }
+    if let Some(fact) = length_lower_bound_fact(cond, false) {
+        // The bound holds where the comparison fails: the else
+        // branch, and the continuation after a diverging then branch
+        // (`if (length(x) <= 1L) stop(...)`).
+        return Narrowing::Compound {
+            base: Box::new(Narrowing::None),
+            on_true: Vec::new(),
+            on_false: vec![fact],
+        };
+    }
     match cond {
         Expr::Call { func, args, .. } => {
             let Expr::Ident { name, .. } = func.as_ref() else {
@@ -179,6 +221,17 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             expr,
             ..
         } => {
+            if let Some(fact) = length_lower_bound_fact(expr, false) {
+                return fact;
+            }
+            // `!(length(x) > 1L)` is false where the comparison holds.
+            if let Some(fact) = length_lower_bound_fact(expr, true) {
+                return Narrowing::Compound {
+                    base: Box::new(Narrowing::None),
+                    on_true: Vec::new(),
+                    on_false: vec![fact],
+                };
+            }
             if let Some(var) = length_guard_var(expr) {
                 return Narrowing::NonNullElse { var };
             }
@@ -253,7 +306,7 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             // false conjunction proves none.
             let on_true: Vec<Narrowing> = [lhs.as_ref(), rhs.as_ref()]
                 .into_iter()
-                .flat_map(|operand| non_null_then_facts(extract_builtin_type_narrowing(operand)))
+                .flat_map(|operand| conjunct_then_facts(extract_builtin_type_narrowing(operand)))
                 .collect();
             if on_true.is_empty() {
                 return Narrowing::None;
@@ -339,6 +392,27 @@ fn non_null_then(var: String) -> Narrowing {
     }
 }
 
+/// The facts a true conjunct contributes to a conjunction: the
+/// non-NULL facts below, or a proven length lower bound.
+fn conjunct_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
+    let is_bound = |fact: &Narrowing| matches!(fact, Narrowing::LengthAtLeast { .. });
+    match conjunct {
+        fact if is_bound(&fact) => vec![fact],
+        // A nested conjunction (`a && length(x) > 1L && b`) keeps its
+        // bounds alongside its non-NULL facts.
+        Narrowing::Compound { base, on_true, .. }
+            if matches!(*base, Narrowing::None)
+                && !on_true.is_empty()
+                && on_true
+                    .iter()
+                    .all(|fact| is_bound(fact) || is_non_null_fact(fact)) =>
+        {
+            on_true
+        }
+        conjunct => non_null_then_facts(conjunct),
+    }
+}
+
 /// The non-NULL facts a true conjunct proves: `!is.null(x)`, or the
 /// facts of a nested conjunction or length guard.
 fn non_null_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
@@ -359,14 +433,25 @@ fn non_null_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
 /// `<<-`, `assign("name", v)`) or a `for` over it at any depth outside
 /// function bodies, including inside nested control flow.
 fn may_assign(expr: &Expr, name: &str) -> bool {
-    let binds = |target: &Expr| matches!(target, Expr::Ident { name: bound, .. } if bound == name);
+    // A replacement (`length(x) <- 1L`, `x[1] <- v`, `x$a <- v`) rebinds
+    // its root variable.
+    fn root(target: &Expr) -> Option<&str> {
+        match target {
+            Expr::Ident { name, .. } => Some(name),
+            Expr::Index { base, .. } => root(base),
+            Expr::Call { args, .. } => args.first().and_then(|arg| root(&arg.value)),
+            _ => None,
+        }
+    }
+    let binds = |target: &Expr| root(target) == Some(name);
     walk_expr(
         expr,
         Walk {
             fn_bodies: false,
             ..Walk::ALL
         },
-        |node, _| match node {
+        |node, _| {
+            match node {
             AstNode::Expr(Expr::BinOp {
                 op: BinOpKind::Assign | BinOpKind::SuperAssign,
                 lhs,
@@ -374,16 +459,24 @@ fn may_assign(expr: &Expr, name: &str) -> bool {
             }) if binds(lhs) => ControlFlow::Break(()),
             AstNode::Stmt(Stmt::Assign { target, .. }) if binds(target) => ControlFlow::Break(()),
             AstNode::Stmt(Stmt::For { name: bound, .. }) if bound == name => ControlFlow::Break(()),
+            // `assign()` under any prefix, with `x` bound as R binds it; a
+            // computed name may be this one.
             AstNode::Expr(Expr::Call { func, args, .. })
-                if ident_name(func) == Some("assign")
-                    && matches!(
-                        args.first().map(|arg| &arg.value),
-                        Some(Expr::String(bound, _)) if bound == name
-                    ) =>
+                if ident_name(func)
+                    .is_some_and(|callee| crate::semantic_lists::bare_name(callee) == "assign")
+                    && match_arguments(
+                        &["x", "value", "pos", "envir", "inherits", "immediate"],
+                        args,
+                    )
+                    .arg_for_param(0)
+                    .is_none_or(|index| {
+                        !matches!(&args[index].value, Expr::String(bound, _) if bound != name)
+                    }) =>
             {
                 ControlFlow::Break(())
             }
             _ => ControlFlow::Continue(Descend::Into),
+        }
         },
     )
     .is_break()
@@ -431,6 +524,43 @@ fn non_empty_length_guard_var(expr: &Expr) -> Option<String> {
         } if is_literal_eq(rhs, 0.0) => length_guard_var(lhs),
         _ => None,
     }
+}
+
+/// A whole-number literal as a count, for the length-comparison
+/// guard shapes (see [`super::whole_number_literal`]).
+fn literal_count(expr: &Expr) -> Option<usize> {
+    whole_number_literal(expr)
+}
+
+/// The length lower bound a comparison against `length(var)` proves
+/// on the path where it evaluates to `truth`: `length(x) > 1L` true,
+/// or `length(x) <= 1L` false, both prove at least two elements.
+/// Bounds below two are the existing non-NULL/nonempty guards' job.
+fn length_lower_bound_fact(expr: &Expr, truth: bool) -> Option<Narrowing> {
+    let Expr::BinOp { op, lhs, rhs, .. } = expr else {
+        return None;
+    };
+    // Normalize to `length(var) <op> k`, flipping a literal-left form.
+    let (var, op, k) = match (length_guard_var(lhs), length_guard_var(rhs)) {
+        (Some(var), _) => (var, *op, literal_count(rhs)?),
+        (None, Some(var)) => {
+            let flipped = match op {
+                BinOpKind::Lt => BinOpKind::Gt,
+                BinOpKind::Le => BinOpKind::Ge,
+                BinOpKind::Gt => BinOpKind::Lt,
+                BinOpKind::Ge => BinOpKind::Le,
+                _ => return None,
+            };
+            (var, flipped, literal_count(lhs)?)
+        }
+        (None, None) => return None,
+    };
+    let min = match (truth, op) {
+        (true, BinOpKind::Gt) | (false, BinOpKind::Le) => k.checked_add(1)?,
+        (true, BinOpKind::Ge) | (false, BinOpKind::Lt) => k,
+        _ => return None,
+    };
+    (min >= 2).then_some(Narrowing::LengthAtLeast { var, min })
 }
 
 /// The argument of a `missing(x)` call, bare or with any `pkg::` prefix
@@ -629,6 +759,31 @@ pub(crate) fn narrow_away_from_null(t: &RType) -> Option<RType> {
         }
         _ => None,
     }
+}
+
+/// Strengthen a type's length (and every union member's) with a
+/// proven lower bound; returns whether anything changed. Exact
+/// member lengths stay: a member the bound rules out is impossible
+/// on this path, not misdescribed. The member list is rebuilt only
+/// when some member actually strengthened.
+fn refine_length_at_least(ty: &mut RType, min: usize) -> bool {
+    let refined = ty.length.refine_at_least(min);
+    let mut changed = refined != ty.length;
+    ty.length = refined;
+    if let Some(members) = &ty.members {
+        let mut members_changed = false;
+        let mut refined_members: Vec<RType> = Vec::with_capacity(members.len());
+        for member in members.iter() {
+            let mut member = member.clone();
+            members_changed |= refine_length_at_least(&mut member, min);
+            refined_members.push(member);
+        }
+        if members_changed {
+            ty.members = Some(Arc::from(refined_members));
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Record that `var` is non-null, returning whether its type was narrowed.
@@ -913,6 +1068,14 @@ fn apply_single_narrowing_branch<'a>(
             scope.insert_narrowed(var.clone(), RType::unknown());
             return Some(var.as_str());
         }
+        (Narrowing::LengthAtLeast { var, min }, NarrowingBranch::Then) => {
+            if let Some(mut existing) = scope.get(var).cloned()
+                && refine_length_at_least(&mut existing, *min)
+            {
+                scope.insert_narrowed(var.clone(), existing);
+                return Some(var.as_str());
+            }
+        }
         (Narrowing::ScalarThen { var }, NarrowingBranch::Then) => {
             scope.clear_loop_vector(var);
         }
@@ -1154,6 +1317,18 @@ impl Checker {
         let mut rebound = HashSet::new();
         self.rebound_guard_subjects(cond, scope, &mut rebound);
         let narrowing = self.extract_unscreened_type_narrowing(cond, scope);
+        // A length bound needs the scalar guard's screens
+        // (docs/scalar-guards.md): base comparisons, a `length` that
+        // reports the storage length, and no rebinding of the subject
+        // within the condition.
+        let narrowing = narrowing.without_length_bounds(&|var| {
+            self.project_defines_comparison_method()
+                || ["<", "<=", ">", ">="]
+                    .iter()
+                    .any(|op| super::ops_chooser::operator_rebound(self, op, scope))
+                || !self.equality_length_guard_proves_scalar(var, cond, scope)
+                || may_assign(cond, var)
+        });
         if rebound.is_empty() {
             narrowing
         } else {

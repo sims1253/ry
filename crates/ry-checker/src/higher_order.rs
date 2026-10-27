@@ -198,7 +198,8 @@ impl Checker {
             .and_then(concrete_json_mode)
             && let Some(actual) = &callback_return
             && (!modes_compatible(&actual.mode, &target)
-                || matches!(actual.length, Length::Zero | Length::Known(0 | 2..)))
+                || matches!(actual.length, Length::Zero | Length::Known(0))
+                || actual.length.proven_above_one())
             // purrr widens a logical `NA` result to the target's `NA` (#352).
             && !(actual.mode == Mode::Logical && actual.is_scalar_na())
         {

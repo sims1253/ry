@@ -48,7 +48,7 @@ pub const RULES: &[Rule] = &[
         code: "RY002",
         name: "condition-length",
         default_severity: Severity::Warning,
-        summary: "`if` condition length is known to be greater than 1. R requires a single value and errors on longer conditions.",
+        summary: "`if` condition length is known to be greater than 1: an exact length, or a proven lower bound such as a passing `length(x) > 1L` guard or a join of longer vectors. R requires a single value and errors on longer conditions.",
     },
     Rule {
         code: "RY003",

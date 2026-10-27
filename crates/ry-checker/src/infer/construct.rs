@@ -719,28 +719,58 @@ impl Checker {
         RType::new(mode, length)
     }
 
-    /// Infer `rep(x, times, each)`: length is `length(x) * times * each`
-    /// with unsupplied counts defaulting to 1, keeping `x`'s mode, class,
-    /// and schema. `length.out` takes precedence in R but is not modeled.
-    /// `times`/`each` are read from the raw AST, not the inferred
-    /// `RType`, because the type lattice discards the runtime value (a
-    /// supplied non-literal means `Length::Unknown`). `x` is matched by
-    /// name or first unnamed position, because named `times`/`each` can
-    /// precede it in the call.
+    /// Infer `rep(x, times, length.out, each)`: length is
+    /// `length(x) * times * each` with unsupplied counts defaulting to 1,
+    /// keeping `x`'s mode, class, and schema. A literal `length.out` wins
+    /// over both counts, as in R. Arguments bind with R's exact, partial,
+    /// then positional matching (`rep(x, 2, 3)` is `length.out = 3`,
+    /// `rep(x, len = 3)` too). Counts are read from the raw AST, not the
+    /// inferred `RType`, because the type lattice discards the runtime
+    /// value (a supplied non-literal means `Length::Unknown`).
     pub(crate) fn infer_rep(&self, args: &[Arg], arg_types: &[RType]) -> RType {
-        let x_type = find_arg(args, "x", 0)
+        let matched = match_arguments(&["x", "times", "length.out", "each"], args);
+        let x_type = matched
+            .arg_for_param(0)
             .and_then(|i| arg_types.get(i).cloned())
             .unwrap_or(RType::unknown());
+        if !matched.is_one_to_one() {
+            return RType {
+                length: Length::Unknown,
+                ..x_type
+            };
+        }
+        let count_arg = |param| {
+            matched
+                .arg_for_param(param)
+                .map(|i| extract_literal_int(&args[i].value))
+        };
+        // R ignores `length.out = NA`; any other supplied `length.out`
+        // fixes the length on its own. A zero-length atomic `x` pads with
+        // `NA`, but `NULL` stays `NULL`, so only a proven non-NULL vector
+        // takes the requested length.
+        let length_out = matched
+            .arg_for_param(2)
+            .filter(|&i| !matches!(args[i].value, Expr::Na(..)));
+        if let Some(i) = length_out {
+            let length = match extract_literal_int(&args[i].value) {
+                Some(n) if n >= 0 && x_type.mode == Mode::Null => x_type.length,
+                Some(n) if n >= 0 && (x_type.mode.is_atomic() || x_type.mode == Mode::List) => {
+                    match n {
+                        0 => Length::Zero,
+                        1 => Length::One,
+                        n => Length::Known(n as usize),
+                    }
+                }
+                _ => Length::Unknown,
+            };
+            return RType { length, ..x_type };
+        }
         // Track `times` / `each` as `Option<Option<i64>>`:
         //   * outer None      -> not supplied (use default 1)
         //   * outer Some(None) -> supplied but non-literal (Unknown)
         //   * outer Some(Some(n)) -> supplied literal value n
-        let times = find_arg(args, "times", 1)
-            .and_then(|i| args.get(i))
-            .map(|a| extract_literal_int(&a.value));
-        let each = find_arg(args, "each", 2)
-            .and_then(|i| args.get(i))
-            .map(|a| extract_literal_int(&a.value));
+        let times = count_arg(1);
+        let each = count_arg(3);
         // Resolve `times` and `each` through the shared count resolver.
         // Unsupplied -> 1; a non-literal or negative literal -> the length is
         // unknown (R errors or recycles in ways we can't model, so we stay

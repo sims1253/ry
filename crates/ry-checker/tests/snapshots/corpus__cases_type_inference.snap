@@ -664,12 +664,8 @@ expression: rows
   diagnostics: []
 - case: a $<- method on a classed union may write to the caller
   diagnostics: []
-- case: $<- on a plain integer is an error
-  diagnostics:
-    - code: RY061
-      line: 1017
-      message: "$ operator is invalid for atomic vectors of mode `integer`"
-      severity: error
+- case: $<- on a plain integer coerces it to a list
+  diagnostics: []
 - case: $ on a data.frame is fine
   diagnostics: []
 - case: $ on an unknown value stays silent

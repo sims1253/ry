@@ -84,5 +84,6 @@ mod missing_args;
 mod mixed_sign_index;
 mod network_top_level;
 mod printf_provenance;
+mod replacement_writes;
 mod s4_dispatch;
 mod switch_selection;

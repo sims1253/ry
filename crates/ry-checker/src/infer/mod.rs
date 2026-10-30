@@ -3409,6 +3409,32 @@ impl Checker {
         true
     }
 
+    /// The result type of a classless replacement write. When a user
+    /// replacement is what actually runs, it may return anything, so the
+    /// answer is unknown rather than base R's coercion.
+    fn classless_subassignment(
+        &self,
+        base: &RType,
+        kind: IndexKind,
+        args: &[Arg],
+        value: &RType,
+        scope: &Scope,
+    ) -> RType {
+        let operator = match kind {
+            IndexKind::Single => "[<-",
+            IndexKind::Double => "[[<-",
+            IndexKind::Dollar => "$<-",
+            IndexKind::Slot => return RType::unknown(),
+        };
+        if self.resolves_to_base(operator, scope)
+            && !ops_chooser::operator_rebound(self, operator, scope)
+        {
+            crate::type_after_classless_subassignment(base, kind, args, value)
+        } else {
+            RType::unknown()
+        }
+    }
+
     pub(crate) fn assign_index_target(
         &mut self,
         base: &Expr,
@@ -3474,15 +3500,57 @@ impl Checker {
             scope.invalidate_unknown_effects();
             return true;
         }
-        if matches!(kind, IndexKind::Single) {
+        if matches!(kind, IndexKind::Single)
+            && !(base_t.mode.is_atomic() && base_t.class.is_classless()
+                || matches!(base_t.mode, Mode::Null))
+        {
             let names = args
                 .first()
                 .map(|arg| string_literals(&arg.value))
                 .unwrap_or_default();
             if !names.is_empty() {
                 let mut updated = base_t;
+                // R resolves a repeated unmatched subscript to its first
+                // occurrence for plain lists and vectors, but not for data
+                // frames or the empty name; those add one entry per
+                // occurrence.
+                let is_frame = updated.class.contains("data.frame");
+                // R dedups a repeated non-empty name to its first occurrence
+                // for plain lists and vectors, but not for data frames; the
+                // empty name is never matched, so it adds every time.
+                let base_snapshot = is_frame.then(|| updated.clone());
+                let mut added = 0;
+                let mut certain = true;
                 for name in names {
+                    if name.is_empty() {
+                        if is_frame {
+                            // `df[""] <- v` errors; no length is provable.
+                            certain = false;
+                        } else {
+                            added += 1;
+                        }
+                    } else {
+                        let source = base_snapshot.as_ref().unwrap_or(&updated);
+                        match crate::name_presence(source, &name) {
+                            crate::NamePresence::Absent => added += 1,
+                            crate::NamePresence::Unknown => certain = false,
+                            crate::NamePresence::Present => {}
+                        }
+                    }
                     updated = type_with_assigned_column(updated, &name, vt.clone());
+                }
+                if added > 0 || !certain {
+                    let floor = updated.length.min_possible().saturating_add(added);
+                    updated.length = if certain {
+                        match updated.length.exact() {
+                            Some(length) => crate::exact_length(length.saturating_add(added)),
+                            None => Length::lower_bound(floor),
+                        }
+                    } else {
+                        // An incomplete schema may already hold one of
+                        // these names, so only the minimum is provable.
+                        Length::lower_bound(floor)
+                    };
                 }
                 scope.insert(base_name.clone(), updated);
                 return true;
@@ -3511,6 +3579,13 @@ impl Checker {
                                 "is.na", func, "is.na", "is.na", "base", scope,
                             ), crate::resolve::SpecialCallProvenance::Proven)
                 );
+            // A plain write takes the subassignment model; only an
+            // `is.na(x)` repair needs the shape-preserving logic below.
+            if !only_missing && base_t.class.is_classless() {
+                let updated = self.classless_subassignment(&base_t, kind, args, &vt, scope);
+                scope.insert(base_name.clone(), updated);
+                return true;
+            }
             let mut updated = base_t;
             let numeric_replacement = matches!(vt.mode, Mode::Integer | Mode::Double)
                 && !vt.class.is_unknown()
@@ -3521,7 +3596,10 @@ impl Checker {
                     || (updated.value_facts.all_values_known
                         && !updated.value_facts.prior_na
                         && updated.value_facts.new_na == ry_core::types::NewNaProvenance::None));
-            if only_missing && numeric_replacement {
+            if only_missing {
+                // An `is.na(x)` repair keeps the shape but still coerces
+                // the mode (`x[is.na(x)] <- "none"` makes a character
+                // vector).
                 updated.mode = updated.mode.combine_result(vt.mode);
             }
             if only_missing
@@ -3565,6 +3643,30 @@ impl Checker {
             } else if !no_selection {
                 updated.value_facts = ry_core::types::ValueFacts::default();
             }
+            scope.insert(base_name.clone(), updated);
+            return true;
+        }
+        // A classless atomic (or `NULL`) receiver takes R's subassignment
+        // coercion: the mode joins upward, a named write extends the
+        // names, and the length follows the touched subscript (#839).
+        // `$<-` on an atomic vector converts it to a list with a warning;
+        // the `$` error RY061 reports is the read side, so no replacement
+        // raises it (#840).
+        if (base_t.mode.is_atomic() || matches!(base_t.mode, Mode::Null))
+            && base_t.class.is_classless()
+            && matches!(
+                kind,
+                IndexKind::Dollar | IndexKind::Single | IndexKind::Double
+            )
+        {
+            // `$` names its field, it does not evaluate an expression, so
+            // only the computed subscript kinds have arguments to infer.
+            if !matches!(kind, IndexKind::Dollar) {
+                for argument in args {
+                    self.infer(&argument.value, scope);
+                }
+            }
+            let updated = self.classless_subassignment(&base_t, kind, args, &vt, scope);
             scope.insert(base_name.clone(), updated);
             return true;
         }
@@ -3626,22 +3728,57 @@ impl Checker {
             }
             return false;
         };
-        if base_t.mode.is_atomic() && base_t.columns.is_none() {
-            self.emit(
-                Severity::Error,
-                span,
-                "RY061",
-                format!(
-                    "$ operator is invalid for atomic vectors of mode `{}`",
-                    base_t.mode
-                ),
-            );
-            return true;
+        // A named write on a list or data frame adds a field, or removes
+        // one when the value is NULL; either moves the length with it.
+        let presence = crate::name_presence(&base_t, col);
+        // An opaque value may be NULL too, which would delete the field
+        // instead of adding it.
+        let may_be_null = crate::may_delete_element(&vt);
+        let definitely_null = matches!(vt.mode, Mode::Null);
+        let mut updated = base_t;
+        if definitely_null {
+            if let Some(schema) = updated.columns.as_ref() {
+                let mut schema = (**schema).clone();
+                schema.columns.retain(|(name, _)| name != col);
+                updated = updated.with_columns(Arc::new(schema));
+            }
+            updated.length = match presence {
+                crate::NamePresence::Present => match updated.length.exact() {
+                    Some(length) => crate::exact_length(length.saturating_sub(1)),
+                    None => Length::lower_bound(updated.length.min_possible().saturating_sub(1)),
+                },
+                crate::NamePresence::Absent => updated.length,
+                // The name may exist, so the removal may or may not happen.
+                crate::NamePresence::Unknown => {
+                    Length::lower_bound(updated.length.min_possible().saturating_sub(1))
+                }
+            };
+        } else {
+            updated = type_with_assigned_column(updated, col, vt);
+            let absent = matches!(presence, crate::NamePresence::Absent);
+            let floor = updated.length.min_possible();
+            updated.length = if may_be_null {
+                // A NULL branch would remove the field instead; an absent
+                // name makes that a no-op.
+                let floor = if absent {
+                    floor
+                } else {
+                    floor.saturating_sub(1)
+                };
+                Length::lower_bound(floor)
+            } else {
+                match presence {
+                    crate::NamePresence::Absent => match updated.length.exact() {
+                        Some(length) => crate::exact_length(length.saturating_add(1)),
+                        None => Length::lower_bound(floor.saturating_add(1)),
+                    },
+                    crate::NamePresence::Present => updated.length,
+                    // The name may exist, so the length may stay or grow.
+                    crate::NamePresence::Unknown => Length::lower_bound(floor),
+                }
+            };
         }
-        scope.insert(
-            base_name.clone(),
-            type_with_assigned_column(base_t, col, vt),
-        );
+        scope.insert(base_name.clone(), updated);
         true
     }
 

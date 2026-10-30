@@ -183,6 +183,299 @@ fn assigned_column_name(kind: IndexKind, args: &[Arg]) -> Option<&str> {
     }
 }
 
+/// Where a subassignment write lands relative to the existing elements.
+enum Extent {
+    /// Inside the existing elements: the length does not change.
+    Within,
+    /// Reaches at least this 1-based position.
+    Reaches(usize),
+    /// Adds one name the schema does not already hold.
+    NewName,
+    /// The name may already be present, so the length may or may not grow
+    /// by one.
+    MaybeNewName,
+    /// `$<- NULL` removes the name, which may shrink the value.
+    DeleteName,
+    /// The subscript shape proves nothing about the length.
+    Unknown,
+}
+
+/// Whether a write's name can be shown to exist already.
+#[derive(Clone, Copy)]
+pub(crate) enum NamePresence {
+    Present,
+    Absent,
+    Unknown,
+}
+
+/// Classify a name against a value's schema. An empty value and a complete
+/// schema prove absence; anything else may already hold the name.
+pub(crate) fn name_presence(base: &RType, name: &str) -> NamePresence {
+    if base
+        .columns
+        .as_ref()
+        .is_some_and(|schema| schema.get(name).is_some())
+    {
+        NamePresence::Present
+    } else if base.length.exact() == Some(0)
+        || base.columns.as_ref().is_some_and(|schema| schema.complete)
+    {
+        NamePresence::Absent
+    } else {
+        NamePresence::Unknown
+    }
+}
+
+/// Whether a replacement value may be NULL, which deletes the element
+/// instead of storing it.
+pub(crate) fn may_delete_element(value: &RType) -> bool {
+    matches!(value.mode, Mode::Null)
+        || value.mode.is_unknown()
+        || value.members.as_ref().is_some_and(|members| {
+            members
+                .iter()
+                .any(|member| member.mode.is_unknown() || matches!(member.mode, Mode::Null))
+        })
+}
+
+/// The canonical [`Length`] for an exact element count.
+pub(crate) fn exact_length(length: usize) -> Length {
+    match length {
+        0 => Length::Zero,
+        1 => Length::One,
+        length => Length::Known(length),
+    }
+}
+
+/// The result type of one classless subassignment write (`x[i] <- v`,
+/// `x[[i]] <- v`, or `x$a <- v`) under base replacement semantics.
+///
+/// R joins the storage mode upward to hold the replacement, a named write
+/// extends `names`, and a positive subscript extends the vector to reach
+/// it. Shapes that prove nothing about the touched positions keep a
+/// widened length, so exported facts stay sound (#839). `$<-` on an
+/// atomic vector coerces it to a list with a warning; RY061's `$` error
+/// belongs to the read side, so a write never raises it (#840).
+fn type_after_classless_subassignment(
+    base: &RType,
+    kind: IndexKind,
+    args: &[Arg],
+    value: &RType,
+) -> RType {
+    let literal = |expr: &Expr| match expr {
+        Expr::Integer(n, _) => Some(*n),
+        Expr::Double(n, _) if n.is_finite() && n.fract() == 0.0 => Some(*n as i64),
+        // A negative subscript never extends the vector; R spells it as a
+        // unary minus over a literal, not as a negative literal.
+        Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr,
+            ..
+        } => match expr.as_ref() {
+            Expr::Integer(n, _) => n.checked_neg(),
+            Expr::Double(n, _) if n.is_finite() && n.fract() == 0.0 => (*n as i64).checked_neg(),
+            _ => None,
+        },
+        _ => None,
+    };
+    let name: Option<String> = match kind {
+        IndexKind::Dollar => args
+            .first()
+            .and_then(|arg| arg.name.as_deref())
+            .map(str::to_owned),
+        IndexKind::Single | IndexKind::Double => {
+            // `x[c("a")] <- v` names one element, like `x["a"] <- v`.
+            // A multi-element character subscript may add several names,
+            // which the single-name length rule cannot count.
+            let names = args
+                .first()
+                .map(|arg| string_literals(&arg.value))
+                .unwrap_or_default();
+            match names.as_slice() {
+                [name] => Some(name.clone()),
+                _ => None,
+            }
+        }
+        IndexKind::Slot => return RType::unknown(),
+    };
+    let presence = name.as_deref().map(|name| name_presence(base, name));
+    // `x$a <- NULL` drops the element instead of storing it; a value that
+    // may be NULL either drops or replaces it.
+    let definitely_null = matches!(value.mode, Mode::Null);
+    // An unknown value may be NULL too, as the list path in
+    // `assign_index_target` already assumes.
+    let may_delete = may_delete_element(value);
+    if definitely_null
+        && matches!(kind, IndexKind::Single | IndexKind::Double)
+        && !matches!(base.mode, Mode::Null)
+    {
+        // `x[i] <- NULL` on an atomic vector is an error, not a shape.
+        return RType::unknown();
+    }
+    let extent = if let Some(presence) = presence {
+        match (kind, presence, may_delete) {
+            // `$<- NULL` removes the name after coercing the LHS to a list.
+            (IndexKind::Dollar, _, true) => Extent::DeleteName,
+            // A non-list atomic element cannot hold NULL; the write errors
+            // instead, so widen rather than keep a stale shape.
+            (_, _, true) => Extent::Unknown,
+            (_, NamePresence::Present, false) => Extent::Within,
+            (_, NamePresence::Absent, false) => Extent::NewName,
+            (_, NamePresence::Unknown, false) => Extent::MaybeNewName,
+        }
+    } else if may_delete {
+        Extent::Unknown
+    } else {
+        match kind {
+            IndexKind::Single => match args {
+                [arg] if arg.name.is_none() => position_extent(literal(&arg.value)),
+                _ => Extent::Unknown,
+            },
+            // `x[[i, j]] <- v` uses recursive-list semantics the
+            // single-literal view cannot prove.
+            // A named subscript selects an array dimension rather than a
+            // position, which the single-literal view cannot prove.
+            IndexKind::Double => match args {
+                [arg] if arg.name.is_none() => position_extent(literal(&arg.value)),
+                _ => Extent::Unknown,
+            },
+            IndexKind::Dollar | IndexKind::Slot => Extent::Unknown,
+        }
+    };
+
+    let mut result = base.clone();
+    result.value_facts = ry_core::types::ValueFacts::default();
+    result.mode = match kind {
+        // `$<- NULL` on a NULL or atomic base stays NULL; `$<-` with a
+        // value coerces an atomic LHS to a list with a warning.
+        IndexKind::Dollar | IndexKind::Double
+            if matches!(base.mode, Mode::Null) && definitely_null =>
+        {
+            Mode::Null
+        }
+        // A value that may be NULL leaves either NULL or a list.
+        IndexKind::Dollar | IndexKind::Double if matches!(base.mode, Mode::Null) && may_delete => {
+            Mode::Opaque
+        }
+        // Any other write into a NULL base builds a list.
+        IndexKind::Dollar | IndexKind::Double if matches!(base.mode, Mode::Null) => Mode::List,
+        // A whole vector in one `[[<-` element also turns an atomic
+        // vector into a list.
+        IndexKind::Double => match value.mode {
+            Mode::List | Mode::Function | Mode::Environment | Mode::Language => Mode::List,
+            other => base.mode.combine_result(other),
+        },
+        IndexKind::Single => base.mode.combine_result(value.mode),
+        // `x$a <- v` coerces an atomic LHS to a list with a warning. The
+        // warning is a runtime event, so no static diagnostic is emitted.
+        IndexKind::Dollar => Mode::List,
+        IndexKind::Slot => return RType::unknown(),
+    };
+    let old = base.length;
+    if result.mode == Mode::Null && definitely_null {
+        // `NULL[...] <- NULL` keeps NULL regardless of the subscript.
+        result.length = Length::Zero;
+        return result;
+    }
+    result.length = match extent {
+        Extent::Within => old,
+        Extent::Unknown => Length::Unknown,
+        Extent::MaybeNewName => Length::lower_bound(old.min_possible()),
+        Extent::DeleteName => {
+            // Only a definitely NULL value shrinks the length by one. A
+            // value that may be NULL either deletes the element or replaces
+            // it, and a replacement of an absent name extends the vector.
+            if definitely_null {
+                match presence {
+                    Some(NamePresence::Present) => match old.exact() {
+                        Some(length) => exact_length(length.saturating_sub(1)),
+                        None => Length::lower_bound(old.min_possible().saturating_sub(1)),
+                    },
+                    Some(NamePresence::Absent) => old,
+                    _ => Length::lower_bound(old.min_possible().saturating_sub(1)),
+                }
+            } else {
+                let floor = match presence {
+                    Some(NamePresence::Absent) => old.min_possible(),
+                    _ => old.min_possible().saturating_sub(1),
+                };
+                Length::lower_bound(floor)
+            }
+        }
+        Extent::Reaches(position) => match old.exact() {
+            Some(length) => exact_length(length.max(position)),
+            None => Length::lower_bound(old.min_possible().max(position)),
+        },
+        Extent::NewName => match old.exact() {
+            Some(length) => exact_length(length.saturating_add(1)),
+            None => Length::lower_bound(old.min_possible().saturating_add(1)),
+        },
+    };
+    match (kind, name, may_delete) {
+        // Only `$<- NULL` removes a name. `x[["a"]] <- NULL` on an atomic
+        // vector errors instead, so its maybe-NULL value is an ordinary
+        // named write on the branch that runs.
+        (IndexKind::Dollar, Some(name), true) => {
+            // If the value may also be a replacement, the record may still
+            // hold the name, so its schema is no longer complete.
+            if let Some(schema) = result.columns.as_ref() {
+                let mut schema = (**schema).clone();
+                schema.columns.retain(|(column, _)| column != &name);
+                if !matches!(value.mode, Mode::Null) {
+                    schema.complete = false;
+                }
+                result = result.with_columns(Arc::new(schema));
+            }
+            result
+        }
+        (_, Some(name), _) => {
+            // Coercing an atomic receiver changes every element's mode, so
+            // the recorded types of untouched names are stale.
+            if !matches!(result.mode, Mode::List | Mode::Null) && result.mode != base.mode {
+                if let Some(schema) = result.columns.as_ref() {
+                    let mut schema = (**schema).clone();
+                    for (_, column) in &mut schema.columns {
+                        *column = RType::scalar(result.mode);
+                    }
+                    result = result.with_columns(Arc::new(schema));
+                }
+            }
+            let mut updated = type_with_assigned_column(result, &name, value.clone());
+            if may_delete && let Some(schema) = updated.columns.as_ref() {
+                let mut schema = (**schema).clone();
+                schema.complete = false;
+                updated = updated.with_columns(Arc::new(schema));
+            }
+            updated
+        }
+        // A positional write keeps the names it does not replace, so a
+        // known name still proves presence. When the write also changed
+        // the mode, the recorded element types are stale: drop the schema
+        // rather than export them.
+        (_, None, _) => {
+            if result.mode != base.mode {
+                result.columns = None;
+            }
+            result
+        }
+    }
+}
+
+/// Where a subscript literal lands, capping the claim at R's integer
+/// subscript range: a larger literal makes the write an error, not a
+/// vector of that length.
+fn position_extent(position: Option<i64>) -> Extent {
+    match position {
+        Some(position) if position > 0 && position <= i64::from(i32::MAX) => {
+            Extent::Reaches(position as usize)
+        }
+        Some(position) if position > 0 => Extent::Unknown,
+        // Zero and negative subscripts never extend the vector.
+        Some(_) => Extent::Within,
+        None => Extent::Unknown,
+    }
+}
+
 fn type_with_assigned_column(mut base: RType, name: &str, value: RType) -> RType {
     let mut schema = base
         .columns

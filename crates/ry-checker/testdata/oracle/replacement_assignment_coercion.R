@@ -44,3 +44,9 @@ stopifnot(identical(r, c("1", "none")))
 # A definite NULL written into a NULL base stays NULL.
 n <- NULL; n[[1]] <- NULL
 stopifnot(is.null(n))
+# A definite NULL written into a fresh NULL base stays NULL, including the
+# `$<-` spelling R 4.5.0; only an already-list LHS becomes an empty list.
+n2 <- NULL; n2$a <- NULL
+stopifnot(is.null(n2))
+n3 <- NULL; n3[1] <- NULL
+stopifnot(is.null(n3))

@@ -3409,6 +3409,32 @@ impl Checker {
         true
     }
 
+    /// The result type of a classless replacement write. When a user
+    /// replacement is what actually runs, it may return anything, so the
+    /// answer is unknown rather than base R's coercion.
+    fn classless_subassignment(
+        &self,
+        base: &RType,
+        kind: IndexKind,
+        args: &[Arg],
+        value: &RType,
+        scope: &Scope,
+    ) -> RType {
+        let operator = match kind {
+            IndexKind::Single => "[<-",
+            IndexKind::Double => "[[<-",
+            IndexKind::Dollar => "$<-",
+            IndexKind::Slot => return RType::unknown(),
+        };
+        if self.resolves_to_base(operator, scope)
+            && !ops_chooser::operator_rebound(self, operator, scope)
+        {
+            crate::type_after_classless_subassignment(base, kind, args, value)
+        } else {
+            RType::unknown()
+        }
+    }
+
     pub(crate) fn assign_index_target(
         &mut self,
         base: &Expr,
@@ -3573,19 +3599,7 @@ impl Checker {
             // An `is.na(x)` repair keeps the vector's shape; any other
             // subscript may extend it or coerce its mode (#839).
             if !only_missing && base_t.class.is_classless() {
-                let operator = if matches!(kind, IndexKind::Double) {
-                    "[[<-"
-                } else {
-                    "[<-"
-                };
-                updated = if self.resolves_to_base(operator, scope)
-                    && !ops_chooser::operator_rebound(self, operator, scope)
-                {
-                    crate::type_after_classless_subassignment(&base_t, kind, args, &vt)
-                } else {
-                    // A user replacement may return anything.
-                    RType::unknown()
-                };
+                updated = self.classless_subassignment(&base_t, kind, args, &vt, scope);
             }
             scope.insert(base_name.clone(), updated);
             return true;
@@ -3610,19 +3624,7 @@ impl Checker {
                     self.infer(&argument.value, scope);
                 }
             }
-            let operator = match kind {
-                IndexKind::Dollar => "$<-",
-                IndexKind::Double => "[[<-",
-                _ => "[<-",
-            };
-            let updated = if self.resolves_to_base(operator, scope)
-                && !ops_chooser::operator_rebound(self, operator, scope)
-            {
-                crate::type_after_classless_subassignment(&base_t, kind, args, &vt)
-            } else {
-                // A user replacement may return anything.
-                RType::unknown()
-            };
+            let updated = self.classless_subassignment(&base_t, kind, args, &vt, scope);
             scope.insert(base_name.clone(), updated);
             return true;
         }

@@ -3520,10 +3520,10 @@ impl Checker {
                     updated = type_with_assigned_column(updated, &name, vt.clone());
                 }
                 if added > 0 || !certain {
-                    let floor = updated.length.min_possible() + added;
+                    let floor = updated.length.min_possible().saturating_add(added);
                     updated.length = if certain {
                         match updated.length.exact() {
-                            Some(length) => crate::exact_length(length + added),
+                            Some(length) => crate::exact_length(length.saturating_add(added)),
                             None => Length::lower_bound(floor),
                         }
                     } else {
@@ -3746,8 +3746,8 @@ impl Checker {
                 Length::lower_bound(floor)
             } else if absent {
                 match updated.length.exact() {
-                    Some(length) => crate::exact_length(length + 1),
-                    None => Length::lower_bound(floor + 1),
+                    Some(length) => crate::exact_length(length.saturating_add(1)),
+                    None => Length::lower_bound(floor.saturating_add(1)),
                 }
             } else {
                 updated.length

@@ -370,11 +370,6 @@ fn type_after_classless_subassignment(
         result.length = Length::Zero;
         return result;
     }
-    let exact = |length: usize| match length {
-        0 => Length::Zero,
-        1 => Length::One,
-        length => Length::Known(length),
-    };
     result.length = match extent {
         Extent::Within => old,
         Extent::Unknown => Length::Unknown,
@@ -386,7 +381,7 @@ fn type_after_classless_subassignment(
             if definitely_null {
                 match presence {
                     Some(NamePresence::Present) => match old.exact() {
-                        Some(length) => exact(length.saturating_sub(1)),
+                        Some(length) => exact_length(length.saturating_sub(1)),
                         None => Length::lower_bound(old.min_possible().saturating_sub(1)),
                     },
                     Some(NamePresence::Absent) => old,
@@ -401,12 +396,12 @@ fn type_after_classless_subassignment(
             }
         }
         Extent::Reaches(position) => match old.exact() {
-            Some(length) => exact(length.max(position)),
+            Some(length) => exact_length(length.max(position)),
             None => Length::lower_bound(old.min_possible().max(position)),
         },
         Extent::NewName => match old.exact() {
-            Some(length) => exact(length + 1),
-            None => Length::lower_bound(old.min_possible() + 1),
+            Some(length) => exact_length(length.saturating_add(1)),
+            None => Length::lower_bound(old.min_possible().saturating_add(1)),
         },
     };
     match (kind, name, may_delete) {

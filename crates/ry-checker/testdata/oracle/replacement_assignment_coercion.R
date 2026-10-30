@@ -56,3 +56,15 @@ ext <- 1:3; ext[[5]] <- 1L
 stopifnot(identical(ext, c(1L, 2L, 3L, NA, 1L)))
 lst <- list(1); lst[[5]] <- 2
 stopifnot(length(lst) == 5L, is.null(lst[[4]]))
+
+# Repeated and empty name subscripts: non-empty names dedup to their first
+# occurrence on lists, the empty name adds every time, and data frames give
+# each occurrence a column.
+l1 <- list(a = 1L); l1[c("b", "b")] <- 2L
+stopifnot(length(l1) == 2L)
+l2 <- list(a = 1L); l2[c("", "")] <- 1:2
+stopifnot(length(l2) == 3L)
+l3 <- list(a = 1L); l3[c("b", "", "b")] <- 1:3
+stopifnot(length(l3) == 3L)
+df1 <- data.frame(a = 1L); df1[c("b", "b")] <- 7
+stopifnot(ncol(df1) == 3L)

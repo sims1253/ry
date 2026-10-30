@@ -351,6 +351,17 @@ fn duplicated_and_empty_names_follow_r_lengths() {
 
     let (_, scope) = check_with_scope("df <- data.frame(a = 1L); df[c(\"b\", \"b\")] <- 7");
     assert_eq!(scope.get("df").unwrap().length, Length::Known(3));
+
+    // The rule is per name: non-empty names still dedup next to an empty
+    // one, and the empty name adds once per occurrence.
+    for subscripts in [r#"c("b", "b", "")"#, r#"c("b", "", "b")"#] {
+        let (_, scope) = check_with_scope(&format!("l <- list(a = 1L); l[{subscripts}] <- 1:3"));
+        assert_eq!(
+            scope.get("l").unwrap().length,
+            Length::Known(3),
+            "{subscripts}"
+        );
+    }
 }
 
 /// An opaque value may be NULL, which would delete the field instead of

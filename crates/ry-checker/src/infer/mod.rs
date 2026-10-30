@@ -3514,18 +3514,27 @@ impl Checker {
                 // frames or the empty name; those add one entry per
                 // occurrence.
                 let is_frame = updated.class.contains("data.frame");
-                // Duplicate names are deduped for plain lists and vectors;
-                // the evolving schema below does that naturally.
-                let dedup = !is_frame && names.iter().all(|name| !name.is_empty());
-                let base_snapshot = (!dedup).then(|| updated.clone());
+                // R dedups a repeated non-empty name to its first occurrence
+                // for plain lists and vectors, but not for data frames; the
+                // empty name is never matched, so it adds every time.
+                let base_snapshot = is_frame.then(|| updated.clone());
                 let mut added = 0;
                 let mut certain = true;
                 for name in names {
-                    let source = base_snapshot.as_ref().unwrap_or(&updated);
-                    match crate::name_presence(source, &name) {
-                        crate::NamePresence::Absent => added += 1,
-                        crate::NamePresence::Unknown => certain = false,
-                        crate::NamePresence::Present => {}
+                    if name.is_empty() {
+                        if is_frame {
+                            // `df[""] <- v` errors; no length is provable.
+                            certain = false;
+                        } else {
+                            added += 1;
+                        }
+                    } else {
+                        let source = base_snapshot.as_ref().unwrap_or(&updated);
+                        match crate::name_presence(source, &name) {
+                            crate::NamePresence::Absent => added += 1,
+                            crate::NamePresence::Unknown => certain = false,
+                            crate::NamePresence::Present => {}
+                        }
                     }
                     updated = type_with_assigned_column(updated, &name, vt.clone());
                 }

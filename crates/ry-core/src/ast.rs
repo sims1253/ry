@@ -347,12 +347,14 @@ fn has_long_left_spine(e: &Expr) -> bool {
                 };
             }
             // A user-defined infix operator (`a %foo% b`) lowers to a call
-            // and nests its chain in the first argument, so it is just as
-            // unbounded as a `BinOp` lhs.
-            Expr::Call { args, .. } => match args.first() {
-                Some(argument) => current = &argument.value,
-                None => return false,
-            },
+            // and nests its chain in the first argument; an ordinary call
+            // is syntax-bounded.
+            Expr::Call { func, args, .. } if matches!(**func, Expr::Ident { ref name, .. } if name.starts_with('%')) => {
+                match args.first() {
+                    Some(argument) => current = &argument.value,
+                    None => return false,
+                }
+            }
             _ => return false,
         }
     }

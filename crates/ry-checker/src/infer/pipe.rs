@@ -48,6 +48,11 @@ fn is_placeholder_chain(e: &Expr, form: PipeForm) -> bool {
 /// so the type cache still answers for the injected argument. An
 /// extraction around a chain (`(a %>% f)$col`) still clones once, which
 /// is a single linear copy rather than a per-stage one.
+///
+/// The placeholder is deliberately `Expr::Unknown`: shape-based analyses
+/// then treat the piped value as unknown code, which is accurate because
+/// that value is not part of the call's syntax. Its type still comes from
+/// `pipe_argument_types`.
 fn piped_argument(lhs: &Expr) -> Expr {
     if let Expr::BinOp { op, .. } = lhs
         && is_pipe_operator(*op)

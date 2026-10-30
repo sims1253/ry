@@ -575,6 +575,16 @@ impl RParser {
         // in the CST, and lowering must not recurse once per operator
         // (#842). The right-hand operands still lower recursively, so
         // real nesting keeps the syntax depth limit.
+        // Fast path: most binary nodes are not part of a chain, and the
+        // iterative fold below needs a heap-allocated spine.
+        let root_op = n.child_by_field_name("operator")?;
+        let root_op_text = root_op.utf8_text(src.as_bytes()).ok()?;
+        let root_lhs = n.child_by_field_name("lhs")?;
+        if root_lhs.kind() != "binary_operator" {
+            let lhs = self.lower_expr(root_lhs, src)?;
+            let rhs = self.lower_expr(n.child_by_field_name("rhs")?, src)?;
+            return binary_expression(root_op_text, lhs, rhs, self.span(n), self.span(root_op));
+        }
         let mut spine = Vec::new();
         let mut current = n;
         loop {

@@ -586,6 +586,12 @@ impl RParser {
                 _ => break,
             }
         }
+        // Folding the peeled spine from the innermost node outwards is only
+        // equivalent to recursive lowering while the peeled operators are
+        // left-associative; a right-associative operator must keep the
+        // recursive path. Every operator `binary_expression` builds a
+        // `BinOp` for is left-associative (`^` and the assignment forms are
+        // folded by their own arms there).
         let mut expr = self.lower_expr(current.child_by_field_name("lhs")?, src)?;
         for (node, op, op_span) in spine.into_iter().rev() {
             let rhs = self.lower_expr(node.child_by_field_name("rhs")?, src)?;
@@ -1551,6 +1557,11 @@ mod tests {
                 ] {
                     let file = parser.parse("ordinary.R", &source).unwrap();
                     assert!(file.parse_errors.is_empty());
+                    // Cloning re-enters `stack::grow` per node, so a long
+                    // chain clones without overflowing either (#842).
+                    let copy = file.stmts.clone();
+                    assert_eq!(copy.len(), file.stmts.len());
+                    drop(copy);
                     drop(file);
                 }
                 for source in [

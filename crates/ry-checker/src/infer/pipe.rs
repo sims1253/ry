@@ -75,7 +75,7 @@ fn is_leading_dot_chain(checker: &mut Checker, e: &Expr) -> bool {
         }
         match current {
             Expr::Ident { name, .. } => break name == ".",
-            Expr::BinOp { op, lhs, .. } if is_pipe_operator(*op) => {
+            Expr::BinOp { op, lhs, .. } if is_magrittr_pipe_operator(*op) => {
                 pending.push(span_of(current));
                 current = lhs;
             }
@@ -93,6 +93,15 @@ fn is_pipe_operator(op: BinOpKind) -> bool {
     matches!(
         op,
         BinOpKind::PipeNative | BinOpKind::PipeForward | BinOpKind::PipeTee | BinOpKind::PipeAssign
+    )
+}
+
+/// Whether `op` is a magrittr operator, the only ones that bind `.` as a
+/// chain parameter. The native pipe leaves `.` an ordinary name.
+fn is_magrittr_pipe_operator(op: BinOpKind) -> bool {
+    matches!(
+        op,
+        BinOpKind::PipeForward | BinOpKind::PipeTee | BinOpKind::PipeAssign
     )
 }
 

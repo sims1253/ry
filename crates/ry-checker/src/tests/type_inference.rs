@@ -417,6 +417,14 @@ fn magrittr_leading_dot_pipe_builds_a_function() {
         native.iter().any(|d| d.code == "RY010"),
         "native `_` has no lambda form: {native:?}"
     );
+    // A native pipe inside a magrittr tee is still not a leading-dot
+    // chain: `.` on the left of `|>` stays an ordinary name.
+    let tee = check(". |> identity() %T>% print()\n");
+    assert!(
+        tee.iter()
+            .any(|d| d.code == "RY010" && d.message.contains("`.`")),
+        "native dot is an ordinary name: {tee:?}"
+    );
 }
 
 #[test]

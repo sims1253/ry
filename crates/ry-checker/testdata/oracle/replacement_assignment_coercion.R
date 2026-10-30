@@ -50,3 +50,9 @@ n2 <- NULL; n2$a <- NULL
 stopifnot(is.null(n2))
 n3 <- NULL; n3[1] <- NULL
 stopifnot(is.null(n3))
+# `[[<-` extends an existing vector too: out-of-range positions are
+# padded, for atomic and list receivers alike (R 4.5.0).
+ext <- 1:3; ext[[5]] <- 1L
+stopifnot(identical(ext, c(1L, 2L, 3L, NA, 1L)))
+lst <- list(1); lst[[5]] <- 2
+stopifnot(length(lst) == 5L, is.null(lst[[4]]))

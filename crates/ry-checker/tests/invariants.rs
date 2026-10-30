@@ -434,7 +434,7 @@ fn long_operator_and_pipe_chains_are_checked() {
         assert!(
             diagnostics.is_empty(),
             "{}: {diagnostics:?}",
-            &source[..source.len().min(40)]
+            source.chars().take(40).collect::<String>()
         );
     }
 }

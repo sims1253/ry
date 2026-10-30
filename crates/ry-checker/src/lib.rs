@@ -183,6 +183,23 @@ fn assigned_column_name(kind: IndexKind, args: &[Arg]) -> Option<&str> {
     }
 }
 
+/// Where a subassignment write lands relative to the existing elements.
+enum Extent {
+    /// Inside the existing elements: the length does not change.
+    Within,
+    /// Reaches at least this 1-based position.
+    Reaches(usize),
+    /// Adds one name the schema does not already hold.
+    NewName,
+    /// The name may already be present, so the length may or may not grow
+    /// by one.
+    MaybeNewName,
+    /// `$<- NULL` removes the name, which may shrink the value.
+    DeleteName,
+    /// The subscript shape proves nothing about the length.
+    Unknown,
+}
+
 /// The result type of one classless subassignment write (`x[i] <- v`,
 /// `x[[i]] <- v`, or `x$a <- v`) under base replacement semantics.
 ///
@@ -198,22 +215,6 @@ fn type_after_classless_subassignment(
     args: &[Arg],
     value: &RType,
 ) -> RType {
-    /// Where the write lands relative to the existing elements.
-    enum Extent {
-        /// Inside the existing elements: the length does not change.
-        Within,
-        /// Reaches at least this 1-based position.
-        Reaches(usize),
-        /// Adds one name the schema does not already hold.
-        NewName,
-        /// The name may already be present, so the length may or may not
-        /// grow by one.
-        MaybeNewName,
-        /// `$<- NULL` removes the name, which may shrink the value.
-        DeleteName,
-        /// The subscript shape proves nothing about the length.
-        Unknown,
-    }
     /// Whether a named write can prove the name already exists.
     #[derive(Clone, Copy)]
     enum Presence {
@@ -232,8 +233,8 @@ fn type_after_classless_subassignment(
             expr,
             ..
         } => match expr.as_ref() {
-            Expr::Integer(n, _) => Some(-*n),
-            Expr::Double(n, _) if n.is_finite() && n.fract() == 0.0 => Some(-(*n as i64)),
+            Expr::Integer(n, _) => n.checked_neg(),
+            Expr::Double(n, _) if n.is_finite() && n.fract() == 0.0 => (*n as i64).checked_neg(),
             _ => None,
         },
         _ => None,
@@ -289,21 +290,14 @@ fn type_after_classless_subassignment(
     } else {
         match kind {
             IndexKind::Single => match args {
-                [arg] if arg.name.is_none() => match literal(&arg.value) {
-                    Some(position) if position > 0 => Extent::Reaches(position as usize),
-                    // Zero and negative subscripts never extend the vector.
-                    Some(_) => Extent::Within,
-                    None => Extent::Unknown,
-                },
+                [arg] if arg.name.is_none() => position_extent(literal(&arg.value)),
                 _ => Extent::Unknown,
             },
-            IndexKind::Double => match args.first().map(|arg| &arg.value) {
-                Some(expr) => match literal(expr) {
-                    Some(position) if position > 0 => Extent::Reaches(position as usize),
-                    Some(_) => Extent::Within,
-                    None => Extent::Unknown,
-                },
-                None => Extent::Unknown,
+            // `x[[i, j]] <- v` uses recursive-list semantics the
+            // single-literal view cannot prove.
+            IndexKind::Double => match args {
+                [arg] => position_extent(literal(&arg.value)),
+                _ => Extent::Unknown,
             },
             IndexKind::Dollar | IndexKind::Slot => Extent::Unknown,
         }
@@ -365,11 +359,13 @@ fn type_after_classless_subassignment(
             None => Length::lower_bound(old.min_possible() + 1),
         },
     };
-    match (name, may_delete) {
-        (Some(name), true) => {
-            // `$<- NULL` removes the name. If the value may also be a
-            // replacement, the record may still hold it, so its schema is
-            // no longer complete.
+    match (kind, name, may_delete) {
+        // Only `$<- NULL` removes a name. `x[["a"]] <- NULL` on an atomic
+        // vector errors instead, so its maybe-NULL value is an ordinary
+        // named write on the branch that runs.
+        (IndexKind::Dollar, Some(name), true) => {
+            // If the value may also be a replacement, the record may still
+            // hold the name, so its schema is no longer complete.
             if let Some(schema) = result.columns.as_ref() {
                 let mut schema = (**schema).clone();
                 schema.columns.retain(|(column, _)| column != &name);
@@ -380,10 +376,40 @@ fn type_after_classless_subassignment(
             }
             result
         }
-        (Some(name), false) => type_with_assigned_column(result, &name, value.clone()),
-        // A positional write keeps the names it does not replace; new
-        // positions are unnamed, so a known name still proves presence.
-        (None, _) => result,
+        (_, Some(name), _) => {
+            let mut updated = type_with_assigned_column(result, &name, value.clone());
+            if may_delete && let Some(schema) = updated.columns.as_ref() {
+                let mut schema = (**schema).clone();
+                schema.complete = false;
+                updated = updated.with_columns(Arc::new(schema));
+            }
+            updated
+        }
+        // A positional write keeps the names it does not replace, so a
+        // known name still proves presence. When the write also changed
+        // the mode, the recorded element types are stale: drop the schema
+        // rather than export them.
+        (_, None, _) => {
+            if result.mode != base.mode {
+                result.columns = None;
+            }
+            result
+        }
+    }
+}
+
+/// Where a subscript literal lands, capping the claim at R's integer
+/// subscript range: a larger literal makes the write an error, not a
+/// vector of that length.
+fn position_extent(position: Option<i64>) -> Extent {
+    match position {
+        Some(position) if position > 0 && position <= i64::from(i32::MAX) => {
+            Extent::Reaches(position as usize)
+        }
+        Some(position) if position > 0 => Extent::Unknown,
+        // Zero and negative subscripts never extend the vector.
+        Some(_) => Extent::Within,
+        None => Extent::Unknown,
     }
 }
 

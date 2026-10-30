@@ -167,6 +167,33 @@ x$b <- v
     assert_eq!(x.length, Length::Nonempty, "{x:?}");
 }
 
+/// A recorded element type must not survive a positional write that
+/// changed the vector's mode: `x[[\"a\"]]` would otherwise report the
+/// pre-write type of that element.
+#[test]
+fn mode_changing_positional_write_forgets_stale_element_types() {
+    let (_, scope) = check_with_scope("x <- c(a = 1L); x[1] <- \"z\"; y <- x[[\"a\"]]");
+    let x = scope.get("x").unwrap();
+    assert_eq!(x.mode, Mode::Character, "{x:?}");
+    assert_eq!(scope.get("y").unwrap().mode, Mode::Character);
+}
+
+/// A subscript beyond R's integer range makes the write an error, not a
+/// vector that long; the length must not claim it.
+#[test]
+fn out_of_range_subscript_literal_widens() {
+    let (_, scope) = check_with_scope("x <- 1:3; x[99999999999999] <- 1L");
+    assert_eq!(scope.get("x").unwrap().length, Length::Unknown);
+}
+
+/// `x[[i, j]] <- v` is recursive-list semantics; the single-literal view
+/// cannot prove the touched position.
+#[test]
+fn multi_argument_double_subscript_widens() {
+    let (_, scope) = check_with_scope("x <- 1:3; x[[1, 2]] <- 1L");
+    assert_eq!(scope.get("x").unwrap().length, Length::Unknown);
+}
+
 #[test]
 fn rebound_replacement_widens_to_unknown() {
     let (_, scope) = check_with_scope("`[<-` <- function(x, i, value) NULL\nx <- 1:3\nx[2] <- 5L");

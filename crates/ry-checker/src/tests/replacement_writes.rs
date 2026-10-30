@@ -352,3 +352,11 @@ fn duplicated_and_empty_names_follow_r_lengths() {
     let (_, scope) = check_with_scope("df <- data.frame(a = 1L); df[c(\"b\", \"b\")] <- 7");
     assert_eq!(scope.get("df").unwrap().length, Length::Known(3));
 }
+
+/// An opaque value may be NULL, which would delete the field instead of
+/// adding it; the length must widen.
+#[test]
+fn opaque_named_write_on_a_list_widens_the_length() {
+    let (_, scope) = check_with_scope("l <- list(a = 1L); l$b <- compute()");
+    assert_eq!(scope.get("l").unwrap().length.exact(), None);
+}

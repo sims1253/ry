@@ -335,7 +335,17 @@ fn has_long_left_spine(e: &Expr) -> bool {
     let mut current = e;
     for _ in 0..DEEP_SPINE_PROBE {
         match current {
-            Expr::BinOp { lhs, .. } => current = lhs,
+            Expr::BinOp { lhs, rhs, .. } => {
+                // Rightward assignment (`a -> b`) lowers with swapped
+                // operands, so the running chain can sit on either side.
+                current = if is_chain_node(lhs) {
+                    lhs
+                } else if is_chain_node(rhs) {
+                    rhs
+                } else {
+                    return false;
+                };
+            }
             // A user-defined infix operator (`a %foo% b`) lowers to a call
             // and nests its chain in the first argument, so it is just as
             // unbounded as a `BinOp` lhs.
@@ -347,6 +357,12 @@ fn has_long_left_spine(e: &Expr) -> bool {
         }
     }
     true
+}
+
+/// Whether `e` can continue a chain (a binary node or a lowered infix
+/// call).
+fn is_chain_node(e: &Expr) -> bool {
+    matches!(e, Expr::BinOp { .. } | Expr::Call { .. })
 }
 
 /// Move every immediate expression child of `e` into `out`, leaving a

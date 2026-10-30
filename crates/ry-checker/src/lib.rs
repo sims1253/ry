@@ -2037,6 +2037,9 @@ impl Checker {
             .chain(self.imported_from.keys())
             .any(|name| infer::custom_operator::escaped_name_may_mask_slot(name));
         self.diagnostics.clear();
+        // Spans are per-file, so a cached pipe-chain verdict from a
+        // previous file must not answer for this one.
+        self.leading_dot_chains.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
         self.vacuous_guards.clear();

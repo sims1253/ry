@@ -336,6 +336,13 @@ fn has_long_left_spine(e: &Expr) -> bool {
     for _ in 0..DEEP_SPINE_PROBE {
         match current {
             Expr::BinOp { lhs, .. } => current = lhs,
+            // A user-defined infix operator (`a %foo% b`) lowers to a call
+            // and nests its chain in the first argument, so it is just as
+            // unbounded as a `BinOp` lhs.
+            Expr::Call { args, .. } => match args.first() {
+                Some(argument) => current = &argument.value,
+                None => return false,
+            },
             _ => return false,
         }
     }
@@ -385,7 +392,20 @@ fn take_child_expressions(e: &mut Expr, out: &mut Vec<Expr>) {
                 take(alternative, out);
             }
         }
-        _ => {}
+        // Bodies and parameter lists hold statements whose own drops
+        // flatten their chains; statement nesting stays under the syntax
+        // depth limit.
+        Expr::Function { .. } | Expr::Block { .. } => {}
+        // No expression children.
+        Expr::Logical(..)
+        | Expr::Integer(..)
+        | Expr::Double(..)
+        | Expr::String(..)
+        | Expr::Null(..)
+        | Expr::Na(..)
+        | Expr::Ident { .. }
+        | Expr::Missing(..)
+        | Expr::Unknown(..) => {}
     }
 }
 

@@ -586,12 +586,11 @@ impl RParser {
                 _ => break,
             }
         }
-        // Folding the peeled spine from the innermost node outwards is only
-        // equivalent to recursive lowering while the peeled operators are
-        // left-associative; a right-associative operator must keep the
-        // recursive path. Every operator `binary_expression` builds a
-        // `BinOp` for is left-associative (`^` and the assignment forms are
-        // folded by their own arms there).
+        // Folding the peeled spine from the innermost node outwards
+        // preserves the CST's association because only `lhs` edges join the
+        // spine. A right-associative operator such as `^` nests through its
+        // right operand, so it never forms a left spine and is lowered by
+        // the recursive call above instead of folded here.
         let mut expr = self.lower_expr(current.child_by_field_name("lhs")?, src)?;
         for (node, op, op_span) in spine.into_iter().rev() {
             let rhs = self.lower_expr(node.child_by_field_name("rhs")?, src)?;
@@ -1550,6 +1549,8 @@ mod tests {
                     // Teardown is iterative too: a 100,000-term chain must
                     // not overflow the drop glue (#842).
                     format!("y <- {}1", "1+".repeat(100_000)),
+                    // A user-defined infix chain lowers to nested calls.
+                    format!("y <- {}1", "1 %foo% ".repeat(50_000)),
                     format!("y <- {}1{}", "f(".repeat(40), ")".repeat(40)),
                     // A long chain inside real nesting still fits under
                     // the nesting cap.

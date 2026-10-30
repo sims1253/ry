@@ -45,7 +45,9 @@ fn is_placeholder_chain(e: &Expr, form: PipeForm) -> bool {
 /// that value's type is already recorded under the LHS span. Cloning
 /// the chain instead costs one node per earlier stage, so a 10,000-term
 /// pipeline would clone about fifty million nodes (#842). Keep the span
-/// so the type cache still answers for the injected argument.
+/// so the type cache still answers for the injected argument. An
+/// extraction around a chain (`(a %>% f)$col`) still clones once, which
+/// is a single linear copy rather than a per-stage one.
 fn piped_argument(lhs: &Expr) -> Expr {
     if let Expr::BinOp { op, .. } = lhs
         && is_pipe_operator(*op)
@@ -62,6 +64,8 @@ fn piped_argument(lhs: &Expr) -> Expr {
 /// dot (?magrittr::`%>%`, "Using the dot-place-holder as lhs"), so the dot
 /// is bound for the whole chain. The native pipe has no such form: `_` on
 /// the left of `|>` stays an ordinary unbound name.
+/// The `&mut Checker` only warms `leading_dot_chains`; the answer itself
+/// depends on the immutable AST alone.
 fn is_leading_dot_chain(checker: &mut Checker, e: &Expr) -> bool {
     // Iterative for the same reason as `lower_binary`: a pipe chain is as
     // deep as it is long (#842). Cache the answer for every stage on the

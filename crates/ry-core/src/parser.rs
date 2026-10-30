@@ -579,7 +579,8 @@ impl RParser {
         let mut current = n;
         loop {
             let op_node = current.child_by_field_name("operator")?;
-            spine.push((current, text(op_node, src)?, self.span(op_node)));
+            let op_text = op_node.utf8_text(src.as_bytes()).ok()?;
+            spine.push((current, op_text, self.span(op_node)));
             match current.child_by_field_name("lhs") {
                 Some(lhs) if lhs.kind() == "binary_operator" => current = lhs,
                 _ => break,
@@ -588,7 +589,7 @@ impl RParser {
         let mut expr = self.lower_expr(current.child_by_field_name("lhs")?, src)?;
         for (node, op, op_span) in spine.into_iter().rev() {
             let rhs = self.lower_expr(node.child_by_field_name("rhs")?, src)?;
-            expr = binary_expression(&op, expr, rhs, self.span(node), op_span)?;
+            expr = binary_expression(op, expr, rhs, self.span(node), op_span)?;
         }
         Some(expr)
     }

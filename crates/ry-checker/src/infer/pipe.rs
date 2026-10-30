@@ -44,20 +44,12 @@ fn is_placeholder_chain(e: &Expr, form: PipeForm) -> bool {
 /// shape cannot matter: the call receives the value it produced, and
 /// that value's type is already recorded under the LHS span. Cloning
 /// the chain instead costs one node per earlier stage, so a 10,000-term
-/// pipeline would clone about fifty million nodes and recurse as deep
-/// as the chain is long (#842). Keep the span so the type cache still
-/// answers for the injected argument.
+/// pipeline would clone about fifty million nodes (#842). Keep the span
+/// so the type cache still answers for the injected argument.
 fn piped_argument(lhs: &Expr) -> Expr {
-    if matches!(
-        lhs,
-        Expr::BinOp {
-            op: BinOpKind::PipeNative
-                | BinOpKind::PipeForward
-                | BinOpKind::PipeTee
-                | BinOpKind::PipeAssign,
-            ..
-        }
-    ) {
+    if let Expr::BinOp { op, .. } = lhs
+        && is_pipe_operator(*op)
+    {
         Expr::Unknown(span_of(lhs))
     } else {
         lhs.clone()
@@ -77,14 +69,18 @@ fn is_leading_dot_chain(e: &Expr) -> bool {
     loop {
         match current {
             Expr::Ident { name, .. } => return name == ".",
-            Expr::BinOp {
-                op: BinOpKind::PipeForward | BinOpKind::PipeAssign | BinOpKind::PipeTee,
-                lhs,
-                ..
-            } => current = lhs,
+            Expr::BinOp { op, lhs, .. } if is_pipe_operator(*op) => current = lhs,
             _ => return false,
         }
     }
+}
+
+/// Whether `op` is one of R's pipe operators.
+fn is_pipe_operator(op: BinOpKind) -> bool {
+    matches!(
+        op,
+        BinOpKind::PipeNative | BinOpKind::PipeForward | BinOpKind::PipeTee | BinOpKind::PipeAssign
+    )
 }
 
 impl Checker {

@@ -338,3 +338,17 @@ fn dollar_and_double_bracket_move_list_lengths() {
     );
     assert_eq!(scope.get("l").unwrap().length.exact(), None);
 }
+
+/// R dedups repeated names for plain lists and vectors, but not for data
+/// frames or the empty name.
+#[test]
+fn duplicated_and_empty_names_follow_r_lengths() {
+    let (_, scope) = check_with_scope("l <- list(a = 1L); l[c(\"b\", \"b\")] <- 2L");
+    assert_eq!(scope.get("l").unwrap().length, Length::Known(2));
+
+    let (_, scope) = check_with_scope("l <- list(a = 1L); l[c(\"\", \"\")] <- 2L");
+    assert_eq!(scope.get("l").unwrap().length, Length::Known(3));
+
+    let (_, scope) = check_with_scope("df <- data.frame(a = 1L); df[c(\"b\", \"b\")] <- 7");
+    assert_eq!(scope.get("df").unwrap().length, Length::Known(3));
+}

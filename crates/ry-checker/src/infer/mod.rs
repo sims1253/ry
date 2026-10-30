@@ -3509,10 +3509,20 @@ impl Checker {
                 .unwrap_or_default();
             if !names.is_empty() {
                 let mut updated = base_t;
+                // R resolves a repeated unmatched subscript to its first
+                // occurrence for plain lists and vectors, but not for data
+                // frames or the empty name; those add one entry per
+                // occurrence.
+                let is_frame = updated.class.contains("data.frame");
+                // Duplicate names are deduped for plain lists and vectors;
+                // the evolving schema below does that naturally.
+                let dedup = !is_frame && names.iter().all(|name| !name.is_empty());
+                let base_snapshot = (!dedup).then(|| updated.clone());
                 let mut added = 0;
                 let mut certain = true;
                 for name in names {
-                    match crate::name_presence(&updated, &name) {
+                    let source = base_snapshot.as_ref().unwrap_or(&updated);
+                    match crate::name_presence(source, &name) {
                         crate::NamePresence::Absent => added += 1,
                         crate::NamePresence::Unknown => certain = false,
                         crate::NamePresence::Present => {}

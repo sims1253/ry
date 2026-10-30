@@ -171,6 +171,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- A left-associative binary-operator chain such as a 300-term `1 + 1 + ...`
+  or a long `|>` pipeline is flat R code and no longer trips the 128-level
+  syntax nesting limit; real nesting still does (#842).
 - Indexed replacement (`x[i] <- v`, `x[[i]] <- v`, `x$a <- v`) updates the
   binding's exported type: the mode joins upward as R coerces it, a named
   write extends the names, and a positive literal subscript or the value

@@ -411,3 +411,30 @@ fn ry119_has_a_single_emitter() {
         sites.join("\n")
     );
 }
+
+/// A left-associative operator or pipe chain is flat R code, not nested
+/// code: a 300-term chain used to trip the 128-level syntax limit and the
+/// accumulator is as deep as the chain is long (#842).
+#[test]
+fn long_operator_and_pipe_chains_are_checked() {
+    for source in [
+        format!("y <- {}1\n", "1+".repeat(10_000)),
+        format!("x <- 1{}\n", " |> identity()".repeat(10_000)),
+        format!("x <- 1{}\n", " %>% identity()".repeat(10_000)),
+        format!("y <- {}1\n", "1L+".repeat(300)),
+    ] {
+        let mut parser = RParser::new().unwrap();
+        let file = parser
+            .parse("chain.R", &source)
+            .unwrap_or_else(|error| panic!("parse: {error}"));
+        assert!(file.parse_errors.is_empty());
+        let mut checker = Checker::new("chain.R");
+        checker.check(&file);
+        let diagnostics = checker.take_diagnostics();
+        assert!(
+            diagnostics.is_empty(),
+            "{}: {diagnostics:?}",
+            &source[..source.len().min(40)]
+        );
+    }
+}

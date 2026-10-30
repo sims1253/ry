@@ -38,6 +38,32 @@ fn is_placeholder_chain(e: &Expr, form: PipeForm) -> bool {
     }
 }
 
+/// The expression injected as a pipe's first argument.
+///
+/// Past the first stage the LHS is itself a pipe chain, so its code
+/// shape cannot matter: the call receives the value it produced, and
+/// that value's type is already recorded under the LHS span. Cloning
+/// the chain instead costs one node per earlier stage, so a 10,000-term
+/// pipeline would clone about fifty million nodes and recurse as deep
+/// as the chain is long (#842). Keep the span so the type cache still
+/// answers for the injected argument.
+fn piped_argument(lhs: &Expr) -> Expr {
+    if matches!(
+        lhs,
+        Expr::BinOp {
+            op: BinOpKind::PipeNative
+                | BinOpKind::PipeForward
+                | BinOpKind::PipeTee
+                | BinOpKind::PipeAssign,
+            ..
+        }
+    ) {
+        Expr::Unknown(span_of(lhs))
+    } else {
+        lhs.clone()
+    }
+}
+
 /// True if `e` is a magrittr pipe chain whose leftmost operand is the bare
 /// `.` pronoun — `. %>% f`, `. %T>% print`, `. %>% f %<>% g`. magrittr
 /// builds a functional sequence from it: a function whose parameter is the
@@ -45,14 +71,19 @@ fn is_placeholder_chain(e: &Expr, form: PipeForm) -> bool {
 /// is bound for the whole chain. The native pipe has no such form: `_` on
 /// the left of `|>` stays an ordinary unbound name.
 fn is_leading_dot_chain(e: &Expr) -> bool {
-    match e {
-        Expr::Ident { name, .. } => name == ".",
-        Expr::BinOp {
-            op: BinOpKind::PipeForward | BinOpKind::PipeAssign | BinOpKind::PipeTee,
-            lhs,
-            ..
-        } => is_leading_dot_chain(lhs),
-        _ => false,
+    // Iterative for the same reason as `lower_binary`: a pipe chain is as
+    // deep as it is long (#842).
+    let mut current = e;
+    loop {
+        match current {
+            Expr::Ident { name, .. } => return name == ".",
+            Expr::BinOp {
+                op: BinOpKind::PipeForward | BinOpKind::PipeAssign | BinOpKind::PipeTee,
+                lhs,
+                ..
+            } => current = lhs,
+            _ => return false,
+        }
     }
 }
 
@@ -198,7 +229,7 @@ impl Checker {
                     if substitute {
                         new_args.push(Arg {
                             name: a.name.clone(),
-                            value: lhs.clone(),
+                            value: piped_argument(lhs),
                             span: a.span,
                         });
                         placeholder_seen = true;
@@ -211,7 +242,7 @@ impl Checker {
                         0,
                         Arg {
                             name: None,
-                            value: lhs.clone(),
+                            value: piped_argument(lhs),
                             span,
                         },
                     );
@@ -228,7 +259,7 @@ impl Checker {
             Expr::Ident { .. } => {
                 let new_args = vec![Arg {
                     name: None,
-                    value: lhs.clone(),
+                    value: piped_argument(lhs),
                     span,
                 }];
                 self.infer_pipe_call(rhs, &new_args, lhs, lhs_t.clone(), scope, span)

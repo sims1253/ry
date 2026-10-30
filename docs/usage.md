@@ -389,7 +389,10 @@ ry rejects source whose tree-sitter syntax tree exceeds 128 nested levels,
 with a parser error that identifies ry’s nesting limit and the source location.
 This protects recursive analysis on ordinary worker-thread stacks; it is not
 an R language limit. The bound measures syntax-tree depth, not line count or
-file size; wide argument lists remain allowed.
+file size; wide argument lists remain allowed. A left-associative chain of
+binary operators (`1 + 1 + ...`, `x |> f() |> g()`) is flat R code and does
+not count toward the limit however long it is; nesting such as `f(g(h(...)))`
+and `{ { ... } }` still counts.
 
 When two operands have different S3 methods, ry follows `chooseOpsMethod()`
 only when both methods and the choosers it consults are top-level `<-` or `=`

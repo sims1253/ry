@@ -231,7 +231,7 @@ pub struct Param {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Expr {
     /// `TRUE`/`FALSE`
     Logical(bool, Span),
@@ -298,6 +298,82 @@ pub enum Expr {
     Missing(Span),
     /// Anything we don't model yet.
     Unknown(Span),
+}
+
+// Hand-written so a long binary-operator chain clones on a growable
+// stack: `1 + 1 + ...` and `x |> f() |> g()` are as deep as they are
+// long, and a pipe injects a copy of that chain as its first argument
+// (#842).
+impl Clone for Expr {
+    fn clone(&self) -> Self {
+        crate::stack::grow(|| self.clone_inner())
+    }
+}
+
+impl Expr {
+    fn clone_inner(&self) -> Expr {
+        match self {
+            Expr::Logical(value, span) => Expr::Logical(*value, *span),
+            Expr::Integer(value, span) => Expr::Integer(*value, *span),
+            Expr::Double(value, span) => Expr::Double(*value, *span),
+            Expr::String(value, span) => Expr::String(value.clone(), *span),
+            Expr::Null(span) => Expr::Null(*span),
+            Expr::Na(value, span) => Expr::Na(value.clone(), *span),
+            Expr::Call { func, args, span } => Expr::Call {
+                func: func.clone(),
+                args: args.clone(),
+                span: *span,
+            },
+            Expr::Ident { name, span } => Expr::Ident {
+                name: name.clone(),
+                span: *span,
+            },
+            Expr::BinOp { op, lhs, rhs, span } => Expr::BinOp {
+                op: *op,
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                span: *span,
+            },
+            Expr::UnaryOp { op, expr, span } => Expr::UnaryOp {
+                op: *op,
+                expr: expr.clone(),
+                span: *span,
+            },
+            Expr::Index {
+                base,
+                kind,
+                args,
+                span,
+            } => Expr::Index {
+                base: base.clone(),
+                kind: *kind,
+                args: args.clone(),
+                span: *span,
+            },
+            Expr::Function { params, body, span } => Expr::Function {
+                params: params.clone(),
+                body: body.clone(),
+                span: *span,
+            },
+            Expr::Block { body, span } => Expr::Block {
+                body: body.clone(),
+                span: *span,
+            },
+            Expr::If {
+                cond,
+                then,
+                else_,
+                span,
+            } => Expr::If {
+                cond: cond.clone(),
+                then: then.clone(),
+                else_: else_.clone(),
+                span: *span,
+            },
+            Expr::Missing(span) => Expr::Missing(*span),
+            Expr::Unknown(span) => Expr::Unknown(*span),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

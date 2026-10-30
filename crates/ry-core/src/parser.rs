@@ -1566,6 +1566,7 @@ mod tests {
                     // divert the teardown walk.
                     format!("1{}", " -> x".repeat(50_000)),
                     format!("1{}", " -> f(1)".repeat(50_000)),
+                    format!("1{}", " -> x+y".repeat(50_000)),
                     format!("y <- {}1{}", "f(".repeat(40), ")".repeat(40)),
                     // A long chain inside real nesting still fits under
                     // the nesting cap.

@@ -335,13 +335,16 @@ fn has_long_left_spine(e: &Expr) -> bool {
     let mut current = e;
     for _ in 0..DEEP_SPINE_PROBE {
         match current {
-            Expr::BinOp { lhs, rhs, .. } => {
+            Expr::BinOp { op, lhs, rhs, .. } => {
                 // Rightward assignment (`a -> b`) lowers with swapped
-                // operands: the target sits on the left, so continue down
-                // the left only for a real `BinOp` and otherwise take the
-                // right-hand continuation. A call target on the left is
-                // not the chain.
-                if matches!(**lhs, Expr::BinOp { .. }) {
+                // operands: the target sits on the left, so the running
+                // chain is the right-hand value. Every other operator nests
+                // a left-associative chain on the left, but may still carry
+                // a user-infix chain on the right.
+                let assignment = matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign);
+                if assignment && is_chain_node(rhs) {
+                    current = rhs;
+                } else if matches!(**lhs, Expr::BinOp { .. }) {
                     current = lhs;
                 } else if is_chain_node(rhs) {
                     current = rhs;

@@ -3501,7 +3501,8 @@ impl Checker {
             return true;
         }
         if matches!(kind, IndexKind::Single)
-            && !(base_t.mode.is_atomic() || matches!(base_t.mode, Mode::Null))
+            && !(base_t.mode.is_atomic() && base_t.class.is_classless()
+                || matches!(base_t.mode, Mode::Null))
         {
             let names = args
                 .first()
@@ -3732,13 +3733,7 @@ impl Checker {
         let presence = crate::name_presence(&base_t, col);
         // An opaque value may be NULL too, which would delete the field
         // instead of adding it.
-        let may_be_null = matches!(vt.mode, Mode::Null)
-            || vt.mode.is_unknown()
-            || vt.members.as_ref().is_some_and(|members| {
-                members
-                    .iter()
-                    .any(|member| member.mode.is_unknown() || matches!(member.mode, Mode::Null))
-            });
+        let may_be_null = crate::may_delete_element(&vt);
         let definitely_null = matches!(vt.mode, Mode::Null);
         let mut updated = base_t;
         if definitely_null {

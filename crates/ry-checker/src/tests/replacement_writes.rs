@@ -371,3 +371,17 @@ fn opaque_named_write_on_a_list_widens_the_length() {
     let (_, scope) = check_with_scope("l <- list(a = 1L); l$b <- compute()");
     assert_eq!(scope.get("l").unwrap().length.exact(), None);
 }
+
+/// A named write on a classed atomic vector (factor, Date) is still
+/// handled: R adds the element under that name.
+#[test]
+fn classed_atomic_named_write_is_handled() {
+    let (diagnostics, scope) = check_with_scope("x <- factor(\"a\"); x[\"b\"] <- \"c\"");
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY061"),
+        "{diagnostics:?}"
+    );
+    let x = scope.get("x").unwrap();
+    assert!(x.columns.is_some(), "{x:?}");
+    assert_ne!(x.length.exact(), Some(0), "{x:?}");
+}

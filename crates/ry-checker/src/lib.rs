@@ -226,6 +226,18 @@ pub(crate) fn name_presence(base: &RType, name: &str) -> NamePresence {
     }
 }
 
+/// Whether a replacement value may be NULL, which deletes the element
+/// instead of storing it.
+pub(crate) fn may_delete_element(value: &RType) -> bool {
+    matches!(value.mode, Mode::Null)
+        || value.mode.is_unknown()
+        || value.members.as_ref().is_some_and(|members| {
+            members
+                .iter()
+                .any(|member| member.mode.is_unknown() || matches!(member.mode, Mode::Null))
+        })
+}
+
 /// The canonical [`Length`] for an exact element count.
 pub(crate) fn exact_length(length: usize) -> Length {
     match length {
@@ -292,13 +304,7 @@ fn type_after_classless_subassignment(
     let definitely_null = matches!(value.mode, Mode::Null);
     // An unknown value may be NULL too, as the list path in
     // `assign_index_target` already assumes.
-    let may_delete = definitely_null
-        || value.mode.is_unknown()
-        || value.members.as_ref().is_some_and(|members| {
-            members
-                .iter()
-                .any(|member| member.mode.is_unknown() || matches!(member.mode, Mode::Null))
-        });
+    let may_delete = may_delete_element(value);
     if definitely_null
         && matches!(kind, IndexKind::Single | IndexKind::Double)
         && !matches!(base.mode, Mode::Null)
@@ -360,7 +366,8 @@ fn type_after_classless_subassignment(
             other => base.mode.combine_result(other),
         },
         IndexKind::Single => base.mode.combine_result(value.mode),
-        // `x$a <- v` coerces an atomic LHS to a list with a warning.
+        // `x$a <- v` coerces an atomic LHS to a list with a warning. The
+        // warning is a runtime event, so no static diagnostic is emitted.
         IndexKind::Dollar => Mode::List,
         IndexKind::Slot => return RType::unknown(),
     };

@@ -310,6 +310,85 @@ impl Clone for Expr {
     }
 }
 
+/// Left spines are unbounded by the syntax nesting limit (see
+/// `lower_binary`), while Rust's drop glue recurses once per `Box<Expr>`.
+/// Take a deep spine apart iteratively instead, so a long-but-admissible
+/// operator chain cannot overflow a worker stack on teardown (#842).
+impl Drop for Expr {
+    fn drop(&mut self) {
+        if !has_long_left_spine(self) {
+            return;
+        }
+        let mut pending = Vec::new();
+        take_child_expressions(self, &mut pending);
+        while let Some(mut expression) = pending.pop() {
+            take_child_expressions(&mut expression, &mut pending);
+            // `expression` drops here with no expression children left.
+        }
+    }
+}
+
+/// Whether `e` is a binary chain of at least [`DEEP_SPINE_PROBE`] terms.
+/// The probe is bounded so ordinary nodes pay only a few comparisons.
+fn has_long_left_spine(e: &Expr) -> bool {
+    const DEEP_SPINE_PROBE: usize = 64;
+    let mut current = e;
+    for _ in 0..DEEP_SPINE_PROBE {
+        match current {
+            Expr::BinOp { lhs, .. } => current = lhs,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Move every immediate expression child of `e` into `out`, leaving a
+/// cheap placeholder behind so `e`'s own drop stays shallow.
+fn take_child_expressions(e: &mut Expr, out: &mut Vec<Expr>) {
+    fn take(slot: &mut Expr, out: &mut Vec<Expr>) {
+        out.push(std::mem::replace(
+            slot,
+            Expr::Unknown(crate::Span::new(0, 0, 0, 0)),
+        ));
+    }
+    match e {
+        Expr::Call { func, args, .. } => {
+            take(func, out);
+            for argument in args {
+                take(&mut argument.value, out);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            take(lhs, out);
+            take(rhs, out);
+        }
+        Expr::UnaryOp { expr, .. } => take(expr, out),
+        Expr::Index { base, args, .. } => {
+            take(base, out);
+            for argument in args {
+                take(&mut argument.value, out);
+            }
+        }
+        Expr::Function { params, .. } => {
+            for param in params {
+                if let Some(default) = &mut param.default {
+                    take(default, out);
+                }
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            take(cond, out);
+            take(then, out);
+            if let Some(alternative) = else_ {
+                take(alternative, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 impl Expr {
     fn clone_inner(&self) -> Expr {
         match self {

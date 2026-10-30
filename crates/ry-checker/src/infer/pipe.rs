@@ -62,17 +62,30 @@ fn piped_argument(lhs: &Expr) -> Expr {
 /// dot (?magrittr::`%>%`, "Using the dot-place-holder as lhs"), so the dot
 /// is bound for the whole chain. The native pipe has no such form: `_` on
 /// the left of `|>` stays an ordinary unbound name.
-fn is_leading_dot_chain(e: &Expr) -> bool {
+fn is_leading_dot_chain(checker: &mut Checker, e: &Expr) -> bool {
     // Iterative for the same reason as `lower_binary`: a pipe chain is as
-    // deep as it is long (#842).
+    // deep as it is long (#842). Cache the answer for every stage on the
+    // way down, so checking a pipeline walks its spine once, not once per
+    // stage.
+    let mut pending = Vec::new();
     let mut current = e;
-    loop {
-        match current {
-            Expr::Ident { name, .. } => return name == ".",
-            Expr::BinOp { op, lhs, .. } if is_pipe_operator(*op) => current = lhs,
-            _ => return false,
+    let result = loop {
+        if let Some(known) = checker.leading_dot_chains.get(&span_of(current)) {
+            break *known;
         }
+        match current {
+            Expr::Ident { name, .. } => break name == ".",
+            Expr::BinOp { op, lhs, .. } if is_pipe_operator(*op) => {
+                pending.push(span_of(current));
+                current = lhs;
+            }
+            _ => break false,
+        }
+    };
+    for span in pending {
+        checker.leading_dot_chains.insert(span, result);
     }
+    result
 }
 
 /// Whether `op` is one of R's pipe operators.
@@ -149,7 +162,7 @@ impl Checker {
         // path, where the binding above resolves it.
         if matches!(form, PipeForm::Magrittr)
             && !self.in_leading_dot_chain
-            && is_leading_dot_chain(lhs)
+            && is_leading_dot_chain(self, lhs)
         {
             let previous = scope.replace_binding_only(".", Some(RType::unknown()));
             self.in_leading_dot_chain = true;
@@ -294,7 +307,7 @@ impl Checker {
         // A leading-dot tee chain is a functional sequence like the other
         // magrittr forms (magrittr's lambda construction is kind-
         // independent), so the dot binds as the chain's parameter.
-        if !self.in_leading_dot_chain && is_leading_dot_chain(lhs) {
+        if !self.in_leading_dot_chain && is_leading_dot_chain(self, lhs) {
             let previous = scope.replace_binding_only(".", Some(RType::unknown()));
             self.in_leading_dot_chain = true;
             let lhs_t = self.infer(lhs, scope);

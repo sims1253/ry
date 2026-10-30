@@ -1541,6 +1541,9 @@ mod tests {
                     format!("{}1", "1+".repeat(10_000)),
                     format!("x <- {}1", "1+".repeat(10_000)),
                     format!("x <- {}1", "1 |> identity() |> ".repeat(10_000)),
+                    // Teardown is iterative too: a 100,000-term chain must
+                    // not overflow the drop glue (#842).
+                    format!("y <- {}1", "1+".repeat(100_000)),
                     format!("y <- {}1{}", "f(".repeat(40), ")".repeat(40)),
                     // A long chain inside real nesting still fits under
                     // the nesting cap.

@@ -1880,6 +1880,11 @@ pub struct Checker {
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
     pipe_argument_types: HashMap<Span, RType>,
+    /// Whether the pipe chain rooted at a span starts at magrittr's `.`.
+    /// The AST is immutable during a check, so this is safe to cache and
+    /// keeps a long pipeline from re-walking its whole left spine at every
+    /// stage (#842).
+    leading_dot_chains: HashMap<Span, bool>,
     // True while inferring the LHS of a leading-dot magrittr chain
     // (`. %>% f`), so the recursive inner pipe walk treats the already
     // bound `.` as data instead of re-entering the lambda arm.
@@ -2134,6 +2139,7 @@ impl Checker {
             #[cfg(test)]
             journal_branches: true,
             pipe_argument_types: HashMap::new(),
+            leading_dot_chains: HashMap::new(),
             in_leading_dot_chain: false,
             boolean_context_span: None,
             capture_scopes: false,

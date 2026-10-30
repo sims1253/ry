@@ -1156,6 +1156,9 @@ impl Checker {
             std::mem::replace(&mut self.native_path, function.source_native_path.clone());
         let previous_namespace =
             std::mem::replace(&mut self.namespace, function.source_package.clone());
+        // Spans are per file and this pass walks functions across files, so
+        // a span-keyed pipe-chain verdict cannot survive the switch.
+        self.leading_dot_chains.clear();
 
         let mut scope = Scope::default();
         // Deferred execution can observe later syntax and constructor changes.

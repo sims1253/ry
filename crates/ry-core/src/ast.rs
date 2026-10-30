@@ -231,7 +231,7 @@ pub struct Param {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Expr {
     /// `TRUE`/`FALSE`
     Logical(bool, Span),
@@ -298,6 +298,210 @@ pub enum Expr {
     Missing(Span),
     /// Anything we don't model yet.
     Unknown(Span),
+}
+
+// Hand-written so a long binary-operator chain clones on a growable
+// stack: `1 + 1 + ...` and `x |> f() |> g()` are as deep as they are
+// long, and a pipe injects a copy of that chain as its first argument
+// (#842).
+impl Clone for Expr {
+    fn clone(&self) -> Self {
+        crate::stack::grow(|| self.clone_inner())
+    }
+}
+
+/// Left spines are unbounded by the syntax nesting limit (see
+/// `lower_binary`), while Rust's drop glue recurses once per `Box<Expr>`.
+/// Take a deep spine apart iteratively instead, so a long-but-admissible
+/// operator chain cannot overflow a worker stack on teardown (#842).
+impl Drop for Expr {
+    fn drop(&mut self) {
+        if !has_long_left_spine(self) {
+            return;
+        }
+        let mut pending = Vec::new();
+        take_child_expressions(self, &mut pending);
+        while let Some(mut expression) = pending.pop() {
+            take_child_expressions(&mut expression, &mut pending);
+            // `expression` drops here with no expression children left.
+        }
+    }
+}
+
+/// Whether `e` is a binary chain of at least [`DEEP_SPINE_PROBE`] terms.
+/// The probe is bounded so ordinary nodes pay only a few comparisons.
+fn has_long_left_spine(e: &Expr) -> bool {
+    const DEEP_SPINE_PROBE: usize = 64;
+    let mut current = e;
+    for _ in 0..DEEP_SPINE_PROBE {
+        match current {
+            Expr::BinOp { op, lhs, rhs, .. } => {
+                // Rightward assignment (`a -> b`) lowers with swapped
+                // operands: the target sits on the left, so the running
+                // chain is the right-hand value. Every other operator nests
+                // a left-associative chain on the left, but may still carry
+                // a user-infix chain on the right.
+                let assignment = matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign);
+                if assignment && is_chain_node(rhs) {
+                    current = rhs;
+                } else if matches!(**lhs, Expr::BinOp { .. }) {
+                    current = lhs;
+                } else if is_chain_node(rhs) {
+                    current = rhs;
+                } else {
+                    return false;
+                }
+            }
+            // A user-defined infix operator (`a %foo% b`) lowers to a call
+            // and nests its chain in the first argument; an ordinary call
+            // is syntax-bounded.
+            Expr::Call { func, args, .. } if matches!(**func, Expr::Ident { ref name, .. } if name.starts_with('%')) => {
+                match args.first() {
+                    Some(argument) => current = &argument.value,
+                    None => return false,
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Whether `e` can continue a chain (a binary node or a lowered user-infix
+/// call).
+fn is_chain_node(e: &Expr) -> bool {
+    match e {
+        Expr::BinOp { .. } => true,
+        Expr::Call { func, .. } => {
+            matches!(**func, Expr::Ident { ref name, .. } if name.starts_with('%'))
+        }
+        _ => false,
+    }
+}
+
+/// Move every immediate expression child of `e` into `out`, leaving a
+/// cheap placeholder behind so `e`'s own drop stays shallow.
+fn take_child_expressions(e: &mut Expr, out: &mut Vec<Expr>) {
+    fn take(slot: &mut Expr, out: &mut Vec<Expr>) {
+        out.push(std::mem::replace(
+            slot,
+            Expr::Unknown(crate::Span::new(0, 0, 0, 0)),
+        ));
+    }
+    match e {
+        Expr::Call { func, args, .. } => {
+            take(func, out);
+            for argument in args {
+                take(&mut argument.value, out);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            take(lhs, out);
+            take(rhs, out);
+        }
+        Expr::UnaryOp { expr, .. } => take(expr, out),
+        Expr::Index { base, args, .. } => {
+            take(base, out);
+            for argument in args {
+                take(&mut argument.value, out);
+            }
+        }
+        Expr::Function { params, .. } => {
+            for param in params {
+                if let Some(default) = &mut param.default {
+                    take(default, out);
+                }
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            take(cond, out);
+            take(then, out);
+            if let Some(alternative) = else_ {
+                take(alternative, out);
+            }
+        }
+        // A block body holds statements whose own drops flatten their
+        // chains; statement nesting stays under the syntax depth limit.
+        Expr::Block { .. } => {}
+        // No expression children.
+        Expr::Logical(..)
+        | Expr::Integer(..)
+        | Expr::Double(..)
+        | Expr::String(..)
+        | Expr::Null(..)
+        | Expr::Na(..)
+        | Expr::Ident { .. }
+        | Expr::Missing(..)
+        | Expr::Unknown(..) => {}
+    }
+}
+
+impl Expr {
+    fn clone_inner(&self) -> Expr {
+        match self {
+            Expr::Logical(value, span) => Expr::Logical(*value, *span),
+            Expr::Integer(value, span) => Expr::Integer(*value, *span),
+            Expr::Double(value, span) => Expr::Double(*value, *span),
+            Expr::String(value, span) => Expr::String(value.clone(), *span),
+            Expr::Null(span) => Expr::Null(*span),
+            Expr::Na(value, span) => Expr::Na(value.clone(), *span),
+            Expr::Call { func, args, span } => Expr::Call {
+                func: func.clone(),
+                args: args.clone(),
+                span: *span,
+            },
+            Expr::Ident { name, span } => Expr::Ident {
+                name: name.clone(),
+                span: *span,
+            },
+            Expr::BinOp { op, lhs, rhs, span } => Expr::BinOp {
+                op: *op,
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                span: *span,
+            },
+            Expr::UnaryOp { op, expr, span } => Expr::UnaryOp {
+                op: *op,
+                expr: expr.clone(),
+                span: *span,
+            },
+            Expr::Index {
+                base,
+                kind,
+                args,
+                span,
+            } => Expr::Index {
+                base: base.clone(),
+                kind: *kind,
+                args: args.clone(),
+                span: *span,
+            },
+            Expr::Function { params, body, span } => Expr::Function {
+                params: params.clone(),
+                body: body.clone(),
+                span: *span,
+            },
+            Expr::Block { body, span } => Expr::Block {
+                body: body.clone(),
+                span: *span,
+            },
+            Expr::If {
+                cond,
+                then,
+                else_,
+                span,
+            } => Expr::If {
+                cond: cond.clone(),
+                then: then.clone(),
+                else_: else_.clone(),
+                span: *span,
+            },
+            Expr::Missing(span) => Expr::Missing(*span),
+            Expr::Unknown(span) => Expr::Unknown(*span),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -417,6 +417,30 @@ fn magrittr_leading_dot_pipe_builds_a_function() {
         native.iter().any(|d| d.code == "RY010"),
         "native `_` has no lambda form: {native:?}"
     );
+    // A native pipe inside a magrittr tee is still not a leading-dot
+    // chain: `.` on the left of `|>` stays an ordinary name.
+    let tee = check(". |> identity() %T>% print()\n");
+    assert!(
+        tee.iter()
+            .any(|d| d.code == "RY010" && d.message.contains("`.`")),
+        "native dot is an ordinary name: {tee:?}"
+    );
+}
+
+/// The leading-dot cache is keyed by span, which is per-file. Reusing a
+/// checker for another file at the same offsets must not answer from the
+/// previous file's chain.
+#[test]
+fn checker_reuse_clears_the_leading_dot_cache() {
+    let mut checker = Checker::new("a.R");
+    checker.check(&parse_file("a.R", "z <- . %>% f %>% g\n"));
+    // The inner pipe node occupies the same byte span as the first file's,
+    // but this chain starts at `1`, so it is an ordinary call, not a
+    // functional sequence.
+    let file = parse_file("a.R", "z <- 1 %>% f %>% g\n");
+    let (_, scope) = checker.check_with_scope(&file);
+    let z = scope.get("z").unwrap();
+    assert_ne!(z.mode, Mode::Function, "{z:?}");
 }
 
 #[test]

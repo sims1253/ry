@@ -570,85 +570,46 @@ impl RParser {
     }
 
     fn lower_binary(&self, n: Node, src: &str) -> Option<Expr> {
-        let op_node = n.child_by_field_name("operator")?;
-        let op_text = text(op_node, src)?;
-        let span = self.span(n);
-        let lhs = self.lower_expr(n.child_by_field_name("lhs")?, src)?;
-        let rhs = self.lower_expr(n.child_by_field_name("rhs")?, src)?;
-        let op = match op_text.as_str() {
-            "+" => BinOpKind::Add,
-            "-" => BinOpKind::Sub,
-            // `**` is R's alternate spelling of `^` (power), not multiply.
-            "*" => BinOpKind::Mul,
-            "**" => BinOpKind::Pow,
-            "/" => BinOpKind::Div,
-            "^" => BinOpKind::Pow,
-            "%%" => BinOpKind::Mod,
-            "%/%" => BinOpKind::IDiv,
-            ":" => BinOpKind::Colon,
-            "<" => BinOpKind::Lt,
-            "<=" => BinOpKind::Le,
-            ">" => BinOpKind::Gt,
-            ">=" => BinOpKind::Ge,
-            "==" => BinOpKind::Eq,
-            "!=" => BinOpKind::Ne,
-            "&" => BinOpKind::And,
-            "&&" => BinOpKind::AndAnd,
-            "|" => BinOpKind::Or,
-            "||" => BinOpKind::OrOr,
-            "%in%" => BinOpKind::In,
-            "|>" => BinOpKind::PipeNative,
-            "%>%" => BinOpKind::PipeForward,
-            "%T>%" => BinOpKind::PipeTee,
-            "%<>%" => BinOpKind::PipeAssign,
-            // Assignment operators in expression position (e.g. the
-            // inner assignment in `a <- b <- 1L`). These return the
-            // assigned value in R, so `infer_binop` returns the RHS
-            // type for them. Rightward assignments need swapped operands.
-            "<-" | "=" => BinOpKind::Assign,
-            "<<-" => BinOpKind::SuperAssign,
-            "->" | "->>" => {
-                // Right-assigned: `a -> b` is `b <- a`. Swap operands.
-                return Some(Expr::BinOp {
-                    op: if op_text == "->>" {
-                        BinOpKind::SuperAssign
-                    } else {
-                        BinOpKind::Assign
-                    },
-                    lhs: Box::new(rhs),
-                    rhs: Box::new(lhs),
-                    span,
-                });
+        // Peel the left spine iteratively: a left-associative chain
+        // (`1 + 1 + ... + 1`, `x |> f() |> g()`) is as deep as it is long
+        // in the CST, and lowering must not recurse once per operator
+        // (#842). The right-hand operands still lower recursively, so
+        // real nesting keeps the syntax depth limit.
+        // Fast path: most binary nodes are not part of a chain, and the
+        // iterative fold below needs a heap-allocated spine.
+        let root_op = n.child_by_field_name("operator")?;
+        let root_op_text = root_op.utf8_text(src.as_bytes()).ok()?;
+        let root_lhs = n.child_by_field_name("lhs")?;
+        if root_lhs.kind() != "binary_operator" {
+            let lhs = self.lower_expr(root_lhs, src)?;
+            let rhs = self.lower_expr(n.child_by_field_name("rhs")?, src)?;
+            return binary_expression(root_op_text, lhs, rhs, self.span(n), self.span(root_op));
+        }
+        let mut spine = Vec::new();
+        let mut current = n;
+        loop {
+            let op_node = current.child_by_field_name("operator")?;
+            let op_text = op_node.utf8_text(src.as_bytes()).ok()?;
+            spine.push((current, op_text, self.span(op_node)));
+            match current.child_by_field_name("lhs") {
+                // The grammar nests a left-associative chain through the
+                // `lhs` field only; a `binary_operator` on the right is
+                // syntax-bounded and safely lowered recursively.
+                Some(lhs) if lhs.kind() == "binary_operator" => current = lhs,
+                _ => break,
             }
-            _ => {
-                tracing::trace!(op = op_text.as_str(), "user-defined infix op");
-                return Some(Expr::Call {
-                    func: Box::new(Expr::Ident {
-                        name: op_text,
-                        span: self.span(op_node),
-                    }),
-                    args: vec![
-                        Arg {
-                            name: None,
-                            span,
-                            value: lhs,
-                        },
-                        Arg {
-                            name: None,
-                            span,
-                            value: rhs,
-                        },
-                    ],
-                    span,
-                });
-            }
-        };
-        Some(Expr::BinOp {
-            op,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-            span,
-        })
+        }
+        // Folding the peeled spine from the innermost node outwards
+        // preserves the CST's association because only `lhs` edges join the
+        // spine. A right-associative operator such as `^` nests through its
+        // right operand, so it never forms a left spine and is lowered by
+        // the recursive call above instead of folded here.
+        let mut expr = self.lower_expr(current.child_by_field_name("lhs")?, src)?;
+        for (node, op, op_span) in spine.into_iter().rev() {
+            let rhs = self.lower_expr(node.child_by_field_name("rhs")?, src)?;
+            expr = binary_expression(op, expr, rhs, self.span(node), op_span)?;
+        }
+        Some(expr)
     }
 
     fn lower_unary(&self, n: Node, src: &str) -> Option<Expr> {
@@ -766,6 +727,92 @@ impl RParser {
 
 fn text(n: Node, src: &str) -> Option<String> {
     n.utf8_text(src.as_bytes()).ok().map(String::from)
+}
+
+/// Build the AST node for one binary operator from already-lowered
+/// operands. Split out of `lower_binary` so a left-associative chain can
+/// fold its peeled spine iteratively (#842).
+fn binary_expression(
+    op_text: &str,
+    lhs: Expr,
+    rhs: Expr,
+    span: Span,
+    op_span: Span,
+) -> Option<Expr> {
+    let op = match op_text {
+        "+" => BinOpKind::Add,
+        "-" => BinOpKind::Sub,
+        // `**` is R's alternate spelling of `^` (power), not multiply.
+        "*" => BinOpKind::Mul,
+        "**" => BinOpKind::Pow,
+        "/" => BinOpKind::Div,
+        "^" => BinOpKind::Pow,
+        "%%" => BinOpKind::Mod,
+        "%/%" => BinOpKind::IDiv,
+        ":" => BinOpKind::Colon,
+        "<" => BinOpKind::Lt,
+        "<=" => BinOpKind::Le,
+        ">" => BinOpKind::Gt,
+        ">=" => BinOpKind::Ge,
+        "==" => BinOpKind::Eq,
+        "!=" => BinOpKind::Ne,
+        "&" => BinOpKind::And,
+        "&&" => BinOpKind::AndAnd,
+        "|" => BinOpKind::Or,
+        "||" => BinOpKind::OrOr,
+        "%in%" => BinOpKind::In,
+        "|>" => BinOpKind::PipeNative,
+        "%>%" => BinOpKind::PipeForward,
+        "%T>%" => BinOpKind::PipeTee,
+        "%<>%" => BinOpKind::PipeAssign,
+        // Assignment operators in expression position (e.g. the
+        // inner assignment in `a <- b <- 1L`). These return the
+        // assigned value in R, so `infer_binop` returns the RHS
+        // type for them. Rightward assignments need swapped operands.
+        "<-" | "=" => BinOpKind::Assign,
+        "<<-" => BinOpKind::SuperAssign,
+        "->" | "->>" => {
+            // Right-assigned: `a -> b` is `b <- a`. Swap operands.
+            return Some(Expr::BinOp {
+                op: if op_text == "->>" {
+                    BinOpKind::SuperAssign
+                } else {
+                    BinOpKind::Assign
+                },
+                lhs: Box::new(rhs),
+                rhs: Box::new(lhs),
+                span,
+            });
+        }
+        _ => {
+            tracing::trace!(op = op_text, "user-defined infix op");
+            return Some(Expr::Call {
+                func: Box::new(Expr::Ident {
+                    name: op_text.to_string(),
+                    span: op_span,
+                }),
+                args: vec![
+                    Arg {
+                        name: None,
+                        span,
+                        value: lhs,
+                    },
+                    Arg {
+                        name: None,
+                        span,
+                        value: rhs,
+                    },
+                ],
+                span,
+            });
+        }
+    };
+    Some(Expr::BinOp {
+        op,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+        span,
+    })
 }
 
 fn namespace_component(raw: String, kind: &str) -> String {
@@ -1096,9 +1143,19 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
             .then(|| node.child_by_field_name("alternative"))
             .flatten()
             .filter(|alt| alt.kind() == "if_statement");
+        // A left-associative binary chain (`1 + 1 + ... + 1`, `x |> f() |> g()`)
+        // nests one `binary_operator` per operator in the CST, though R
+        // writes it flat. Lowering walks that spine iteratively, so the
+        // spine keeps its parent's depth; real nesting still counts.
+        let chain_lhs = (node.kind() == "binary_operator")
+            .then(|| node.child_by_field_name("lhs"))
+            .flatten()
+            .filter(|lhs| lhs.kind() == "binary_operator");
         let mut child_cursor = node.walk();
         for child in node.children(&mut child_cursor) {
-            if Some(child) != else_if {
+            if Some(child) == chain_lhs {
+                stack.push((child, depth, arms));
+            } else if Some(child) != else_if {
                 stack.push((child, depth + 1, arms));
             } else if arms < MAX_ELSE_IF_ARMS {
                 stack.push((child, depth, arms + 1));
@@ -1496,18 +1553,51 @@ mod tests {
                     // Deep conditions inside a long chain.
                     format!("if ({}x{}) 0 else ", "(".repeat(100), ")".repeat(100)).repeat(1000)
                         + "1",
+                    // A left-associative operator chain is as long as it
+                    // is deep in the CST, but it is flat R code: the
+                    // depth limit must not count it (#842).
+                    format!("{}1", "1+".repeat(10_000)),
+                    format!("x <- {}1", "1+".repeat(10_000)),
+                    format!("x <- {}1", "1 |> identity() |> ".repeat(10_000)),
+                    // Teardown is iterative too: a 100,000-term chain must
+                    // not overflow the drop glue (#842).
+                    format!("y <- {}1", "1+".repeat(100_000)),
+                    // A user-defined infix chain lowers to nested calls.
+                    format!("y <- {}1", "1 %foo% ".repeat(50_000)),
+                    // Rightward assignment swaps operands, so its lowered
+                    // chain nests on the other side; a call target must not
+                    // divert the teardown walk.
+                    format!("1{}", " -> x".repeat(50_000)),
+                    format!("1{}", " -> f(1)".repeat(50_000)),
+                    format!("1{}", " -> x+y".repeat(50_000)),
+                    format!("y <- {}1{}", "f(".repeat(40), ")".repeat(40)),
+                    // A long chain inside real nesting still fits under
+                    // the nesting cap.
+                    format!("if (TRUE) {}1", "1+".repeat(10_000)),
                 ] {
                     let file = parser.parse("ordinary.R", &source).unwrap();
                     assert!(file.parse_errors.is_empty());
+                    // Cloning re-enters `stack::grow` per node, so a long
+                    // chain clones without overflowing either (#842).
+                    let copy = file.stmts.clone();
+                    assert_eq!(copy.len(), file.stmts.len());
+                    drop(copy);
                     drop(file);
                 }
                 for source in [
                     format!("{}1", "-".repeat(512)),
-                    format!("{}1", "1+".repeat(512)),
                     format!("{}1{}", "f(".repeat(512), ")".repeat(512)),
                     format!("{}1{}", "{".repeat(512), "}".repeat(512)),
                     format!("{}1", "if (TRUE) ".repeat(512)),
                     format!("{}1", "function() ".repeat(512)),
+                    // Real nesting around a chain still hits the cap.
+                    format!("{}1{}", "(".repeat(200), ")".repeat(200)),
+                    format!(
+                        "{}{}1{}",
+                        "f(".repeat(200),
+                        "1+".repeat(100),
+                        ")".repeat(200)
+                    ),
                 ] {
                     let source = format!("# before\n{source}");
                     let error = parser.parse("deep.R", &source).unwrap_err();

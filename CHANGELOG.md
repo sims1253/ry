@@ -185,6 +185,9 @@ All notable changes to ry are documented in this file.
   `ti =` bind, and a literal `length.out` sets the length on its own. This
   removes false RY002 reports on `rep(x, length.out = 1)`, `rep(x, 2, 1)`
   and `rep(x, len = 1)`.
+- A left-associative binary-operator chain such as a 300-term `1 + 1 + ...`
+  or a long `|>` pipeline is flat R code and no longer trips the 128-level
+  syntax nesting limit; real nesting still does (#842).
 - `ry check` reports a file it cannot read or parse at all (such as one past
   ry's syntax nesting limits) as one RY000 in every output format, instead of
   only a stderr line, so `--output-format json --exit-zero` no longer shows a

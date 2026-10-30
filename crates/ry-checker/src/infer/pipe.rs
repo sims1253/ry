@@ -38,22 +38,80 @@ fn is_placeholder_chain(e: &Expr, form: PipeForm) -> bool {
     }
 }
 
+/// The expression injected as a pipe's first argument.
+///
+/// Past the first stage the LHS is itself a pipe chain, so its code
+/// shape cannot matter: the call receives the value it produced, and
+/// that value's type is already recorded under the LHS span. Cloning
+/// the chain instead costs one node per earlier stage, so a 10,000-term
+/// pipeline would clone about fifty million nodes (#842). Keep the span
+/// so the type cache still answers for the injected argument. An
+/// extraction around a chain (`(a %>% f)$col`) still clones once, which
+/// is a single linear copy rather than a per-stage one.
+///
+/// The placeholder is deliberately `Expr::Unknown`: shape-based analyses
+/// then treat the piped value as unknown code, which is accurate because
+/// that value is not part of the call's syntax. Its type still comes from
+/// `pipe_argument_types`.
+fn piped_argument(lhs: &Expr) -> Expr {
+    if let Expr::BinOp { op, .. } = lhs
+        && is_pipe_operator(*op)
+    {
+        Expr::Unknown(span_of(lhs))
+    } else {
+        lhs.clone()
+    }
+}
+
 /// True if `e` is a magrittr pipe chain whose leftmost operand is the bare
 /// `.` pronoun — `. %>% f`, `. %T>% print`, `. %>% f %<>% g`. magrittr
 /// builds a functional sequence from it: a function whose parameter is the
 /// dot (?magrittr::`%>%`, "Using the dot-place-holder as lhs"), so the dot
 /// is bound for the whole chain. The native pipe has no such form: `_` on
 /// the left of `|>` stays an ordinary unbound name.
-fn is_leading_dot_chain(e: &Expr) -> bool {
-    match e {
-        Expr::Ident { name, .. } => name == ".",
-        Expr::BinOp {
-            op: BinOpKind::PipeForward | BinOpKind::PipeAssign | BinOpKind::PipeTee,
-            lhs,
-            ..
-        } => is_leading_dot_chain(lhs),
-        _ => false,
+/// The `&mut Checker` only warms `leading_dot_chains`; the answer itself
+/// depends on the immutable AST alone.
+fn is_leading_dot_chain(checker: &mut Checker, e: &Expr) -> bool {
+    // Iterative for the same reason as `lower_binary`: a pipe chain is as
+    // deep as it is long (#842). Cache the answer for every stage on the
+    // way down, so checking a pipeline walks its spine once, not once per
+    // stage.
+    let mut pending = Vec::new();
+    let mut current = e;
+    let result = loop {
+        if let Some(known) = checker.leading_dot_chains.get(&span_of(current)) {
+            break *known;
+        }
+        match current {
+            Expr::Ident { name, .. } => break name == ".",
+            Expr::BinOp { op, lhs, .. } if is_magrittr_pipe_operator(*op) => {
+                pending.push(span_of(current));
+                current = lhs;
+            }
+            _ => break false,
+        }
+    };
+    for span in pending {
+        checker.leading_dot_chains.insert(span, result);
     }
+    result
+}
+
+/// Whether `op` is one of R's pipe operators.
+fn is_pipe_operator(op: BinOpKind) -> bool {
+    matches!(
+        op,
+        BinOpKind::PipeNative | BinOpKind::PipeForward | BinOpKind::PipeTee | BinOpKind::PipeAssign
+    )
+}
+
+/// Whether `op` is a magrittr operator, the only ones that bind `.` as a
+/// chain parameter. The native pipe leaves `.` an ordinary name.
+fn is_magrittr_pipe_operator(op: BinOpKind) -> bool {
+    matches!(
+        op,
+        BinOpKind::PipeForward | BinOpKind::PipeTee | BinOpKind::PipeAssign
+    )
 }
 
 impl Checker {
@@ -122,7 +180,7 @@ impl Checker {
         // path, where the binding above resolves it.
         if matches!(form, PipeForm::Magrittr)
             && !self.in_leading_dot_chain
-            && is_leading_dot_chain(lhs)
+            && is_leading_dot_chain(self, lhs)
         {
             let previous = scope.replace_binding_only(".", Some(RType::unknown()));
             self.in_leading_dot_chain = true;
@@ -198,7 +256,7 @@ impl Checker {
                     if substitute {
                         new_args.push(Arg {
                             name: a.name.clone(),
-                            value: lhs.clone(),
+                            value: piped_argument(lhs),
                             span: a.span,
                         });
                         placeholder_seen = true;
@@ -211,7 +269,7 @@ impl Checker {
                         0,
                         Arg {
                             name: None,
-                            value: lhs.clone(),
+                            value: piped_argument(lhs),
                             span,
                         },
                     );
@@ -228,7 +286,7 @@ impl Checker {
             Expr::Ident { .. } => {
                 let new_args = vec![Arg {
                     name: None,
-                    value: lhs.clone(),
+                    value: piped_argument(lhs),
                     span,
                 }];
                 self.infer_pipe_call(rhs, &new_args, lhs, lhs_t.clone(), scope, span)
@@ -267,7 +325,7 @@ impl Checker {
         // A leading-dot tee chain is a functional sequence like the other
         // magrittr forms (magrittr's lambda construction is kind-
         // independent), so the dot binds as the chain's parameter.
-        if !self.in_leading_dot_chain && is_leading_dot_chain(lhs) {
+        if !self.in_leading_dot_chain && is_leading_dot_chain(self, lhs) {
             let previous = scope.replace_binding_only(".", Some(RType::unknown()));
             self.in_leading_dot_chain = true;
             let lhs_t = self.infer(lhs, scope);

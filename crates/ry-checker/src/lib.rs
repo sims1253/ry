@@ -1880,6 +1880,11 @@ pub struct Checker {
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
     pipe_argument_types: HashMap<Span, RType>,
+    /// Whether the pipe chain rooted at a span starts at magrittr's `.`.
+    /// The AST is immutable during a check, so this is safe to cache and
+    /// keeps a long pipeline from re-walking its whole left spine at every
+    /// stage (#842).
+    leading_dot_chains: HashMap<Span, bool>,
     // True while inferring the LHS of a leading-dot magrittr chain
     // (`. %>% f`), so the recursive inner pipe walk treats the already
     // bound `.` as data instead of re-entering the lambda arm.
@@ -2032,6 +2037,9 @@ impl Checker {
             .chain(self.imported_from.keys())
             .any(|name| infer::custom_operator::escaped_name_may_mask_slot(name));
         self.diagnostics.clear();
+        // Spans are per-file, so a cached pipe-chain verdict from a
+        // previous file must not answer for this one.
+        self.leading_dot_chains.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
         self.vacuous_guards.clear();
@@ -2048,6 +2056,10 @@ impl Checker {
         // Pass 2 (fixpoint): refine each function's inferred return type
         // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH.
         self.run_fixpoint();
+        // The fixpoint walks functions from other files, so its last body's
+        // span-keyed pipe-chain verdicts must not answer for this file's
+        // top level in pass 3.
+        self.leading_dot_chains.clear();
         self.known_vars = Arc::new(self.fn_table.known_vars.clone());
     }
 
@@ -2134,6 +2146,7 @@ impl Checker {
             #[cfg(test)]
             journal_branches: true,
             pipe_argument_types: HashMap::new(),
+            leading_dot_chains: HashMap::new(),
             in_leading_dot_chain: false,
             boolean_context_span: None,
             capture_scopes: false,

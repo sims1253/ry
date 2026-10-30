@@ -592,6 +592,9 @@ impl RParser {
             let op_text = op_node.utf8_text(src.as_bytes()).ok()?;
             spine.push((current, op_text, self.span(op_node)));
             match current.child_by_field_name("lhs") {
+                // The grammar nests a left-associative chain through the
+                // `lhs` field only; a `binary_operator` on the right is
+                // syntax-bounded and safely lowered recursively.
                 Some(lhs) if lhs.kind() == "binary_operator" => current = lhs,
                 _ => break,
             }

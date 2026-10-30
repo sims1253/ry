@@ -2056,6 +2056,10 @@ impl Checker {
         // Pass 2 (fixpoint): refine each function's inferred return type
         // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH.
         self.run_fixpoint();
+        // The fixpoint walks functions from other files, so its last body's
+        // span-keyed pipe-chain verdicts must not answer for this file's
+        // top level in pass 3.
+        self.leading_dot_chains.clear();
         self.known_vars = Arc::new(self.fn_table.known_vars.clone());
     }
 

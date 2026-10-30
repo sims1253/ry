@@ -3508,22 +3508,29 @@ impl Checker {
                 .map(|arg| string_literals(&arg.value))
                 .unwrap_or_default();
             if !names.is_empty() {
-                let mut updated = base_t.clone();
+                let mut updated = base_t;
                 let mut added = 0;
+                let mut certain = true;
                 for name in names {
-                    if updated
-                        .columns
-                        .as_ref()
-                        .is_none_or(|schema| schema.get(&name).is_none())
-                    {
-                        added += 1;
+                    match crate::name_presence(&updated, &name) {
+                        crate::NamePresence::Absent => added += 1,
+                        crate::NamePresence::Unknown => certain = false,
+                        crate::NamePresence::Present => {}
                     }
                     updated = type_with_assigned_column(updated, &name, vt.clone());
                 }
-                if added > 0 {
-                    // An incomplete schema may already hold one of these
-                    // names, so only the minimum growth is provable.
-                    updated.length = Length::lower_bound(updated.length.min_possible() + added);
+                if added > 0 || !certain {
+                    let floor = updated.length.min_possible() + added;
+                    updated.length = if certain {
+                        match updated.length.exact() {
+                            Some(length) => crate::exact_length(length + added),
+                            None => Length::lower_bound(floor),
+                        }
+                    } else {
+                        // An incomplete schema may already hold one of
+                        // these names, so only the minimum is provable.
+                        Length::lower_bound(floor)
+                    };
                 }
                 scope.insert(base_name.clone(), updated);
                 return true;
@@ -3559,7 +3566,7 @@ impl Checker {
                 scope.insert(base_name.clone(), updated);
                 return true;
             }
-            let mut updated = base_t.clone();
+            let mut updated = base_t;
             let numeric_replacement = matches!(vt.mode, Mode::Integer | Mode::Double)
                 && !vt.class.is_unknown()
                 && !vt.class.has_known_class();

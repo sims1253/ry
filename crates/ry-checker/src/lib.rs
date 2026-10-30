@@ -200,6 +200,41 @@ enum Extent {
     Unknown,
 }
 
+/// Whether a write's name can be shown to exist already.
+#[derive(Clone, Copy)]
+pub(crate) enum NamePresence {
+    Present,
+    Absent,
+    Unknown,
+}
+
+/// Classify a name against a value's schema. An empty value and a complete
+/// schema prove absence; anything else may already hold the name.
+pub(crate) fn name_presence(base: &RType, name: &str) -> NamePresence {
+    if base
+        .columns
+        .as_ref()
+        .is_some_and(|schema| schema.get(name).is_some())
+    {
+        NamePresence::Present
+    } else if base.length.exact() == Some(0)
+        || base.columns.as_ref().is_some_and(|schema| schema.complete)
+    {
+        NamePresence::Absent
+    } else {
+        NamePresence::Unknown
+    }
+}
+
+/// The canonical [`Length`] for an exact element count.
+pub(crate) fn exact_length(length: usize) -> Length {
+    match length {
+        0 => Length::Zero,
+        1 => Length::One,
+        length => Length::Known(length),
+    }
+}
+
 /// The result type of one classless subassignment write (`x[i] <- v`,
 /// `x[[i]] <- v`, or `x$a <- v`) under base replacement semantics.
 ///
@@ -215,14 +250,6 @@ fn type_after_classless_subassignment(
     args: &[Arg],
     value: &RType,
 ) -> RType {
-    /// Whether a named write can prove the name already exists.
-    #[derive(Clone, Copy)]
-    enum Presence {
-        Present,
-        Absent,
-        Unknown,
-    }
-
     let literal = |expr: &Expr| match expr {
         Expr::Integer(n, _) => Some(*n),
         Expr::Double(n, _) if n.is_finite() && n.fract() == 0.0 => Some(*n as i64),
@@ -252,25 +279,14 @@ fn type_after_classless_subassignment(
                 .first()
                 .map(|arg| string_literals(&arg.value))
                 .unwrap_or_default();
-            (names.len() == 1).then(|| names[0].clone())
+            match names.as_slice() {
+                [name] => Some(name.clone()),
+                _ => None,
+            }
         }
         IndexKind::Slot => return RType::unknown(),
     };
-    let presence = name.as_deref().map(|name| {
-        if base
-            .columns
-            .as_ref()
-            .is_some_and(|schema| schema.get(name).is_some())
-        {
-            Presence::Present
-        } else if base.length.exact() == Some(0)
-            || base.columns.as_ref().is_some_and(|schema| schema.complete)
-        {
-            Presence::Absent
-        } else {
-            Presence::Unknown
-        }
-    });
+    let presence = name.as_deref().map(|name| name_presence(base, name));
     // `x$a <- NULL` drops the element instead of storing it; a value that
     // may be NULL either drops or replaces it.
     let definitely_null = matches!(value.mode, Mode::Null);
@@ -297,9 +313,9 @@ fn type_after_classless_subassignment(
             // A non-list atomic element cannot hold NULL; the write errors
             // instead, so widen rather than keep a stale shape.
             (_, _, true) => Extent::Unknown,
-            (_, Presence::Present, false) => Extent::Within,
-            (_, Presence::Absent, false) => Extent::NewName,
-            (_, Presence::Unknown, false) => Extent::MaybeNewName,
+            (_, NamePresence::Present, false) => Extent::Within,
+            (_, NamePresence::Absent, false) => Extent::NewName,
+            (_, NamePresence::Unknown, false) => Extent::MaybeNewName,
         }
     } else if may_delete {
         Extent::Unknown
@@ -369,16 +385,16 @@ fn type_after_classless_subassignment(
             // it, and a replacement of an absent name extends the vector.
             if definitely_null {
                 match presence {
-                    Some(Presence::Present) => match old.exact() {
+                    Some(NamePresence::Present) => match old.exact() {
                         Some(length) => exact(length.saturating_sub(1)),
                         None => Length::lower_bound(old.min_possible().saturating_sub(1)),
                     },
-                    Some(Presence::Absent) => old,
+                    Some(NamePresence::Absent) => old,
                     _ => Length::lower_bound(old.min_possible().saturating_sub(1)),
                 }
             } else {
                 let floor = match presence {
-                    Some(Presence::Absent) => old.min_possible(),
+                    Some(NamePresence::Absent) => old.min_possible(),
                     _ => old.min_possible().saturating_sub(1),
                 };
                 Length::lower_bound(floor)
@@ -411,6 +427,17 @@ fn type_after_classless_subassignment(
             result
         }
         (_, Some(name), _) => {
+            // Coercing an atomic receiver changes every element's mode, so
+            // the recorded types of untouched names are stale.
+            if !matches!(result.mode, Mode::List | Mode::Null) && result.mode != base.mode {
+                if let Some(schema) = result.columns.as_ref() {
+                    let mut schema = (**schema).clone();
+                    for (_, column) in &mut schema.columns {
+                        *column = RType::scalar(result.mode);
+                    }
+                    result = result.with_columns(Arc::new(schema));
+                }
+            }
             let mut updated = type_with_assigned_column(result, &name, value.clone());
             if may_delete && let Some(schema) = updated.columns.as_ref() {
                 let mut schema = (**schema).clone();

@@ -3742,12 +3742,17 @@ impl Checker {
                 schema.columns.retain(|(name, _)| name != col);
                 updated = updated.with_columns(Arc::new(schema));
             }
-            if matches!(presence, crate::NamePresence::Present) {
-                updated.length = match updated.length.exact() {
+            updated.length = match presence {
+                crate::NamePresence::Present => match updated.length.exact() {
                     Some(length) => crate::exact_length(length.saturating_sub(1)),
                     None => Length::lower_bound(updated.length.min_possible().saturating_sub(1)),
-                };
-            }
+                },
+                crate::NamePresence::Absent => updated.length,
+                // The name may exist, so the removal may or may not happen.
+                crate::NamePresence::Unknown => {
+                    Length::lower_bound(updated.length.min_possible().saturating_sub(1))
+                }
+            };
         } else {
             updated = type_with_assigned_column(updated, col, vt);
             let absent = matches!(presence, crate::NamePresence::Absent);
@@ -3761,13 +3766,16 @@ impl Checker {
                     floor.saturating_sub(1)
                 };
                 Length::lower_bound(floor)
-            } else if absent {
-                match updated.length.exact() {
-                    Some(length) => crate::exact_length(length.saturating_add(1)),
-                    None => Length::lower_bound(floor.saturating_add(1)),
-                }
             } else {
-                updated.length
+                match presence {
+                    crate::NamePresence::Absent => match updated.length.exact() {
+                        Some(length) => crate::exact_length(length.saturating_add(1)),
+                        None => Length::lower_bound(floor.saturating_add(1)),
+                    },
+                    crate::NamePresence::Present => updated.length,
+                    // The name may exist, so the length may stay or grow.
+                    crate::NamePresence::Unknown => Length::lower_bound(floor),
+                }
             };
         }
         scope.insert(base_name.clone(), updated);

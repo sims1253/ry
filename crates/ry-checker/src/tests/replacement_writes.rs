@@ -385,3 +385,15 @@ fn classed_atomic_named_write_is_handled() {
     assert!(x.columns.is_some(), "{x:?}");
     assert_ne!(x.length.exact(), Some(0), "{x:?}");
 }
+
+/// An incomplete schema (after a positional write) makes name membership
+/// unknown, so a named write must widen instead of keeping the exact
+/// length in either direction.
+#[test]
+fn unknown_name_presence_widens_list_and_delete_lengths() {
+    let (_, scope) = check_with_scope("l <- list(a = 1L, b = 2L); l[[1]] <- 10L; l$c <- 3L");
+    assert_eq!(scope.get("l").unwrap().length.exact(), None);
+
+    let (_, scope) = check_with_scope("l <- list(a = 1L, b = 2L); l[[1]] <- 10L; l$b <- NULL");
+    assert_eq!(scope.get("l").unwrap().length.exact(), None);
+}

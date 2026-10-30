@@ -199,3 +199,28 @@ fn rebound_replacement_widens_to_unknown() {
     let (_, scope) = check_with_scope("`[<-` <- function(x, i, value) NULL\nx <- 1:3\nx[2] <- 5L");
     assert!(scope.get("x").unwrap().mode.is_unknown());
 }
+
+/// A very negative literal subscript goes through the negative-literal
+/// path without overflowing the `i64` negation, and never extends.
+#[test]
+fn large_negative_subscript_literal_is_harmless() {
+    let (_, scope) = check_with_scope("x <- 1:3; x[-99999999999999] <- 1L");
+    let x = scope.get("x").unwrap();
+    assert_eq!(x.length, Length::Known(3), "{x:?}");
+}
+
+/// A named `[<-`/`[[<-` whose value may be NULL is an ordinary named
+/// write on the branch that runs; the length must widen because the NULL
+/// branch errors on an atomic vector instead of deleting.
+#[test]
+fn maybe_null_named_index_write_widens() {
+    for write in ["x[[\"a\"]] <- v", "x[\"a\"] <- v"] {
+        let source = format!(
+            "flag <- sample(c(TRUE, FALSE), 1)\nx <- c(a = 1L)\nv <- if (flag) NULL else 2L\n{write}"
+        );
+        let (_, scope) = check_with_scope(&source);
+        let x = scope.get("x").unwrap();
+        assert!(x.mode.is_unknown(), "{write}: {x:?}");
+        assert_eq!(x.length.exact(), None, "{write}: {x:?}");
+    }
+}

@@ -337,14 +337,17 @@ fn has_long_left_spine(e: &Expr) -> bool {
         match current {
             Expr::BinOp { lhs, rhs, .. } => {
                 // Rightward assignment (`a -> b`) lowers with swapped
-                // operands, so the running chain can sit on either side.
-                current = if is_chain_node(lhs) {
-                    lhs
+                // operands: the target sits on the left, so continue down
+                // the left only for a real `BinOp` and otherwise take the
+                // right-hand continuation. A call target on the left is
+                // not the chain.
+                if matches!(**lhs, Expr::BinOp { .. }) {
+                    current = lhs;
                 } else if is_chain_node(rhs) {
-                    rhs
+                    current = rhs;
                 } else {
                     return false;
-                };
+                }
             }
             // A user-defined infix operator (`a %foo% b`) lowers to a call
             // and nests its chain in the first argument; an ordinary call
@@ -361,10 +364,16 @@ fn has_long_left_spine(e: &Expr) -> bool {
     true
 }
 
-/// Whether `e` can continue a chain (a binary node or a lowered infix
+/// Whether `e` can continue a chain (a binary node or a lowered user-infix
 /// call).
 fn is_chain_node(e: &Expr) -> bool {
-    matches!(e, Expr::BinOp { .. } | Expr::Call { .. })
+    match e {
+        Expr::BinOp { .. } => true,
+        Expr::Call { func, .. } => {
+            matches!(**func, Expr::Ident { ref name, .. } if name.starts_with('%'))
+        }
+        _ => false,
+    }
 }
 
 /// Move every immediate expression child of `e` into `out`, leaving a

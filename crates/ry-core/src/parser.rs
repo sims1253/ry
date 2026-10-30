@@ -1562,8 +1562,10 @@ mod tests {
                     // A user-defined infix chain lowers to nested calls.
                     format!("y <- {}1", "1 %foo% ".repeat(50_000)),
                     // Rightward assignment swaps operands, so its lowered
-                    // chain nests on the other side.
+                    // chain nests on the other side; a call target must not
+                    // divert the teardown walk.
                     format!("1{}", " -> x".repeat(50_000)),
+                    format!("1{}", " -> f(1)".repeat(50_000)),
                     format!("y <- {}1{}", "f(".repeat(40), ")".repeat(40)),
                     // A long chain inside real nesting still fits under
                     // the nesting cap.

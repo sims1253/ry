@@ -433,11 +433,11 @@ fn magrittr_leading_dot_pipe_builds_a_function() {
 #[test]
 fn checker_reuse_clears_the_leading_dot_cache() {
     let mut checker = Checker::new("a.R");
-    checker.check(&parse_file("a.R", "z <- . %>% f\n"));
-    // The pipe node occupies the same byte span as the first file's, but
-    // this chain starts at `1`, so it is an ordinary call, not a
+    checker.check(&parse_file("a.R", "z <- . %>% f %>% g\n"));
+    // The inner pipe node occupies the same byte span as the first file's,
+    // but this chain starts at `1`, so it is an ordinary call, not a
     // functional sequence.
-    let file = parse_file("a.R", "z <- 1 %>% f\n");
+    let file = parse_file("a.R", "z <- 1 %>% f %>% g\n");
     let (_, scope) = checker.check_with_scope(&file);
     let z = scope.get("z").unwrap();
     assert_ne!(z.mode, Mode::Function, "{z:?}");

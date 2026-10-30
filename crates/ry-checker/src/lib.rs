@@ -244,10 +244,16 @@ fn type_after_classless_subassignment(
             .first()
             .and_then(|arg| arg.name.as_deref())
             .map(str::to_owned),
-        IndexKind::Single | IndexKind::Double => args.first().and_then(|arg| match &arg.value {
-            Expr::String(name, _) => Some(name.clone()),
-            _ => None,
-        }),
+        IndexKind::Single | IndexKind::Double => {
+            // `x[c("a")] <- v` names one element, like `x["a"] <- v`.
+            // A multi-element character subscript may add several names,
+            // which the single-name length rule cannot count.
+            let names = args
+                .first()
+                .map(|arg| string_literals(&arg.value))
+                .unwrap_or_default();
+            (names.len() == 1).then(|| names[0].clone())
+        }
         IndexKind::Slot => return RType::unknown(),
     };
     let presence = name.as_deref().map(|name| {

@@ -269,3 +269,17 @@ fn null_base_with_null_value_stays_null() {
         assert_eq!(x.length, Length::Zero, "{source}: {x:?}");
     }
 }
+
+/// A one-element character vector names its element like the bare string;
+/// a longer one may add several names the length rule cannot count.
+#[test]
+fn one_element_character_vector_subscript_names_the_write() {
+    let (_, scope) = check_with_scope("x <- c(a = 1L); x[c(\"b\")] <- 2L");
+    assert_eq!(scope.get("x").unwrap().length, Length::Known(2));
+
+    let (_, scope) = check_with_scope("x <- c(a = 1L); x[c(\"a\")] <- 2L");
+    assert_eq!(scope.get("x").unwrap().length.exact(), Some(1));
+
+    let (_, scope) = check_with_scope("x <- c(a = 1L); x[c(\"a\", \"b\")] <- 2L");
+    assert_eq!(scope.get("x").unwrap().length.exact(), None);
+}

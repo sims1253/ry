@@ -264,16 +264,6 @@ expression: snapshots
   fixture: err_constant_argument_shadowing.R
 - diagnostics:
     - code: RY061
-      message: "$ operator is invalid for atomic vectors of mode `character`"
-      severity: error
-      span:
-        column: 0
-        end: 39
-        line: 2
-        start: 34
-  fixture: err_dollar_assign_atomic.R
-- diagnostics:
-    - code: RY061
       message: "$ operator is invalid for atomic vectors of mode `double`"
       severity: error
       span:
@@ -2400,6 +2390,8 @@ expression: snapshots
   fixture: ok_df_column_assignment.R
 - diagnostics: []
   fixture: ok_divisible_recycling.R
+- diagnostics: []
+  fixture: ok_dollar_assign_atomic.R
 - diagnostics: []
   fixture: ok_dollar_assign_classed_atomic.R
 - diagnostics: []

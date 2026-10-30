@@ -3474,7 +3474,9 @@ impl Checker {
             scope.invalidate_unknown_effects();
             return true;
         }
-        if matches!(kind, IndexKind::Single) {
+        if matches!(kind, IndexKind::Single)
+            && !(base_t.mode.is_atomic() || matches!(base_t.mode, Mode::Null))
+        {
             let names = args
                 .first()
                 .map(|arg| string_literals(&arg.value))
@@ -3511,7 +3513,7 @@ impl Checker {
                                 "is.na", func, "is.na", "is.na", "base", scope,
                             ), crate::resolve::SpecialCallProvenance::Proven)
                 );
-            let mut updated = base_t;
+            let mut updated = base_t.clone();
             let numeric_replacement = matches!(vt.mode, Mode::Integer | Mode::Double)
                 && !vt.class.is_unknown()
                 && !vt.class.has_known_class();
@@ -3565,6 +3567,54 @@ impl Checker {
             } else if !no_selection {
                 updated.value_facts = ry_core::types::ValueFacts::default();
             }
+            // An `is.na(x)` repair keeps the vector's shape; any other
+            // subscript may extend it or coerce its mode (#839).
+            if !only_missing && base_t.class.is_classless() {
+                updated = if self.resolves_to_base("[<-", scope)
+                    && !ops_chooser::operator_rebound(self, "[<-", scope)
+                {
+                    crate::type_after_classless_subassignment(&base_t, kind, args, &vt)
+                } else {
+                    // A user replacement may return anything.
+                    RType::unknown()
+                };
+            }
+            scope.insert(base_name.clone(), updated);
+            return true;
+        }
+        // A classless atomic (or `NULL`) receiver takes R's subassignment
+        // coercion: the mode joins upward, a named write extends the
+        // names, and the length follows the touched subscript (#839).
+        // `$<-` on an atomic vector converts it to a list with a warning;
+        // the `$` error RY061 reports is the read side, so no replacement
+        // raises it (#840).
+        if (base_t.mode.is_atomic() || matches!(base_t.mode, Mode::Null))
+            && base_t.class.is_classless()
+            && matches!(
+                kind,
+                IndexKind::Dollar | IndexKind::Single | IndexKind::Double
+            )
+        {
+            // `$` names its field, it does not evaluate an expression, so
+            // only the computed subscript kinds have arguments to infer.
+            if !matches!(kind, IndexKind::Dollar) {
+                for argument in args {
+                    self.infer(&argument.value, scope);
+                }
+            }
+            let operator = match kind {
+                IndexKind::Dollar => "$<-",
+                IndexKind::Double => "[[<-",
+                _ => "[<-",
+            };
+            let updated = if self.resolves_to_base(operator, scope)
+                && !ops_chooser::operator_rebound(self, operator, scope)
+            {
+                crate::type_after_classless_subassignment(&base_t, kind, args, &vt)
+            } else {
+                // A user replacement may return anything.
+                RType::unknown()
+            };
             scope.insert(base_name.clone(), updated);
             return true;
         }
@@ -3626,18 +3676,6 @@ impl Checker {
             }
             return false;
         };
-        if base_t.mode.is_atomic() && base_t.columns.is_none() {
-            self.emit(
-                Severity::Error,
-                span,
-                "RY061",
-                format!(
-                    "$ operator is invalid for atomic vectors of mode `{}`",
-                    base_t.mode
-                ),
-            );
-            return true;
-        }
         scope.insert(
             base_name.clone(),
             type_with_assigned_column(base_t, col, vt),

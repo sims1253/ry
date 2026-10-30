@@ -1012,8 +1012,8 @@ val <- x$a
 # no-diag
 `$<-.widget` <- function(x,name,value) { assign('marker',1L,envir=parent.frame()); list(saved=value) }; f <- function(flag) { marker <- 'before'; x <- structure(if(flag) 1L else 'payload',class='widget'); x$field <- 3L; marker+1L; x$saved }; f(TRUE); f(FALSE)
 
-## case: $<- on a plain integer is an error
-# expect: RY061
+## case: $<- on a plain integer coerces it to a list
+# no-diag
 x <- 1L; x$field <- 3L
 
 ## case: $ on a data.frame is fine

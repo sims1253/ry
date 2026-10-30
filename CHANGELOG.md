@@ -171,6 +171,14 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Indexed replacement (`x[i] <- v`, `x[[i]] <- v`, `x$a <- v`) updates the
+  binding's exported type: the mode joins upward as R coerces it, a named
+  write extends the names, and a positive literal subscript or the value
+  extends the length. `dump-facts` no longer reports the pre-write type for
+  such bindings (#839).
+- `x[["a"]] <- v` and `x$a <- v` on an atomic vector are valid R (R warns
+  and coerces the LHS to a list) and no longer report RY061; the rule keeps
+  firing for the read-side `$` operator (#840).
 - `rep()` length inference matches arguments as R does: a third positional
   argument is `length.out`, not `each`, partial names such as `len =` and
   `ti =` bind, and a literal `length.out` sets the length on its own. This

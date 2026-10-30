@@ -392,10 +392,9 @@ fn take_child_expressions(e: &mut Expr, out: &mut Vec<Expr>) {
                 take(alternative, out);
             }
         }
-        // Bodies and parameter lists hold statements whose own drops
-        // flatten their chains; statement nesting stays under the syntax
-        // depth limit.
-        Expr::Function { .. } | Expr::Block { .. } => {}
+        // A block body holds statements whose own drops flatten their
+        // chains; statement nesting stays under the syntax depth limit.
+        Expr::Block { .. } => {}
         // No expression children.
         Expr::Logical(..)
         | Expr::Integer(..)

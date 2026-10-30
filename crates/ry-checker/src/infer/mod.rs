@@ -3708,10 +3708,52 @@ impl Checker {
             }
             return false;
         };
-        scope.insert(
-            base_name.clone(),
-            type_with_assigned_column(base_t, col, vt),
-        );
+        // A named write on a list or data frame adds a field, or removes
+        // one when the value is NULL; either moves the length with it.
+        let presence = crate::name_presence(&base_t, col);
+        let may_be_null = matches!(vt.mode, Mode::Null)
+            || vt.members.as_ref().is_some_and(|members| {
+                members
+                    .iter()
+                    .any(|member| matches!(member.mode, Mode::Null))
+            });
+        let definitely_null = matches!(vt.mode, Mode::Null);
+        let mut updated = base_t;
+        if definitely_null {
+            if let Some(schema) = updated.columns.as_ref() {
+                let mut schema = (**schema).clone();
+                schema.columns.retain(|(name, _)| name != col);
+                updated = updated.with_columns(Arc::new(schema));
+            }
+            if matches!(presence, crate::NamePresence::Present) {
+                updated.length = match updated.length.exact() {
+                    Some(length) => crate::exact_length(length.saturating_sub(1)),
+                    None => Length::lower_bound(updated.length.min_possible().saturating_sub(1)),
+                };
+            }
+        } else {
+            updated = type_with_assigned_column(updated, col, vt);
+            let absent = matches!(presence, crate::NamePresence::Absent);
+            let floor = updated.length.min_possible();
+            updated.length = if may_be_null {
+                // A NULL branch would remove the field instead; an absent
+                // name makes that a no-op.
+                let floor = if absent {
+                    floor
+                } else {
+                    floor.saturating_sub(1)
+                };
+                Length::lower_bound(floor)
+            } else if absent {
+                match updated.length.exact() {
+                    Some(length) => crate::exact_length(length + 1),
+                    None => Length::lower_bound(floor + 1),
+                }
+            } else {
+                updated.length
+            };
+        }
+        scope.insert(base_name.clone(), updated);
         true
     }
 

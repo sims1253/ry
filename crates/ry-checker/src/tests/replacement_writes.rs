@@ -320,3 +320,21 @@ fn named_write_coercion_updates_existing_element_types() {
     assert_eq!(scope.get("x").unwrap().mode, Mode::Character);
     assert_eq!(scope.get("y").unwrap().mode, Mode::Character);
 }
+
+/// `$<-` and `[[<-` with a new name add a list or data-frame field, and a
+/// NULL value removes one instead.
+#[test]
+fn dollar_and_double_bracket_move_list_lengths() {
+    for write in ["l$b <- 2L", "l[[\"b\"]] <- 2L", "l[\"b\"] <- 2L"] {
+        let (_, scope) = check_with_scope(&format!("l <- list(a = 1L); {write}"));
+        assert_eq!(scope.get("l").unwrap().length, Length::Known(2), "{write}");
+    }
+    let (_, scope) = check_with_scope("l <- list(a = 1L); l$a <- NULL");
+    assert_eq!(scope.get("l").unwrap().length, Length::Zero);
+    let (_, scope) = check_with_scope("l <- list(a = 1L); l$b <- NULL");
+    assert_eq!(scope.get("l").unwrap().length.exact(), Some(1));
+    let (_, scope) = check_with_scope(
+        "flag <- sample(c(TRUE, FALSE), 1)\nl <- list(a = 1L)\nv <- if (flag) NULL else 2L\nl$b <- v",
+    );
+    assert_eq!(scope.get("l").unwrap().length.exact(), None);
+}

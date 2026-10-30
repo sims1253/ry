@@ -268,11 +268,14 @@ fn type_after_classless_subassignment(
     // `x$a <- NULL` drops the element instead of storing it; a value that
     // may be NULL either drops or replaces it.
     let definitely_null = matches!(value.mode, Mode::Null);
+    // An unknown value may be NULL too, as the list path in
+    // `assign_index_target` already assumes.
     let may_delete = definitely_null
+        || value.mode.is_unknown()
         || value.members.as_ref().is_some_and(|members| {
             members
                 .iter()
-                .any(|member| matches!(member.mode, Mode::Null))
+                .any(|member| member.mode.is_unknown() || matches!(member.mode, Mode::Null))
         });
     let extent = if let Some(presence) = presence {
         match (kind, presence, may_delete) {
@@ -306,10 +309,19 @@ fn type_after_classless_subassignment(
     let mut result = base.clone();
     result.value_facts = ry_core::types::ValueFacts::default();
     result.mode = match kind {
-        // `x$a <- v` warns and coerces the LHS to a list.
-        IndexKind::Dollar => Mode::List,
-        // `NULL[[i]] <- v` builds a list whatever `v` holds.
-        IndexKind::Double if matches!(base.mode, Mode::Null) => Mode::List,
+        // `$<- NULL` on a NULL or atomic base stays NULL; `$<-` with a
+        // value coerces an atomic LHS to a list with a warning.
+        IndexKind::Dollar | IndexKind::Double
+            if matches!(base.mode, Mode::Null) && definitely_null =>
+        {
+            Mode::Null
+        }
+        // A value that may be NULL leaves either NULL or a list.
+        IndexKind::Dollar | IndexKind::Double if matches!(base.mode, Mode::Null) && may_delete => {
+            Mode::Opaque
+        }
+        // Any other write into a NULL base builds a list.
+        IndexKind::Dollar | IndexKind::Double if matches!(base.mode, Mode::Null) => Mode::List,
         // A whole vector in one `[[<-` element also turns an atomic
         // vector into a list.
         IndexKind::Double => match value.mode {
@@ -317,9 +329,16 @@ fn type_after_classless_subassignment(
             other => base.mode.combine_result(other),
         },
         IndexKind::Single => base.mode.combine_result(value.mode),
+        // `x$a <- v` coerces an atomic LHS to a list with a warning.
+        IndexKind::Dollar => Mode::List,
         IndexKind::Slot => return RType::unknown(),
     };
     let old = base.length;
+    if result.mode == Mode::Null && definitely_null {
+        // `NULL[...] <- NULL` keeps NULL regardless of the subscript.
+        result.length = Length::Zero;
+        return result;
+    }
     let exact = |length: usize| match length {
         0 => Length::Zero,
         1 => Length::One,

@@ -3523,7 +3523,10 @@ impl Checker {
                     || (updated.value_facts.all_values_known
                         && !updated.value_facts.prior_na
                         && updated.value_facts.new_na == ry_core::types::NewNaProvenance::None));
-            if only_missing && numeric_replacement {
+            if only_missing {
+                // An `is.na(x)` repair keeps the shape but still coerces
+                // the mode (`x[is.na(x)] <- "none"` makes a character
+                // vector).
                 updated.mode = updated.mode.combine_result(vt.mode);
             }
             if only_missing
@@ -3570,8 +3573,13 @@ impl Checker {
             // An `is.na(x)` repair keeps the vector's shape; any other
             // subscript may extend it or coerce its mode (#839).
             if !only_missing && base_t.class.is_classless() {
-                updated = if self.resolves_to_base("[<-", scope)
-                    && !ops_chooser::operator_rebound(self, "[<-", scope)
+                let operator = if matches!(kind, IndexKind::Double) {
+                    "[[<-"
+                } else {
+                    "[<-"
+                };
+                updated = if self.resolves_to_base(operator, scope)
+                    && !ops_chooser::operator_rebound(self, operator, scope)
                 {
                     crate::type_after_classless_subassignment(&base_t, kind, args, &vt)
                 } else {

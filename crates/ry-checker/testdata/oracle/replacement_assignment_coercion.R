@@ -38,3 +38,9 @@ pick_absent <- function(flag) {
   length(x)
 }
 stopifnot(identical(pick_absent(TRUE), 1L), identical(pick_absent(FALSE), 2L))
+# An `is.na()` repair coerces the mode like any other subassignment.
+r <- c(1, NA); r[is.na(r)] <- "none"
+stopifnot(identical(r, c("1", "none")))
+# A definite NULL written into a NULL base stays NULL.
+n <- NULL; n[[1]] <- NULL
+stopifnot(is.null(n))

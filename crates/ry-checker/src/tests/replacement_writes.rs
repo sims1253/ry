@@ -224,3 +224,48 @@ fn maybe_null_named_index_write_widens() {
         assert_eq!(x.length.exact(), None, "{write}: {x:?}");
     }
 }
+
+/// An `is.na()` repair keeps the shape but coerces the mode like any
+/// other write, so a non-numeric repair must not leave the old mode.
+#[test]
+fn non_numeric_is_na_repair_coerces_mode() {
+    let (_, scope) = check_with_scope("x <- c(1, NA); x[is.na(x)] <- \"none\"");
+    let x = scope.get("x").unwrap();
+    assert_eq!(x.mode, Mode::Character, "{x:?}");
+    assert_eq!(x.length, Length::Known(2), "{x:?}");
+}
+
+/// A rebound `[[<-` may return anything, so the numeric path must look up
+/// the operator that actually runs.
+#[test]
+fn rebound_double_bracket_replacement_widens_on_numeric_base() {
+    let (_, scope) =
+        check_with_scope("`[[<-` <- function(x, i, value) NULL\nx <- 1:3\nx[[2]] <- 1L");
+    assert!(scope.get("x").unwrap().mode.is_unknown());
+}
+
+/// An opaque value may be NULL, which deletes the element instead of
+/// storing it.
+#[test]
+fn opaque_value_may_delete() {
+    let (_, scope) = check_with_scope("x <- NULL; x$a <- compute()");
+    let x = scope.get("x").unwrap();
+    assert!(x.mode.is_unknown(), "{x:?}");
+    assert_eq!(x.length.exact(), None, "{x:?}");
+}
+
+/// A definite NULL written into a NULL base stays NULL, whatever the
+/// subscript; R returns NULL rather than an empty list.
+#[test]
+fn null_base_with_null_value_stays_null() {
+    for source in [
+        "x <- NULL; x[[1]] <- NULL",
+        "x <- NULL; x[1] <- NULL",
+        "x <- NULL; x$a <- NULL",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        let x = scope.get("x").unwrap();
+        assert_eq!(x.mode, Mode::Null, "{source}: {x:?}");
+        assert_eq!(x.length, Length::Zero, "{source}: {x:?}");
+    }
+}

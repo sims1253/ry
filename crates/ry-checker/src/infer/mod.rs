@@ -3508,9 +3508,22 @@ impl Checker {
                 .map(|arg| string_literals(&arg.value))
                 .unwrap_or_default();
             if !names.is_empty() {
-                let mut updated = base_t;
+                let mut updated = base_t.clone();
+                let mut added = 0;
                 for name in names {
+                    if updated
+                        .columns
+                        .as_ref()
+                        .is_none_or(|schema| schema.get(&name).is_none())
+                    {
+                        added += 1;
+                    }
                     updated = type_with_assigned_column(updated, &name, vt.clone());
+                }
+                if added > 0 {
+                    // An incomplete schema may already hold one of these
+                    // names, so only the minimum growth is provable.
+                    updated.length = Length::lower_bound(updated.length.min_possible() + added);
                 }
                 scope.insert(base_name.clone(), updated);
                 return true;
@@ -3539,6 +3552,13 @@ impl Checker {
                                 "is.na", func, "is.na", "is.na", "base", scope,
                             ), crate::resolve::SpecialCallProvenance::Proven)
                 );
+            // A plain write takes the subassignment model; only an
+            // `is.na(x)` repair needs the shape-preserving logic below.
+            if !only_missing && base_t.class.is_classless() {
+                let updated = self.classless_subassignment(&base_t, kind, args, &vt, scope);
+                scope.insert(base_name.clone(), updated);
+                return true;
+            }
             let mut updated = base_t.clone();
             let numeric_replacement = matches!(vt.mode, Mode::Integer | Mode::Double)
                 && !vt.class.is_unknown()
@@ -3595,11 +3615,6 @@ impl Checker {
                 }
             } else if !no_selection {
                 updated.value_facts = ry_core::types::ValueFacts::default();
-            }
-            // An `is.na(x)` repair keeps the vector's shape; any other
-            // subscript may extend it or coerce its mode (#839).
-            if !only_missing && base_t.class.is_classless() {
-                updated = self.classless_subassignment(&base_t, kind, args, &vt, scope);
             }
             scope.insert(base_name.clone(), updated);
             return true;

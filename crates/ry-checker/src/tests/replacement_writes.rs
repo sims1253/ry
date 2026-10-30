@@ -283,3 +283,31 @@ fn one_element_character_vector_subscript_names_the_write() {
     let (_, scope) = check_with_scope("x <- c(a = 1L); x[c(\"a\", \"b\")] <- 2L");
     assert_eq!(scope.get("x").unwrap().length.exact(), None);
 }
+
+/// A named write on a list or data frame adds an element the schema does
+/// not hold; the length must follow even though the classless atomic path
+/// does not handle these bases.
+#[test]
+fn named_write_extends_a_list_length() {
+    let (_, scope) = check_with_scope("l <- list(a = 1L); l[\"b\"] <- 2L");
+    assert_eq!(scope.get("l").unwrap().length, Length::AtLeast(2));
+
+    let (_, scope) = check_with_scope("l <- list(a = 1L); l[\"a\"] <- 2L");
+    assert_eq!(scope.get("l").unwrap().length.exact(), Some(1));
+}
+
+/// `x[i] <- NULL` on an atomic vector is an error, so no shape is
+/// reachable; do not export the base mode as if the write succeeded.
+#[test]
+fn null_value_on_an_atomic_base_widens() {
+    let (_, scope) = check_with_scope("x <- 1:3; x[1] <- NULL");
+    assert!(scope.get("x").unwrap().mode.is_unknown());
+}
+
+/// A named `[[` subscript selects an array dimension, which the
+/// single-literal view cannot prove; it must not pin the length.
+#[test]
+fn named_double_subscript_widens() {
+    let (_, scope) = check_with_scope("x <- 1:3; x[[i = 2]] <- 1L");
+    assert_eq!(scope.get("x").unwrap().length.exact(), None);
+}

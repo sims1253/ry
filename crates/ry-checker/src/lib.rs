@@ -283,6 +283,13 @@ fn type_after_classless_subassignment(
                 .iter()
                 .any(|member| member.mode.is_unknown() || matches!(member.mode, Mode::Null))
         });
+    if definitely_null
+        && matches!(kind, IndexKind::Single | IndexKind::Double)
+        && !matches!(base.mode, Mode::Null)
+    {
+        // `x[i] <- NULL` on an atomic vector is an error, not a shape.
+        return RType::unknown();
+    }
     let extent = if let Some(presence) = presence {
         match (kind, presence, may_delete) {
             // `$<- NULL` removes the name after coercing the LHS to a list.
@@ -304,8 +311,10 @@ fn type_after_classless_subassignment(
             },
             // `x[[i, j]] <- v` uses recursive-list semantics the
             // single-literal view cannot prove.
+            // A named subscript selects an array dimension rather than a
+            // position, which the single-literal view cannot prove.
             IndexKind::Double => match args {
-                [arg] => position_extent(literal(&arg.value)),
+                [arg] if arg.name.is_none() => position_extent(literal(&arg.value)),
                 _ => Extent::Unknown,
             },
             IndexKind::Dollar | IndexKind::Slot => Extent::Unknown,

@@ -494,6 +494,35 @@ fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
     );
 }
 
+/// data.table's stub declares the column names that `setkey()`,
+/// `setindex()`, `setorder()`, and `frank()` capture with `substitute()`,
+/// while `setkeyv()` takes a character vector and reads it.
+#[test]
+fn data_table_stub_quotes_column_name_arguments() {
+    let quoted = check(
+        "library(data.table)\n\
+         dat <- fread(\"x.csv\")\n\
+         setkey(dat, grp)\n\
+         setindex(dat, grp)\n\
+         setorder(dat, grp, -val)\n\
+         r <- frank(dat, grp, val)\n",
+    );
+    assert!(
+        quoted.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "quoted column names are not references: {quoted:?}"
+    );
+
+    let eager = check(
+        "library(data.table)\n\
+         dat <- fread(\"x.csv\")\n\
+         setkeyv(dat, undefined_cols)\n",
+    );
+    assert!(
+        eager.iter().any(|diagnostic| diagnostic.code == "RY010"),
+        "setkeyv() reads its `cols` argument: {eager:?}"
+    );
+}
+
 #[test]
 fn rlang_eager_helpers_read_their_arguments() {
     // rlang's sym/abort/inform/new_formula/new_quosure evaluate their

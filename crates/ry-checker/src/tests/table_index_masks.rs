@@ -126,13 +126,14 @@ fn project_functions_do_not_shadow_masked_columns() {
     );
 }
 
-/// Without usable column knowledge (an opaque receiver, the shape an
-/// unstubbed `as.data.table()` / `fread()` call types as) the mask stays
-/// light: bare symbols never borrow a scope function's type (#369's
-/// bail-out), and named control arguments (`by`, `.SDcols`) resolve
-/// through an unenumerable mask. The receiver may equally be an atomic
-/// vector whose type degraded, so positional names that resolve nowhere
-/// keep the ordinary RY010.
+/// Without usable column knowledge (a data.table of unknown columns, or
+/// an opaque receiver such as a parameter or an `fread()` result) the
+/// mask stays light: bare symbols never borrow a scope function's type
+/// (#369's bail-out), and named control arguments (`by`, `.SDcols`)
+/// resolve through an unenumerable mask. An opaque receiver may equally
+/// be an atomic vector whose type degraded, so without data.table
+/// attached, positional names that resolve nowhere keep the ordinary
+/// RY010.
 #[test]
 fn unknown_schema_table_index_prefers_silence() {
     let masked = check(
@@ -149,13 +150,51 @@ fn unknown_schema_table_index_prefers_silence() {
         "an unknown-columns receiver must silence bare-symbol comparisons and controls: {masked:?}"
     );
 
-    let nowhere = check(
-        "dat <- data.table::as.data.table(data.frame(month = 1:12))\n\
-         x <- dat[undefined_name]\n",
-    );
+    let nowhere = check("f <- function(dat) dat[undefined_name]\n");
     assert!(
         nowhere.iter().any(|diagnostic| diagnostic.code == "RY010"),
         "a positional name that resolves nowhere keeps the unbound check: {nowhere:?}"
+    );
+}
+
+/// The data.table stub types `as.data.table()` and the other constructors
+/// as data.tables, whose `[` names are columns even when the schema is
+/// unknown. With data.table attached, an opaque receiver may be a
+/// data.table too, so its unresolved names are column candidates. Names
+/// outside a table mask, and atomic receivers, keep RY010.
+#[test]
+fn data_table_receivers_treat_unresolved_names_as_columns() {
+    for source in [
+        "dat <- data.table::as.data.table(data.frame(month = 1:12))\n\
+         x <- dat[undefined_name > 1]\n",
+        "library(data.table)\n\
+         f <- function(dat) dat[val > 1, .N, by = grp]\n",
+        "library(data.table)\n\
+         dat <- fread(\"x.csv\")\n\
+         x <- dat[val > 1, .(total = sum(amount)), by = grp]\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY010"),
+            "a data.table `[` must treat unresolved names as columns: {diagnostics:?}"
+        );
+    }
+
+    let controls = check(
+        "library(data.table)\n\
+         v <- c(1.5, 2.5)\n\
+         x <- v[not_a_column]\n\
+         print(also_missing)\n",
+    );
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY010")
+            .count(),
+        2,
+        "atomic receivers and unmasked names keep RY010: {controls:?}"
     );
 }
 

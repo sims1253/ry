@@ -538,8 +538,8 @@ fn neg_times_int_infers_integer_length_one() {
 //
 // `[.data.table` reads `-<character>` / `!<character>` in the `j` slot
 // as column drops, and `!<character>` / `!<list>` in the `i` slot as key
-// exclusion / not-join. data.table ships no stubs, so its receivers are
-// opaque to inference (parameters, `data.table::` calls). Base R has no
+// exclusion / not-join. Many data.table receivers are opaque to
+// inference (parameters, `fread()` results). Base R has no
 // negative or negated character subscript, so provably base receivers
 // and non-subscript positions keep the diagnostics. R semantics verified
 // by the `testdata/oracle/` fixtures for this issue.

@@ -1,0 +1,1800 @@
+{
+  "schema_version": "2",
+  "package": "data.table",
+  "version": "0.0.2",
+  "functions": {
+    ":=": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".selfref.ok": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%between%": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%chin%": {
+      "params": [
+        "x",
+        "table"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%flike%": {
+      "params": [
+        "vector",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%ilike%": {
+      "params": [
+        "vector",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%inrange%": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%like%": {
+      "params": [
+        "vector",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%notin%": {
+      "params": [
+        "x",
+        "table"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%plike%": {
+      "params": [
+        "vector",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "address": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "alloc.col": {
+      "params": [
+        "DT",
+        "n",
+        "verbose"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.data.table": {
+      "params": [
+        "x",
+        "keep.rownames",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.table",
+          "data.frame"
+        ]
+      }
+    },
+    "as.IDate": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.ITime": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.xts.data.table": {
+      "params": [
+        "x",
+        "numeric.only",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "between": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "incbounds",
+        "NAbounds",
+        "check",
+        "ignore_tzone"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cbindlist": {
+      "params": [
+        "l"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "chgroup": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "chmatch": {
+      "params": [
+        "x",
+        "table",
+        "nomatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "chorder": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "CJ": {
+      "params": [
+        "...",
+        "sorted",
+        "unique"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.table",
+          "data.frame"
+        ]
+      }
+    },
+    "copy": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cube": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "data.table": {
+      "params": [
+        "...",
+        "keep.rownames",
+        "check.names",
+        "key",
+        "stringsAsFactors"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.table",
+          "data.frame"
+        ]
+      }
+    },
+    "dcast": {
+      "params": [
+        "data",
+        "formula",
+        "fun.aggregate",
+        "...",
+        "margins",
+        "subset",
+        "fill",
+        "value.var"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dcast.data.table": {
+      "params": [
+        "data",
+        "formula",
+        "fun.aggregate",
+        "sep",
+        "...",
+        "margins",
+        "subset",
+        "fill",
+        "drop",
+        "value.var",
+        "verbose",
+        "value.var.in.dots",
+        "value.var.in.LHSdots",
+        "value.var.in.RHSdots"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fcase": {
+      "params": [
+        "...",
+        "default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fcoalesce": {
+      "params": [
+        "...",
+        "nan"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fctr": {
+      "params": [
+        "x",
+        "levels",
+        "...",
+        "sort",
+        "rev"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fdroplevels": {
+      "params": [
+        "x",
+        "exclude",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fifelse": {
+      "params": [
+        "test",
+        "yes",
+        "no",
+        "na"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fintersect": {
+      "params": [
+        "x",
+        "y",
+        "all"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "first": {
+      "params": [
+        "x",
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format_col": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format_list_item": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "foverlaps": {
+      "params": [
+        "x",
+        "y",
+        "by.x",
+        "by.y",
+        "maxgap",
+        "minoverlap",
+        "type",
+        "mult",
+        "nomatch",
+        "which",
+        "verbose"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frank": {
+      "params": [
+        "x",
+        "...",
+        "na.last",
+        "ties.method"
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frankv": {
+      "params": [
+        "x",
+        "cols",
+        "order",
+        "na.last",
+        "ties.method"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fread": {
+      "params": [
+        "input",
+        "file",
+        "text",
+        "cmd",
+        "sep",
+        "sep2",
+        "dec",
+        "quote",
+        "nrows",
+        "header",
+        "na.strings",
+        "stringsAsFactors",
+        "verbose",
+        "skip",
+        "select",
+        "drop",
+        "colClasses",
+        "integer64",
+        "col.names",
+        "check.names",
+        "encoding",
+        "strip.white",
+        "fill",
+        "blank.lines.skip",
+        "comment.char",
+        "key",
+        "index",
+        "showProgress",
+        "data.table",
+        "nThread",
+        "logical01",
+        "logicalYN",
+        "keepLeadingZeros",
+        "yaml",
+        "tmpdir",
+        "tz"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frev": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frolladapt": {
+      "params": [
+        "x",
+        "n",
+        "align",
+        "partial",
+        "give.names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frollapply": {
+      "params": [
+        "X",
+        "N",
+        "FUN",
+        "...",
+        "by.column",
+        "fill",
+        "align",
+        "adaptive",
+        "partial",
+        "give.names",
+        "simplify",
+        "x",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frollmax": {
+      "params": [
+        "x",
+        "n",
+        "fill",
+        "algo",
+        "align",
+        "na.rm",
+        "has.nf",
+        "adaptive",
+        "partial",
+        "give.names",
+        "hasNA"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frollmean": {
+      "params": [
+        "x",
+        "n",
+        "fill",
+        "algo",
+        "align",
+        "na.rm",
+        "has.nf",
+        "adaptive",
+        "partial",
+        "give.names",
+        "hasNA"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frollmedian": {
+      "params": [
+        "x",
+        "n",
+        "fill",
+        "algo",
+        "align",
+        "na.rm",
+        "has.nf",
+        "adaptive",
+        "partial",
+        "give.names",
+        "hasNA"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frollmin": {
+      "params": [
+        "x",
+        "n",
+        "fill",
+        "algo",
+        "align",
+        "na.rm",
+        "has.nf",
+        "adaptive",
+        "partial",
+        "give.names",
+        "hasNA"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frollprod": {
+      "params": [
+        "x",
+        "n",
+        "fill",
+        "algo",
+        "align",
+        "na.rm",
+        "has.nf",
+        "adaptive",
+        "partial",
+        "give.names",
+        "hasNA"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frollsd": {
+      "params": [
+        "x",
+        "n",
+        "fill",
+        "algo",
+        "align",
+        "na.rm",
+        "has.nf",
+        "adaptive",
+        "partial",
+        "give.names",
+        "hasNA"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frollsum": {
+      "params": [
+        "x",
+        "n",
+        "fill",
+        "algo",
+        "align",
+        "na.rm",
+        "has.nf",
+        "adaptive",
+        "partial",
+        "give.names",
+        "hasNA"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frollvar": {
+      "params": [
+        "x",
+        "n",
+        "fill",
+        "algo",
+        "align",
+        "na.rm",
+        "has.nf",
+        "adaptive",
+        "partial",
+        "give.names",
+        "hasNA"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fsetdiff": {
+      "params": [
+        "x",
+        "y",
+        "all"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fsetequal": {
+      "params": [
+        "x",
+        "y",
+        "all"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fsort": {
+      "params": [
+        "x",
+        "decreasing",
+        "na.last",
+        "internal",
+        "verbose",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "funion": {
+      "params": [
+        "x",
+        "y",
+        "all"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fwrite": {
+      "params": [
+        "x",
+        "file",
+        "append",
+        "quote",
+        "sep",
+        "sep2",
+        "eol",
+        "na",
+        "dec",
+        "row.names",
+        "col.names",
+        "qmethod",
+        "logical01",
+        "scipen",
+        "dateTimeAs",
+        "buffMB",
+        "nThread",
+        "showProgress",
+        "compress",
+        "compressLevel",
+        "yaml",
+        "bom",
+        "verbose",
+        "encoding",
+        "forceDecimal"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "getDTthreads": {
+      "params": [
+        "verbose"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "getNumericRounding": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "groupingsets": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "haskey": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hour": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "IDateTime": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "indices": {
+      "params": [
+        "x",
+        "vectors"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "inrange": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "incbounds"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.data.table": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isoweek": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isoyear": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "key": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "last": {
+      "params": [
+        "x",
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "let": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "like": {
+      "params": [
+        "vector",
+        "pattern",
+        "ignore.case",
+        "fixed",
+        "perl"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mday": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "measure": {
+      "params": [
+        "...",
+        "sep",
+        "pattern",
+        "cols",
+        "multiple.keyword"
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "measurev": {
+      "params": [
+        "fun.list",
+        "sep",
+        "pattern",
+        "cols",
+        "multiple.keyword"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "melt": {
+      "params": [
+        "data",
+        "...",
+        "na.rm",
+        "value.name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "melt.data.table": {
+      "params": [
+        "data",
+        "id.vars",
+        "measure.vars",
+        "variable.name",
+        "value.name",
+        "...",
+        "na.rm",
+        "variable.factor",
+        "value.factor",
+        "verbose"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "merge.data.table": {
+      "params": [
+        "x",
+        "y",
+        "by",
+        "by.x",
+        "by.y",
+        "all",
+        "all.x",
+        "all.y",
+        "sort",
+        "suffixes",
+        "no.dups",
+        "allow.cartesian",
+        "incomparables",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mergelist": {
+      "params": [
+        "l",
+        "on",
+        "cols",
+        "how",
+        "mult",
+        "join.many"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "minute": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "month": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nafill": {
+      "params": [
+        "x",
+        "type",
+        "fill",
+        "nan"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "patterns": {
+      "params": [
+        "...",
+        "cols",
+        "ignore.case",
+        "perl",
+        "fixed",
+        "useBytes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "quarter": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rbindlist": {
+      "params": [
+        "l",
+        "use.names",
+        "fill",
+        "idcol",
+        "ignore.attr"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.table",
+          "data.frame"
+        ]
+      }
+    },
+    "rleid": {
+      "params": [
+        "...",
+        "prefix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rleidv": {
+      "params": [
+        "x",
+        "cols",
+        "prefix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollup": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rowid": {
+      "params": [
+        "...",
+        "prefix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rowidv": {
+      "params": [
+        "x",
+        "cols",
+        "prefix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rowwiseDT": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "second": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set": {
+      "params": [
+        "x",
+        "i",
+        "j",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setalloccol": {
+      "params": [
+        "DT",
+        "n",
+        "verbose"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setallocrow": {
+      "params": [
+        "DT",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setattr": {
+      "params": [
+        "x",
+        "name",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setcbindlist": {
+      "params": [
+        "l"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setcolorder": {
+      "params": [
+        "x",
+        "neworder",
+        "before",
+        "after",
+        "skip_absent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setDF": {
+      "params": [
+        "x",
+        "rownames"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setdroplevels": {
+      "params": [
+        "x",
+        "except",
+        "exclude"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setDT": {
+      "params": [
+        "x",
+        "keep.rownames",
+        "key",
+        "check.names"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.table",
+          "data.frame"
+        ]
+      }
+    },
+    "setDTthreads": {
+      "params": [
+        "threads",
+        "restore_after_fork",
+        "percent",
+        "throttle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setindex": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setindexv": {
+      "params": [
+        "x",
+        "cols",
+        "verbose"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setkey": {
+      "params": [
+        "x",
+        "...",
+        "verbose",
+        "physical"
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setkeyv": {
+      "params": [
+        "x",
+        "cols",
+        "verbose",
+        "physical"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setmergelist": {
+      "params": [
+        "l",
+        "on",
+        "cols",
+        "how",
+        "mult",
+        "join.many"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setnafill": {
+      "params": [
+        "x",
+        "type",
+        "fill",
+        "nan",
+        "cols"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setnames": {
+      "params": [
+        "x",
+        "old",
+        "new",
+        "skip_absent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setNumericRounding": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setorder": {
+      "params": [
+        "x",
+        "...",
+        "na.last"
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setorderv": {
+      "params": [
+        "x",
+        "cols",
+        "order",
+        "na.last"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "shift": {
+      "params": [
+        "x",
+        "n",
+        "fill",
+        "type",
+        "give.names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "shouldPrint": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "SJ": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "na": true,
+        "class": [
+          "data.table",
+          "data.frame"
+        ]
+      }
+    },
+    "substitute2": {
+      "params": [
+        "expr",
+        "env"
+      ],
+      "eval": {
+        "expr": "quoted_expression"
+      },
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tables": {
+      "params": [
+        "mb",
+        "order.col",
+        "width",
+        "env",
+        "silent",
+        "index"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test.data.table": {
+      "params": [
+        "script",
+        "verbose",
+        "pkg",
+        "silent",
+        "showProgress",
+        "testPattern",
+        "memtest",
+        "memtest.id",
+        "optional"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "timetaken": {
+      "params": [
+        "started.at"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transpose": {
+      "params": [
+        "l",
+        "fill",
+        "ignore.empty",
+        "keep.names",
+        "make.names",
+        "list.cols"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "truelength": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tstrsplit": {
+      "params": [
+        "x",
+        "...",
+        "fill",
+        "type.convert",
+        "keep",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "uniqueN": {
+      "params": [
+        "x",
+        "by",
+        "na.rm"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "update_dev_pkg": {
+      "params": [
+        "pkg",
+        "repo",
+        "field",
+        "type",
+        "lib",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "wday": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "week": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yday": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "year": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yearmon": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yearqtr": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    ".__C__data.table": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__IDate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ITime": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".BY": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".EACHI": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".GRP": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".I": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".Last.updated": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".N": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".NGRP": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".ROW": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".SD": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

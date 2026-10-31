@@ -241,7 +241,9 @@ impl Checker {
     /// When the schema cannot prove a name absent, bare value-position
     /// symbols are column candidates before scope functions. An opaque
     /// receiver with no table evidence may be a degraded atomic vector
-    /// (`c(if (p) 1L, 2L)`), so names that resolve nowhere keep RY010.
+    /// (`c(if (p) 1L, 2L)`), so names that resolve nowhere keep RY010,
+    /// unless data.table is attached: then the receiver may be a
+    /// data.table whose columns are unknown (`function(d) d[val > 1]`).
     pub(crate) fn table_index_mask_scope(&self, base_scope: &Scope, table: &RType) -> Scope {
         let mut scope = self.dplyr_data_mask_scope(base_scope, table);
         scope.insert(
@@ -261,7 +263,11 @@ impl Checker {
             if let Some(frame) = scope.data_mask.as_mut() {
                 Arc::make_mut(frame).columns_first = true;
             }
-            if !frame_like(table) && table.columns.is_none() {
+            if !frame_like(table)
+                && table.columns.is_none()
+                && !self.loaded.contains("data.table")
+                && !self.bare_loaded.contains("data.table")
+            {
                 scope.data_mask_unknown = base_scope.data_mask_unknown;
             }
         }

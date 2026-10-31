@@ -12,9 +12,10 @@ fn atomic_mode(member: &RType) -> bool {
 /// receiver without usable column knowledge keeps bare names opaque
 /// rather than borrowing a scope function's type (#369). Only
 /// data.table's `[` masks its arguments: a receiver classed
-/// `data.table`, or an opaque value — data.table ships no stubs, so
-/// runtime data.tables built by `as.data.table()` / `fread()` / package
-/// data type as opaque (#369's corpus shape). Base R does not data-mask
+/// `data.table`, or an opaque value. The data.table stub types its
+/// constructors (`data.table()`, `as.data.table()`, `rbindlist()`) with
+/// that class, while `fread()` results, parameters, and package data
+/// type as opaque (#369's corpus shape). Base R does not data-mask
 /// `[`: `[.data.frame` evaluates `i`/`j` as ordinary promises in the
 /// calling frame (R-lang §2.1.8), so class-`data.frame` receivers,
 /// plain lists, atomic vectors, and matrices evaluate their indices
@@ -406,8 +407,8 @@ impl Checker {
             }
             IndexKind::Single => {
                 // `x[i]` / `x[i, j]` on a data.table-shaped receiver (a
-                // `data.table` class or the opaque value an unstubbed
-                // data.table call types as) evaluates its index arguments
+                // `data.table` class or an opaque value such as an
+                // `fread()` result) evaluates its index arguments
                 // in a data mask over the receiver's columns (#369): a
                 // column named like a scope function (`month`, `table`,
                 // `count`) resolves as a column, and a receiver without
@@ -993,8 +994,8 @@ impl Checker {
 /// subscript: `v[-c("a")]` and `v[!"a"]` error with "invalid argument
 /// to unary operator" / "invalid argument type" (oracle-verified), so
 /// the forms are admitted only when the receiver is not provably a base
-/// object — data.table ships no stubs, so its receivers are opaque to
-/// inference, as are parameters flowing into package code.
+/// object. Many data.table receivers are opaque to inference: `fread()`
+/// results, and parameters flowing into package code.
 pub(crate) fn select_subscript_form(
     context: Option<&SelectSubscript>,
     op: UnaryOpKind,
@@ -1387,7 +1388,6 @@ pub(crate) fn extract_literal_int(e: &Expr) -> Option<i64> {
 ///   * base: `makeActiveBinding` has no stub.
 ///   * rlang: `defuse` and `tidyeval_data` are unexported and ship no
 ///     stub.
-///   * data.table ships no stubs.
 ///   * tidyselect's stub does not declare `peek_vars`. `all_vars` is
 ///     not here: dplyr — the package it is called through — declares
 ///     `expr: data_mask` for it.
@@ -1399,11 +1399,6 @@ pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
     "peek_vars",
     // base NSE helpers
     "makeActiveBinding",
-    // data.table NSE
-    "setkey",
-    "setkeyv",
-    "setindex",
-    "setindexv",
 ];
 
 pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {

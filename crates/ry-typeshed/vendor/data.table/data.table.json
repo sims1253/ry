@@ -268,6 +268,9 @@
         "x",
         "..."
       ],
+      "eval": {
+        "...": "quoted_expression"
+      },
       "return": {
         "mode": "opaque",
         "length": "unknown",
@@ -848,6 +851,9 @@
         "x",
         "..."
       ],
+      "eval": {
+        "...": "quoted_expression"
+      },
       "return": {
         "mode": "opaque",
         "length": "unknown",
@@ -1200,6 +1206,9 @@
         "x",
         "..."
       ],
+      "eval": {
+        "...": "quoted_expression"
+      },
       "return": {
         "mode": "opaque",
         "length": "unknown",

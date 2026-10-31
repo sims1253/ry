@@ -207,8 +207,10 @@ inventories for lubridate, knitr, and data.table.
   `rollup(dt, j = sum(amount), by = "g")` silent, but an unbound name
   elsewhere in their `...`, such as `by`, is not reported. The same
   arguments are quoted when data.table is attached only in another project
-  file. `setkeyv()` and `setindexv()` read their `cols` argument, so
-  an unbound name there now reports RY010.
+  file. If no project file attaches data.table, `setkey()` and
+  `setindex()` are unknown calls, so `setkey(dt, grp)` now reports `grp`.
+  `setkeyv()` and `setindexv()` read their `cols` argument, so an unbound
+  name there now reports RY010.
 
 ### Fixed
 

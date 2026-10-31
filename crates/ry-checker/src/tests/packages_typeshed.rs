@@ -496,7 +496,8 @@ fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
 
 /// data.table's stub declares the column names that `setkey()`,
 /// `setindex()`, `setorder()`, and `frank()` capture with `substitute()`,
-/// while `setkeyv()` takes a character vector and reads it.
+/// and the `j` that `rollup()` evaluates in the table's columns, while
+/// `setkeyv()` takes a character vector and reads it.
 #[test]
 fn data_table_stub_quotes_column_name_arguments() {
     let quoted = check(
@@ -505,7 +506,8 @@ fn data_table_stub_quotes_column_name_arguments() {
          setkey(dat, grp)\n\
          setindex(dat, grp)\n\
          setorder(dat, grp, -val)\n\
-         r <- frank(dat, grp, val)\n",
+         r <- frank(dat, grp, val)\n\
+         g <- rollup(dat, j = sum(amount), by = \"grp\")\n",
     );
     assert!(
         quoted.iter().all(|diagnostic| diagnostic.code != "RY010"),

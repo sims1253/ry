@@ -179,7 +179,7 @@ inventories for lubridate, knitr, and data.table.
   check. Usage errors still exit nonzero (#604).
 - Report a malformed, unreadable, or parser-limited serialized data file
   as a degraded scope instead of reading it as empty (#585).
-- The vendored typeshed moves to r-typeshed 0.6.4 (commit 3041ace).
+- The vendored typeshed moves to r-typeshed 0.6.4 (commit da87dde).
   lubridate, knitr, and data.table gain export inventories, so
   `library()` and `import()` of those packages resolve their names and
   formals. Before, ry treated them as unstubbed packages that may supply
@@ -192,10 +192,11 @@ inventories for lubridate, knitr, and data.table.
   spelling (#641).
 - With data.table attached, `x[val > 1]` on a receiver of unknown type
   treats `val` as a possible column instead of reporting RY010, because
-  `x` may be a data.table. This covers function parameters and `fread()`
-  results. The data.table stub types `data.table()`, `as.data.table()`,
-  `rbindlist()`, `setDT()`, `CJ()`, and `SJ()` as data.tables, so their
-  results get the same treatment without `library(data.table)`. Atomic
+  `x` may be a data.table. This covers function parameters and the
+  results of `fread()`, `as.data.table()`, and `setDT()`. The data.table
+  stub types `data.table()`, `rbindlist()`, `CJ()`, and `SJ()` as
+  data.tables, so their results get the same treatment without
+  `library(data.table)`. Atomic
   vectors and names outside `[` keep RY010. The stub also declares the
   column names that `setkey()`, `setindex()`, `setorder()`, and `frank()`
   quote, so `setorder(dt, grp)` stays silent. `setkeyv()` and

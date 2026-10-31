@@ -157,15 +157,16 @@ fn unknown_schema_table_index_prefers_silence() {
     );
 }
 
-/// The data.table stub types `as.data.table()` and the other constructors
-/// as data.tables, whose `[` names are columns even when the schema is
-/// unknown. With data.table attached, an opaque receiver may be a
-/// data.table too, so its unresolved names are column candidates. Names
-/// outside a table mask, and atomic receivers, keep RY010.
+/// The data.table stub types `data.table()`, `rbindlist()`, `CJ()`, and
+/// `SJ()` as data.tables, whose `[` names are columns even when the
+/// schema is unknown. With data.table attached, an opaque receiver
+/// (`fread()`, `as.data.table()`, a parameter) may be a data.table too,
+/// so its unresolved names are column candidates. Names outside a table
+/// mask, and atomic receivers, keep RY010.
 #[test]
 fn data_table_receivers_treat_unresolved_names_as_columns() {
     for source in [
-        "dat <- data.table::as.data.table(data.frame(month = 1:12))\n\
+        "dat <- data.table::data.table(month = 1:12)\n\
          x <- dat[undefined_name > 1]\n",
         "library(data.table)\n\
          f <- function(dat) dat[val > 1, .N, by = grp]\n",

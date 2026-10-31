@@ -269,6 +269,7 @@
         "..."
       ],
       "eval": {
+        "x": "normal",
         "...": "quoted_expression"
       },
       "return": {
@@ -470,7 +471,10 @@
         "ties.method"
       ],
       "eval": {
-        "...": "quoted_expression"
+        "x": "normal",
+        "...": "quoted_expression",
+        "na.last": "normal",
+        "ties.method": "normal"
       },
       "return": {
         "mode": "opaque",
@@ -852,6 +856,7 @@
         "..."
       ],
       "eval": {
+        "x": "normal",
         "...": "quoted_expression"
       },
       "return": {
@@ -1010,7 +1015,11 @@
         "multiple.keyword"
       ],
       "eval": {
-        "...": "quoted_expression"
+        "...": "quoted_expression",
+        "sep": "normal",
+        "pattern": "normal",
+        "cols": "normal",
+        "multiple.keyword": "normal"
       },
       "return": {
         "mode": "opaque",
@@ -1207,6 +1216,7 @@
         "..."
       ],
       "eval": {
+        "x": "normal",
         "...": "quoted_expression"
       },
       "return": {
@@ -1412,7 +1422,10 @@
         "physical"
       ],
       "eval": {
-        "...": "quoted_expression"
+        "x": "normal",
+        "...": "quoted_expression",
+        "verbose": "normal",
+        "physical": "normal"
       },
       "return": {
         "mode": "opaque",
@@ -1492,7 +1505,9 @@
         "na.last"
       ],
       "eval": {
-        "...": "quoted_expression"
+        "x": "normal",
+        "...": "quoted_expression",
+        "na.last": "normal"
       },
       "return": {
         "mode": "opaque",

@@ -242,8 +242,13 @@ impl Checker {
     /// symbols are column candidates before scope functions. An opaque
     /// receiver with no table evidence may be a degraded atomic vector
     /// (`c(if (p) 1L, 2L)`), so names that resolve nowhere keep RY010,
-    /// unless data.table is attached: then the receiver may be a
-    /// data.table whose columns are unknown (`function(d) d[val > 1]`).
+    /// unless data.table is on this file's search path (`bare_loaded`)
+    /// and the receiver's mode is unknown: then it may be a data.table
+    /// whose columns are unknown (`function(d) d[val > 1]`). Another
+    /// file's `library()` does not count, and a known environment or
+    /// language object is never a data.table. A NAMESPACE import of
+    /// data.table does count: data.table's `cedta()` treats a namespace
+    /// that imports it as data.table-aware.
     pub(crate) fn table_index_mask_scope(&self, base_scope: &Scope, table: &RType) -> Scope {
         let mut scope = self.dplyr_data_mask_scope(base_scope, table);
         scope.insert(
@@ -265,8 +270,7 @@ impl Checker {
             }
             if !frame_like(table)
                 && table.columns.is_none()
-                && !self.loaded.contains("data.table")
-                && !self.bare_loaded.contains("data.table")
+                && !(table.mode.is_unknown() && self.bare_loaded.contains("data.table"))
             {
                 scope.data_mask_unknown = base_scope.data_mask_unknown;
             }

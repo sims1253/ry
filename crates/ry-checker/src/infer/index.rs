@@ -13,9 +13,10 @@ fn atomic_mode(member: &RType) -> bool {
 /// rather than borrowing a scope function's type (#369). Only
 /// data.table's `[` masks its arguments: a receiver classed
 /// `data.table`, or an opaque value. The data.table stub types its
-/// constructors (`data.table()`, `as.data.table()`, `rbindlist()`) with
-/// that class, while `fread()` results, parameters, and package data
-/// type as opaque (#369's corpus shape). Base R does not data-mask
+/// constructors (`data.table()`, `rbindlist()`, `CJ()`, `SJ()`) with
+/// that class, while `fread()`, `as.data.table()`, and `setDT()`
+/// results, parameters, and package data type as opaque (#369's corpus
+/// shape). Base R does not data-mask
 /// `[`: `[.data.frame` evaluates `i`/`j` as ordinary promises in the
 /// calling frame (R-lang §2.1.8), so class-`data.frame` receivers,
 /// plain lists, atomic vectors, and matrices evaluate their indices

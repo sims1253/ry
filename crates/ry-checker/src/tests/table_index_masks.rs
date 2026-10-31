@@ -159,10 +159,11 @@ fn unknown_schema_table_index_prefers_silence() {
 
 /// The data.table stub types `data.table()`, `rbindlist()`, `CJ()`, and
 /// `SJ()` as data.tables, whose `[` names are columns even when the
-/// schema is unknown. With data.table attached, an opaque receiver
-/// (`fread()`, `as.data.table()`, a parameter) may be a data.table too,
-/// so its unresolved names are column candidates. Names outside a table
-/// mask, and atomic receivers, keep RY010.
+/// schema is unknown. With data.table on this file's search path, an
+/// opaque receiver (`fread()`, `as.data.table()`, a parameter) may be a
+/// data.table too, so its unresolved names are column candidates. Names
+/// outside a table mask, atomic receivers, and known environments
+/// (`e[x]` errors in R) keep RY010.
 #[test]
 fn data_table_receivers_treat_unresolved_names_as_columns() {
     for source in [
@@ -187,6 +188,8 @@ fn data_table_receivers_treat_unresolved_names_as_columns() {
         "library(data.table)\n\
          v <- c(1.5, 2.5)\n\
          x <- v[not_a_column]\n\
+         e <- base::new.env()\n\
+         y <- e[missing_env]\n\
          print(also_missing)\n",
     );
     assert_eq!(
@@ -194,8 +197,24 @@ fn data_table_receivers_treat_unresolved_names_as_columns() {
             .iter()
             .filter(|diagnostic| diagnostic.code == "RY010")
             .count(),
-        2,
-        "atomic receivers and unmasked names keep RY010: {controls:?}"
+        3,
+        "atomic receivers, environments, and unmasked names keep RY010: {controls:?}"
+    );
+}
+
+/// Another file's `library(data.table)` puts data.table in the
+/// project-wide `loaded` union but not on this file's search path, so
+/// an opaque receiver here keeps RY010.
+#[test]
+fn data_table_attached_elsewhere_keeps_opaque_receivers_checked() {
+    let diagnostics = check_with("f <- function(d) d[missing_name]\n", |c| {
+        c.set_shared_loaded(Arc::new(HashSet::from(["data.table".to_string()])));
+    });
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY010"),
+        "a project-wide attachment does not open this file's mask: {diagnostics:?}"
     );
 }
 

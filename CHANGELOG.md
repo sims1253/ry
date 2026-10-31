@@ -190,14 +190,15 @@ inventories for lubridate, knitr, and data.table.
   character, not a separator. A path matches by its physical location,
   and a non-UTF-8 filename no longer matches through its lossy UTF-8
   spelling (#641).
-- With data.table attached, `x[val > 1]` on a receiver of unknown type
-  treats `val` as a possible column instead of reporting RY010, because
-  `x` may be a data.table. This covers function parameters and the
-  results of `fread()`, `as.data.table()`, and `setDT()`. The data.table
-  stub types `data.table()`, `rbindlist()`, `CJ()`, and `SJ()` as
-  data.tables, so their results get the same treatment without
-  `library(data.table)`. Atomic
-  vectors and names outside `[` keep RY010. The stub also declares the
+- When a file attaches data.table, or its package imports it,
+  `x[val > 1]` on a receiver of unknown type treats `val` as a possible
+  column instead of reporting RY010, because `x` may be a data.table.
+  This covers function parameters and the results of `fread()`,
+  `as.data.table()`, and `setDT()`. A `library(data.table)` in another
+  file does not count. The data.table stub types `data.table()`,
+  `rbindlist()`, `CJ()`, and `SJ()` as data.tables, so their results get
+  the same treatment without `library(data.table)`. Atomic vectors, known
+  environments, and names outside `[` keep RY010. The stub also declares the
   column names that `setkey()`, `setindex()`, `setorder()`, and `frank()`
   quote, so `setorder(dt, grp)` stays silent. `setkeyv()` and
   `setindexv()` read their `cols` argument, so an unbound name there now

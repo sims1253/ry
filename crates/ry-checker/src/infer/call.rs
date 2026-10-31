@@ -2720,20 +2720,33 @@ impl Checker {
             return Some(RType::unknown());
         }
 
-        // data.table's `setkey()` and `setindex()` quote their column
-        // names. The stub declares that, but this file's stub lookup
-        // misses it when another project file attaches data.table, so
-        // fall back to skipping their arguments when no signature
-        // resolves. A project function of the same name is checked as
-        // written.
-        if DATA_TABLE_UNRESOLVED_QUOTING_FNS.contains(&lookup_name)
-            && self.resolve_typeshed_sig_ref(lookup_name).is_none()
-            && scope.lexical_definition(lookup_name).is_none()
-            && !self.fn_table.functions.binds(lookup_name)
-        {
+        if self.data_table_quotes_unresolved(lookup_name, scope) {
             return Some(RType::unknown());
         }
         None
+    }
+
+    /// Whether `name` is a data.table function that quotes arguments
+    /// (`setkey()`, `setorder()`, `rollup()`) while this file's stub
+    /// lookup misses data.table because another project file attaches
+    /// it. Its arguments are then skipped rather than read as variables.
+    /// The data.table stub decides which functions quote, so the eager
+    /// `setkeyv()` and `setindexv()` are still checked. A project
+    /// function of the same name is checked as written.
+    fn data_table_quotes_unresolved(&self, name: &str, scope: &Scope) -> bool {
+        self.loaded.contains("data.table")
+            && self
+                .package_typeshed("data.table")
+                .and_then(|typeshed| typeshed.functions.get(name))
+                .is_some_and(|signature| {
+                    signature
+                        .eval
+                        .values()
+                        .any(|mode| *mode == ry_typeshed::EvalMode::QuotedExpression)
+                })
+            && self.resolve_typeshed_sig_ref(name).is_none()
+            && scope.lexical_definition(name).is_none()
+            && !self.fn_table.functions.binds(name)
     }
 
     /// The default two-argument `assign("name", value)`: rebind in the

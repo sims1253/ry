@@ -179,7 +179,7 @@ inventories for lubridate, knitr, and data.table.
   check. Usage errors still exit nonzero (#604).
 - Report a malformed, unreadable, or parser-limited serialized data file
   as a degraded scope instead of reading it as empty (#585).
-- The vendored typeshed moves to r-typeshed 0.6.4 (commit 569fc41).
+- The vendored typeshed moves to r-typeshed 0.6.4 (commit a0dac90).
   lubridate, knitr, and data.table gain export inventories, so
   `library()` and `import()` of those packages resolve their names and
   formals. Before, ry treated them as unstubbed packages that may supply
@@ -199,11 +199,16 @@ inventories for lubridate, knitr, and data.table.
   `rbindlist()`, `CJ()`, and `SJ()` as data.tables, so their results get
   the same treatment without `library(data.table)`. Atomic vectors, known
   environments, and names outside `[` keep RY010. The stub also declares
-  the column names that `setkey()`, `setindex()`, `setorder()`, and
-  `frank()` quote, and the `j` of `rollup()`, `cube()`, and
-  `groupingsets()`, so `setorder(dt, grp)` stays silent. `setkeyv()` and
-  `setindexv()` read their `cols` argument, so an unbound name there now
-  reports RY010.
+  which arguments data.table quotes. `setkey()`, `setorder()`, and
+  `frank()` quote their column names, so `setorder(dt, grp)` stays
+  silent, while their table and options such as `na.last` are still
+  checked. `setindex()`, `measure()`, `rollup()`, `cube()`, and
+  `groupingsets()` quote their whole `...`. That keeps
+  `rollup(dt, j = sum(amount), by = "g")` silent, but an unbound name
+  elsewhere in their `...`, such as `by`, is not reported. When data.table
+  is attached only in another project file, these functions skip their
+  arguments. `setkeyv()` and `setindexv()` read their `cols` argument, so
+  an unbound name there now reports RY010.
 
 ### Fixed
 

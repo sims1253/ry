@@ -526,16 +526,22 @@ fn data_table_stub_quotes_column_name_arguments() {
 }
 
 /// When another project file attaches data.table, this file's stub lookup
-/// misses the data.table stub. `setkey()` and `setindex()` still quote
-/// their column names, while `setkeyv()` reads its argument and a project
-/// function named `setkey` is checked as written.
+/// misses the data.table stub. The functions that stub quotes still skip
+/// their column names, while `setkeyv()` reads its argument, a project
+/// function named `setkey` is checked as written, and without any
+/// data.table attachment `setkey()` is an ordinary unknown call.
 #[test]
 fn data_table_quoting_setters_attached_elsewhere_stay_silent() {
     let attached_elsewhere = |c: &mut Checker| {
         c.set_shared_loaded(Arc::new(HashSet::from(["data.table".to_string()])));
     };
     let quoted = check_with(
-        "dat <- list()\nsetkey(dat, grp)\nsetindex(dat, grp)\n",
+        "dat <- list()\n\
+         setkey(dat, grp)\n\
+         setindex(dat, grp)\n\
+         setorder(dat, grp, -val)\n\
+         r <- frank(dat, grp)\n\
+         g <- rollup(dat, j = sum(amount), by = \"grp\")\n",
         attached_elsewhere,
     );
     assert!(
@@ -561,6 +567,15 @@ fn data_table_quoting_setters_attached_elsewhere_stay_silent() {
         own.iter().any(|diagnostic| diagnostic.code == "RY010"
             && diagnostic.message.contains("`undefined_key`")),
         "a project's own setkey() evaluates its arguments: {own:?}"
+    );
+
+    let unattached = check("dat <- list()\nsetkey(dat, undefined_key)\n");
+    assert!(
+        unattached
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY010"
+                && diagnostic.message.contains("`undefined_key`")),
+        "without data.table, setkey() is an unknown call: {unattached:?}"
     );
 }
 

@@ -2,10 +2,18 @@
 
 ## [Unreleased]
 
-- `ry.logLevel` now applies only to ry's own crates (`--log-level ry=<level>`),
-  so `debug` and `trace` no longer enable logging for every dependency.
-- Changing `ry.configuration` no longer restarts the server; the server
+## [0.12.0] - 2026-10-31
+
+- Bundle ry 0.12.0 with 17 new rules (RY112 to RY128) and argument checks
+  on calls to the project's own functions. See the core `CHANGELOG.md`.
+- `ry.logLevel` applies only to ry's own crates (`--log-level ry=<level>`),
+  so `debug` and `trace` no longer turn on logging for every dependency.
+- Changing `ry.configuration` no longer restarts the server. The server
   already reloads it live.
+- `ry: Explain Rule` works before the language server has started. Before,
+  it did nothing.
+- Replace Effect with plain async functions, which shrinks the extension
+  bundle.
 
 ## [0.11.1] - 2026-09-22
 

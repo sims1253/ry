@@ -2720,33 +2720,48 @@ impl Checker {
             return Some(RType::unknown());
         }
 
-        if self.data_table_quotes_unresolved(lookup_name, scope) {
+        if let Some(signature) = self.data_table_quoting_unresolved(semantic_name, scope) {
+            let bindings = match_params(&signature.params, args);
+            for (index, argument) in args.iter().enumerate() {
+                if eval_mode_for_arg(&signature, &bindings, index)
+                    != Some(ry_typeshed::EvalMode::QuotedExpression)
+                {
+                    let _ = self.infer(&argument.value, scope);
+                }
+            }
             return Some(RType::unknown());
         }
         None
     }
 
-    /// Whether `name` is a data.table function that quotes arguments
-    /// (`setkey()`, `setorder()`, `rollup()`) while this file's stub
-    /// lookup misses data.table because another project file attaches
-    /// it. Its arguments are then skipped rather than read as variables.
-    /// The data.table stub decides which functions quote, so the eager
-    /// `setkeyv()` and `setindexv()` are still checked. A project
-    /// function of the same name is checked as written.
-    fn data_table_quotes_unresolved(&self, name: &str, scope: &Scope) -> bool {
-        self.loaded.contains("data.table")
-            && self
-                .package_typeshed("data.table")
-                .and_then(|typeshed| typeshed.functions.get(name))
-                .is_some_and(|signature| {
-                    signature
-                        .eval
-                        .values()
-                        .any(|mode| *mode == ry_typeshed::EvalMode::QuotedExpression)
-                })
-            && self.resolve_typeshed_sig_ref(name).is_none()
-            && scope.lexical_definition(name).is_none()
-            && !self.fn_table.functions.binds(name)
+    /// The data.table signature for a bare call to a data.table function
+    /// that quotes arguments (`setkey()`, `setorder()`, `rollup()`) while
+    /// this file's stub lookup misses data.table because another project
+    /// file attaches it. The caller skips the quoted arguments and checks
+    /// the rest, such as the table and `na.last`. The data.table stub
+    /// decides which functions quote, so the eager `setkeyv()` and
+    /// `setindexv()` are still checked. `name` is the full callee, so a
+    /// qualified call such as `otherpkg::setkey()` matches no stub entry.
+    /// A parameter or a project function of the same name is checked as
+    /// written.
+    fn data_table_quoting_unresolved(&self, name: &str, scope: &Scope) -> Option<FunctionSig> {
+        if !self.loaded.contains("data.table")
+            || self.resolve_typeshed_sig_ref(name).is_some()
+            || scope.lexical_definition(name).is_some()
+            || self.call_head_bound_locally(name, scope)
+        {
+            return None;
+        }
+        self.package_typeshed("data.table")?
+            .functions
+            .get(name)
+            .filter(|signature| {
+                signature
+                    .eval
+                    .values()
+                    .any(|mode| *mode == ry_typeshed::EvalMode::QuotedExpression)
+            })
+            .cloned()
     }
 
     /// The default two-argument `assign("name", value)`: rebind in the

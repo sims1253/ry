@@ -531,7 +531,7 @@ fn data_table_stub_quotes_column_name_arguments() {
 /// function named `setkey` is checked as written, and without any
 /// data.table attachment `setkey()` is an ordinary unknown call.
 #[test]
-fn data_table_quoting_setters_attached_elsewhere_stay_silent() {
+fn data_table_quoting_attached_elsewhere_follows_the_stub() {
     let attached_elsewhere = |c: &mut Checker| {
         c.set_shared_loaded(Arc::new(HashSet::from(["data.table".to_string()])));
     };
@@ -548,6 +548,46 @@ fn data_table_quoting_setters_attached_elsewhere_stay_silent() {
         quoted.iter().all(|diagnostic| diagnostic.code != "RY010"),
         "quoted column names are not references: {quoted:?}"
     );
+
+    let evaluated = check_with(
+        "dat <- list()\n\
+         setkey(missing_table, grp)\n\
+         r <- frank(dat, grp, na.last = missing_flag)\n",
+        attached_elsewhere,
+    );
+    let unbound: Vec<_> = evaluated
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "RY010")
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        unbound.len() == 2
+            && unbound
+                .iter()
+                .any(|message| message.contains("`missing_table`"))
+            && unbound
+                .iter()
+                .any(|message| message.contains("`missing_flag`")),
+        "the table and options are evaluated, the column names are not: {evaluated:?}"
+    );
+
+    for (note, source) in [
+        (
+            "qualified to another package",
+            "dat <- list()\notherpkg::setkey(dat, undefined_key)\n",
+        ),
+        (
+            "a parameter",
+            "dat <- list()\nf <- function(setkey) setkey(dat, undefined_key)\n",
+        ),
+    ] {
+        let shadowed = check_with(source, attached_elsewhere);
+        assert!(
+            shadowed.iter().any(|diagnostic| diagnostic.code == "RY010"
+                && diagnostic.message.contains("`undefined_key`")),
+            "setkey() as {note} is not data.table's: {shadowed:?}"
+        );
+    }
 
     let eager = check_with(
         "dat <- list()\nsetkeyv(dat, undefined_cols)\n",

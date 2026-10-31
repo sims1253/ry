@@ -205,9 +205,9 @@ inventories for lubridate, knitr, and data.table.
   checked. `setindex()`, `measure()`, `rollup()`, `cube()`, and
   `groupingsets()` quote their whole `...`. That keeps
   `rollup(dt, j = sum(amount), by = "g")` silent, but an unbound name
-  elsewhere in their `...`, such as `by`, is not reported. When data.table
-  is attached only in another project file, these functions skip their
-  arguments. `setkeyv()` and `setindexv()` read their `cols` argument, so
+  elsewhere in their `...`, such as `by`, is not reported. The same
+  arguments are quoted when data.table is attached only in another project
+  file. `setkeyv()` and `setindexv()` read their `cols` argument, so
   an unbound name there now reports RY010.
 
 ### Fixed

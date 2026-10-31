@@ -190,7 +190,7 @@ inventories for lubridate, knitr, and data.table.
   character, not a separator. A path matches by its physical location,
   and a non-UTF-8 filename no longer matches through its lossy UTF-8
   spelling (#641).
-- When a file attaches data.table, or its package imports it,
+- When a file attaches data.table, or its package imports from it,
   `x[val > 1]` on a receiver of unknown type treats `val` as a possible
   column instead of reporting RY010, because `x` may be a data.table.
   This covers function parameters and the results of `fread()`,

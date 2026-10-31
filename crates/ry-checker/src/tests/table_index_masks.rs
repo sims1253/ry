@@ -204,7 +204,8 @@ fn data_table_receivers_treat_unresolved_names_as_columns() {
 
 /// Another file's `library(data.table)` puts data.table in the
 /// project-wide `loaded` union but not on this file's search path, so
-/// an opaque receiver here keeps RY010.
+/// an opaque receiver here keeps RY010. A NAMESPACE `importFrom()` of
+/// data.table does open the mask.
 #[test]
 fn data_table_attached_elsewhere_keeps_opaque_receivers_checked() {
     let diagnostics = check_with("f <- function(d) d[missing_name]\n", |c| {
@@ -215,6 +216,16 @@ fn data_table_attached_elsewhere_keeps_opaque_receivers_checked() {
             .iter()
             .any(|diagnostic| diagnostic.code == "RY010"),
         "a project-wide attachment does not open this file's mask: {diagnostics:?}"
+    );
+
+    // `importFrom(data.table, fread)` makes the package data.table-aware
+    // in `cedta()`, so its opaque receivers are column candidates.
+    let imported = check_with("f <- function(d) d[val > 1]\n", |c| {
+        c.set_imported_from(HashMap::from([("fread".into(), "data.table".into())]));
+    });
+    assert!(
+        imported.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "a NAMESPACE importFrom() of data.table opens the mask: {imported:?}"
     );
 }
 

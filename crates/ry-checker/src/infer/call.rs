@@ -2719,6 +2719,20 @@ impl Checker {
         if is_nse_symbol_fn(lookup_name) {
             return Some(RType::unknown());
         }
+
+        // data.table's `setkey()` and `setindex()` quote their column
+        // names. The stub declares that, but this file's stub lookup
+        // misses it when another project file attaches data.table, so
+        // fall back to skipping their arguments when no signature
+        // resolves. A project function of the same name is checked as
+        // written.
+        if DATA_TABLE_UNRESOLVED_QUOTING_FNS.contains(&lookup_name)
+            && self.resolve_typeshed_sig_ref(lookup_name).is_none()
+            && scope.lexical_definition(lookup_name).is_none()
+            && !self.fn_table.functions.binds(lookup_name)
+        {
+            return Some(RType::unknown());
+        }
         None
     }
 

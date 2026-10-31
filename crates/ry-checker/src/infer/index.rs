@@ -1402,6 +1402,13 @@ pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
     "makeActiveBinding",
 ];
 
+/// data.table functions that quote column names, for the fallback in
+/// `infer_nse_quoting_call` when the data.table stub does not resolve in
+/// this file (data.table attached in another project file). Their `v`
+/// forms (`setkeyv()`, `setindexv()`) read their arguments and are not
+/// here.
+pub(crate) const DATA_TABLE_UNRESOLVED_QUOTING_FNS: &[&str] = &["setkey", "setindex"];
+
 pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
     let name = crate::semantic_lists::bare_name(name);
     NSE_SYMBOL_FNS.contains(&name)

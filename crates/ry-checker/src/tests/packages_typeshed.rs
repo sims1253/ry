@@ -523,6 +523,45 @@ fn data_table_stub_quotes_column_name_arguments() {
     );
 }
 
+/// When another project file attaches data.table, this file's stub lookup
+/// misses the data.table stub. `setkey()` and `setindex()` still quote
+/// their column names, while `setkeyv()` reads its argument and a project
+/// function named `setkey` is checked as written.
+#[test]
+fn data_table_quoting_setters_attached_elsewhere_stay_silent() {
+    let attached_elsewhere = |c: &mut Checker| {
+        c.set_shared_loaded(Arc::new(HashSet::from(["data.table".to_string()])));
+    };
+    let quoted = check_with(
+        "dat <- list()\nsetkey(dat, grp)\nsetindex(dat, grp)\n",
+        attached_elsewhere,
+    );
+    assert!(
+        quoted.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "quoted column names are not references: {quoted:?}"
+    );
+
+    let eager = check_with(
+        "dat <- list()\nsetkeyv(dat, undefined_cols)\n",
+        attached_elsewhere,
+    );
+    assert!(
+        eager.iter().any(|diagnostic| diagnostic.code == "RY010"
+            && diagnostic.message.contains("`undefined_cols`")),
+        "setkeyv() reads its `cols` argument: {eager:?}"
+    );
+
+    let own = check_with(
+        "dat <- list()\nsetkey <- function(x, key) key\nsetkey(dat, undefined_key)\n",
+        attached_elsewhere,
+    );
+    assert!(
+        own.iter().any(|diagnostic| diagnostic.code == "RY010"
+            && diagnostic.message.contains("`undefined_key`")),
+        "a project's own setkey() evaluates its arguments: {own:?}"
+    );
+}
+
 #[test]
 fn rlang_eager_helpers_read_their_arguments() {
     // rlang's sym/abort/inform/new_formula/new_quosure evaluate their

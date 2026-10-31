@@ -4,391 +4,469 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-31
+
+This release adds 17 rules (RY112 to RY128) and checks calls to the
+project's own functions. RY090 and RY091 check their arguments, RY092
+checks simple argument types, and project S3 generics dispatch to their
+methods. ry can now check an unsaved buffer from stdin and the R chunks
+of R Markdown and Quarto files. It also reads `box::use()` imports and
+`typehint` class comments, and `ry.toml` gains per-file rule
+severities. Most of the fixes remove false positives
+found by checking the top 500 CRAN packages.
+
+The vendored typeshed is r-typeshed 0565da9. It matches r-typeshed 0.6.4
+except for the new data.table stub, which ry does not vendor yet. ry does
+not model how `[.data.table` scopes column names, so with that stub
+`library(data.table); dt[val > 1]` would report `val` as RY010.
+
 ### Added
 
-- Add RY123 for a `pkg::name` access on the branch where
-  `requireNamespace("pkg", quietly = TRUE)` returned `FALSE`, where the
-  access errors instead of selecting the fallback (#571).
-- RY090 and RY091 on calls to a project function point at the formal they
-  name when the call site provably reaches that definition in the same file:
-  an optional `related` array in JSON output, a `note:` line in `full`
-  output, and LSP `relatedInformation` for clients that support it (#581).
-- Resolve static `box::use()` module and package imports in lexical scope,
-  including selected names, aliases, wildcard exports, package typeshed
-  signatures, and local module return types. RY118 warns when a complete
-  local module inventory proves a selected export or exact `$` member is
-  missing (#579).
-- Add RY119 for proven `as.integer()` range loss. The checker distinguishes
-  a newly created integer `NA` from an input `NA`, retains that fact for
-  condition analysis, and stays quiet for unknown inputs and immediately
-  repaired casts (#569).
-- Add RY122 for testthat equality assertions that compare a deterministic
-  expression to itself (`expect_equal(round(breaks$major, 3),
-  round(breaks$major, 3))`), which cannot check two different values (#572).
-- Add RY126 for sequence subscripts proven to mix positive and negative
-  values (`x[1:-1]`, `x[seq(1, -1)]`, `x[rlang::seq2(-1, 2)]`), which R
-  always rejects on plain vectors and lists. Descending one-sided
-  sequences such as `x[3:1]` and computed endpoints stay silent (#355).
-- Add RY127 for `list(rep(v, n))` nested in a base `c()`/`append()` whose
-  sibling elements are proven flat values of `v`'s classless atomic type:
-  the shape contributes one element holding the whole repeated vector, not
-  `n` flat elements; write `rep(list(v), n)` (#359).
-- Add RY128 for `diag()` calls whose matrix dimension is proven invalid:
-  a negative or `NA` `nrow`/`ncol`, or, with neither supplied, a length-one
-  numeric `x` proven negative or `NA`, which `diag` reads as the dimension
-  rather than a diagonal entry (GPArotation's scalar `diag(d)` defect), so
-  R errors before any matrix is built. Vector `x`, entries mode, classed
-  `x`, and computed signs such as `diag(sign(...))` stay silent (#320).
-- RY001 now also reports a `switch` selector that is still a formal
-  whose authored default is proven not length 1 (`function(type =
-  c("a", "b")) switch(type, ...)` without `match.arg()`): the
-  no-argument call forces the default and R errors. Closed defaults
-  only; rebound or captured-binding defaults stay silent. This
-  closes one oracle known gap (#323).
-- RY001 now reports an `if`/`while` condition that is a proven scalar
-  `NA`: an `NA` literal (including the typed `NA_*_` constants), closed
-  literal shapes over one (unary `!`/`-`, a comparison or `+`/`-`/`*`
-  with a plain literal, `c()`/`any()`/`all()`/`sum()` and
-  `as.logical()`/`as.integer()`/`as.numeric()`/`as.double()`/`as.complex()`/
-  `as.character()` coercions over one), and a definite RY119 cast used directly as the
-  condition. Bindings and possibly-NA conditions stay silent; their
-  value facts are not a sound always-NA proof (#354).
-- Add RY125 for proven `ncol()`/`nrow()`/`dim()` calls on definite function
-  values (such as `ncol(data)` resolving to `utils::data`), which always
-  return `NULL`. The same shape is reported inside literal template
-  arguments to proven cli message functions, with cli markup, escaped
-  braces, `.envir`, masked callees, and dynamic strings left silent (#570).
-- Set per-file rule severities with ordered `[[rule-overrides]]` tables in
-  `ry.toml`, while keeping matching files in project analysis (#583).
-- Check a source buffer with `ry check - --stdin-filename PATH`. The buffer
-  replaces its disk source and uses the same project context and diagnostics
-  as a saved file (#582).
-- Check the R chunks of R Markdown and Quarto reports when
-  `[reports] enabled = true`. RY120 marks report input ry cannot extract;
-  RY121 marks chunk execution it cannot determine statically (#587).
-- Adopt `typehint` 0.1.0 class comments in files selected by
-  `[annotations.typehint]`. RY114-RY117 report declaration mismatches,
-  incomplete, conflicting, and invalid declarations;
-  `dump-facts --annotations` exports them as fact schema 3 (#599, #603, #614).
-- Add the default-off RY113 unused-ignore audit for selective `ry: ignore[...]`
-  comments on RY034 and RY102; enable it with `--warn RY113` (#600).
-- Document checking against a uvr project library through `R_LIBS` (#615)
-  and the Arch Linux AUR packages (#590).
-- Add RY124 for proven network/download calls evaluated while package code
-  loads: at the top level of package or `data-raw` code and in
-  `.onLoad`/`.onAttach`. Connections R has not opened, ordinary function
-  bodies, lazily forced defaults, calls under an
-  `interactive()`/`getOption()`/`Sys.getenv()` guard, and masked or dynamic
-  callees stay quiet.
-- Track length lower bounds (`at least n`) alongside exact lengths. A
-  passing `length(x) > 1L` guard (and its `>=`, mirrored, negated, and
-  early-exit spellings) now reaches RY001/RY002 on `if`/`while`
-  conditions and `switch` selectors; joining a length-2 and a length-3
-  vector keeps "at least 2" instead of collapsing to unknown, and the
-  bound propagates through `c()`, `rep()`, recycling, and negative
-  exclusion. A proven non-one length now also rejects a `switch`
-  selector of unknown or non-vector mode, matching R's error for
-  environments and functions. Computed or fractional bounds, rebound
-  `length`, and upper bounds stay silent (#649).
-- Export length lower bounds from `dump-facts` as
-  `{"kind":"at_least","value":N}`, alongside the existing `known`,
-  `unknown`, and `nonempty` length shapes (#649).
+- Add RY112 for a `ry: ignore[...]` comment with malformed brackets or an
+  unknown rule name. Such a comment no longer suppresses findings. A `noqa`
+  list that names only other tools' rules no longer suppresses ry findings
+  either. A bare `ry: ignore` without a rule list still suppresses.
+- Add RY113, off by default, for a selective `ry: ignore[...]` on RY034 or
+  RY102 that suppresses nothing. Turn it on with `--warn RY113` (#584).
+- Read `typehint` 0.1.0 class comments in the files that
+  `[annotations.typehint]` selects. RY114 reports a value that does not
+  match its declaration, RY115 an incomplete declaration, RY116
+  conflicting declarations, and RY117 an invalid declaration.
+  `dump-facts --annotations` exports the declarations as fact schema 3
+  (#592, #593, #594).
+- Resolve static `box::use()` imports of modules and packages in lexical
+  scope. ry follows selected names, aliases, wildcard exports, package
+  typeshed signatures, and the return types of local modules. RY118
+  reports a selected export or an exact `$` member that a complete local
+  module proves missing (#579).
+- Add RY119 for an `as.integer()` call proven to lose range and return
+  `NA`. ry tells this new `NA` apart from an `NA` in the input and keeps
+  the fact for condition checks. Unknown inputs and casts that the code
+  repairs immediately stay silent (#569).
+- Check the R chunks of R Markdown and Quarto files when
+  `[reports] enabled = true`. RY120 marks report input that ry cannot
+  extract. RY121 marks chunk execution that ry cannot determine
+  statically (#587).
+- Add RY122 for a testthat equality assertion that compares a
+  deterministic expression with itself, such as
+  `expect_equal(round(breaks$major, 3), round(breaks$major, 3))`. The
+  assertion cannot fail (#572).
+- Add RY123 for `pkg::name` on the branch where
+  `requireNamespace("pkg", quietly = TRUE)` returned `FALSE`. On that
+  branch the access errors instead of reaching the fallback (#571).
+- Add RY124 for a proven network or download call that runs while package
+  code loads. That means the top level of package or `data-raw` code, and
+  `.onLoad` or `.onAttach`. Ordinary function bodies, lazily forced
+  defaults, connections that R has not opened, calls guarded by
+  `interactive()`, `getOption()`, or `Sys.getenv()`, and masked or dynamic
+  callees stay silent (#829).
+- Add RY125 for `ncol()`, `nrow()`, or `dim()` on a value proven to be a
+  function, such as `ncol(data)` that resolves to `utils::data`. These
+  calls always return `NULL`. ry also reports them inside literal
+  templates passed to proven cli message functions. cli markup, escaped
+  braces, `.envir`, masked callees, and dynamic strings stay silent
+  (#570).
+- Add RY126 for a sequence subscript proven to mix positive and negative
+  values, such as `x[1:-1]`, `x[seq(1, -1)]`, or
+  `x[rlang::seq2(-1, 2)]`. R rejects these on plain vectors and lists.
+  Descending sequences of one sign, such as `x[3:1]`, and computed
+  endpoints stay silent (#355).
+- Add RY127 for `list(rep(v, n))` inside a base `c()` or `append()` whose
+  other elements are proven flat values of the same classless atomic
+  type. That `list()` adds one element that holds the whole vector, not
+  `n` elements. Write `rep(list(v), n)` instead (#359).
+- Add RY128 for a `diag()` call whose matrix dimension is proven invalid.
+  That is a negative or `NA` `nrow` or `ncol`, or, when neither is given,
+  a length-one numeric `x` proven negative or `NA`. `diag()` reads such an
+  `x` as the dimension, not as a diagonal entry, so R errors. GPArotation
+  shipped this bug as `diag(d)`. A vector `x`, a classed `x`, and computed
+  signs such as `diag(sign(...))` stay silent (#320).
+- RY001 reports a `switch()` selector that is still a formal whose default
+  is proven not length 1, as in
+  `function(type = c("a", "b")) switch(type, ...)` without `match.arg()`.
+  A call that omits `type` forces the default, and R errors. Only defaults
+  built from literals count. A rebound formal and a default that reads
+  other bindings stay silent (#323).
+- RY001 reports an `if` or `while` condition proven to be a scalar `NA`.
+  The proven forms are an `NA` literal or typed `NA_*_` constant, simple
+  literal expressions over one (such as `!NA`, `NA > 1`, `c(NA)`,
+  `any(NA)`, and `as.logical(NA)`), and an RY119 cast used directly as the
+  condition. A binding and a condition that is only possibly `NA` stay
+  silent (#354).
+- Track lower bounds on length ("at least n") next to exact lengths. A
+  passing `length(x) > 1L` guard now reaches RY001 and RY002 on `if` and
+  `while` conditions and on `switch()` selectors. The `>=`, mirrored,
+  negated, and early-exit forms of the guard work too. Joining a length-2
+  and a length-3 vector gives "at least 2" instead of unknown. The bound
+  carries through `c()`, `rep()`, recycling, and negative indexing. A
+  proven length other than one also rejects a `switch()` selector of
+  unknown or non-vector mode, as R does for environments and functions.
+  Computed or fractional bounds, a rebound `length`, and upper bounds
+  stay silent. `dump-facts` exports the bound as
+  `{"kind":"at_least","value":N}` (#649).
+- Dispatch calls to a project's own S3 generics to the project's methods.
+  For `lbl <- function(x, ...) UseMethod("lbl")`, a method's return type
+  now reaches `lbl(obj) + 1` in the same file, and a call with no
+  applicable method reports RY050 (#654).
+- RY090 and RY091 point at the formal that a call names when the call
+  provably reaches a project function in the same file. JSON output adds
+  an optional `related` array, `full` output adds a `note:` line, and the
+  language server sends `relatedInformation` to clients that support it
+  (#581).
+- Set rule severities per file with ordered `[[rule-overrides]]` tables
+  in `ry.toml`. Matching files stay in project analysis (#583).
+- Check an unsaved buffer with `ry check - --stdin-filename PATH`. The
+  buffer replaces the file on disk and gets the same project context and
+  diagnostics as a saved file (#582).
+- Document how to check against a uvr project library through `R_LIBS`
+  (#615) and how to install the Arch Linux AUR packages (#590).
 
 ### Changed
 
-- Vendor r-typeshed 0565da9: `sprintf()` is empty when `fmt` or any value
-  is, like `file.path()`, instead of claiming the longest argument's
-  length.
-- Vendor r-typeshed e528dbb: lubridate and knitr export inventories.
-  `library(lubridate)`, `library(knitr)` and their `import()` directives
-  resolve those packages' names and formals instead of treating them as
-  unstubbed packages that may supply any name, so a script attaching them
-  can now get RY010 for names neither package exports. `library(tidyverse)`
-  resolves lubridate through its attach list. knitr's `all_labels()` and
-  `all_rcpp_labels()` capture their filters, so `all_labels(engine == "R")`
-  stays quiet. The data.table inventory (r-typeshed 08efb9f) is not
-  vendored yet: ry does not model data.table's `[` scoping for receivers it
-  cannot prove are data.tables, so it would report columns as unbound
-  variables.
-- `dump-facts` documents that enumerated string values are open within a
-  schema version: new values (such as the `environment` and `language`
-  modes) and new object fields can appear without a schema bump, and
-  consumers should read an unrecognized value as missing evidence.
-- Demote diagnostics inside an error-assertion probe one confidence tier:
-  testthat's `expect_error()`, `expect_warning()`, and
-  `expect_snapshot(error = TRUE, ...)`, plus base `try()` and
-  `tryCatch(..., error = ...)`. Only the probe argument is demoted, only
-  when the callee resolves to the real testthat/base function
-  (`expect_warning()` demotes only non-error findings, since it does not
-  catch errors), and severity is unchanged, so an intentional
-  `expect_error(1 + "")` still
-  reports RY040 at low confidence while the same code outside a wrapper
-  keeps full confidence (#344).
-- Keep editor inlay labels short while marking hidden known fields and
-  uncertainty; expanded inlay details show the represented type facts within
-  a visible budget. `dump-types` keeps its historical strings (#591).
-- Simplify CLI analysis, LSP refresh bookkeeping, and argument supply analysis.
-- Reduce the VS Code extension bundle by replacing Effect with async functions.
-- Validate selective `ry: ignore[...]` comments and report malformed or
-  unknown rule lists as RY112. Invalid native lists and foreign-only `noqa`
-  lists no longer suppress ry findings; bare ignores still do.
-- Carry scalar-or-NULL facts from successful `stopifnot()` assertions into
-  later RY032 checks, removing the guarded purrr `prepend()` false positive.
-  Only a small set of non-dispatching base calls keeps the fact; any other
-  call or replacement assignment, before or after the assertion, drops it.
-  Preserve a proven vector alternative through simple aliases and loop joins
-  so RY032 reports a reachable first-iteration or empty-iterator error.
-- Report malformed, unreadable, or parser-limited serialized data files as
-  degraded scopes instead of silently treating them as empty (#598).
-- `--exit-zero` now also covers file read and discovery failures during a
-  check; usage errors still exit nonzero (#604).
-- Read meta-package attachment from the stub's new top-level `attaches`
-  list instead of special-casing tidyverse. `library(tidyverse)` now makes
-  all of its stubbed core packages resolvable (purrr, stringr, tibble,
-  readr, ggplot2, not only dplyr and tidyr's verbs), while forcats and
-  lubridate, which have no stubs, keep the search path open.
-- Type `a:b` by R's `:` rules when an endpoint is unknown. If either
-  endpoint is a numeric or logical literal, optionally negated by base `-`,
-  it cannot be a factor and the result is a nonempty integer or double
-  vector, so `x <- 1:n; x + "a"` now reports RY040. The result is integer
-  only when `from` is integer-valued and the end stays in int range;
-  `1.5:n` is double and `1:3e9` is no longer claimed as integer. Other
-  endpoint pairs may be a factor interaction and stay unknown, as do
-  character endpoints (`1:"a"` errors at the `:`) and `:` under a
-  user-defined `` `:` ``. A user-defined unary `-` or `!` now makes its
-  result unknown (#648).
-- Separate unknown values from known environments and language objects.
-  `quote(<symbol or call>)` builds a classless language value, so
-  `q <- quote(a + b); q * 2` now reports RY040 unless an operand may select
-  an `Ops` method. `new.env()`, `globalenv()`, `emptyenv()`, `baseenv()`
-  and two-sided formulas build values of unknown class and stay quiet in
-  arithmetic. Calling a local environment or language binding reports
-  RY070 when no function of that name exists, and otherwise resolves the
-  function past it. `dump-facts` exports the new `mode` values
-  `environment` and `language`, without a schema bump; `dump-types`,
-  hovers and inlay hints show them where they used to show `unknown`
-  (#648).
+- RY090 and RY091 check calls to the project's own functions in the CLI
+  and the language server. In 0.11.0 they checked only stubbed functions,
+  so `helper <- function(x, scale) x * scale; helper(1, sclae = 2)` stayed
+  silent. ry checks each call against the definition that the call
+  provably reaches (#659).
+- RY092 checks calls to simple project functions against what the body
+  does with each argument, so `f <- function(x) x + 1L; f("oops")` now
+  reports. ry reads these contracts only from a function bound once whose
+  body is a bare formal, a base arithmetic operation between a formal and
+  a literal, or `$` on a formal (#674).
+- RY033 reports only ordering comparisons (`<`, `>`, `<=`, and `>=`).
+  `==` and `!=` between character and numeric values no longer report,
+  and the message names the actual mode (#699).
+- Lower the confidence of findings inside an error-assertion probe by one
+  tier. The probes are testthat's `expect_error()`, `expect_warning()`,
+  and `expect_snapshot(error = TRUE, ...)`, and base `try()` and
+  `tryCatch(..., error = ...)`. ry lowers findings only in the probed
+  argument, and only when the callee resolves to the real testthat or base
+  function. `expect_warning()` does not catch errors, so it lowers only
+  findings that are not errors. Severity stays the same, so
+  `expect_error(1 + "")` still reports RY040, at low confidence (#344).
+- `library(tidyverse)` attaches every core package that has a stub:
+  purrr, stringr, tibble, readr, ggplot2, and lubridate, not only dplyr
+  and tidyr. ry reads the list from the stub's new top-level `attaches`
+  field instead of special-casing tidyverse. forcats has no stub and still
+  leaves the search path open.
+- Type `a:b` by R's `:` rules when one endpoint is unknown. If either
+  endpoint is a numeric or logical literal, optionally negated by base
+  `-`, the result is a nonempty integer or double vector, so
+  `x <- 1:n; x + "a"` now reports RY040. The result is integer only when
+  `from` is a whole number and the end stays in integer range. `1.5:n` is
+  double, and ry no longer claims `1:3e9` is integer. Other endpoint pairs
+  may be a factor interaction and stay unknown. Character endpoints stay
+  unknown too, since `1:"a"` errors at the `:`. Under a user-defined
+  `` `:` ``, `:` stays unknown. A user-defined unary `-` or `!` now makes
+  its result unknown (#648).
+- Tell unknown values apart from known environments and language objects.
+  `quote()` of a symbol or call builds a classless language value, so
+  `q <- quote(a + b); q * 2` now reports RY040 unless an operand may
+  select an `Ops` method. `new.env()`, `globalenv()`, `emptyenv()`,
+  `baseenv()`, and two-sided formulas build values of unknown class and
+  stay silent in arithmetic. Calling a local environment or language
+  binding reports RY070 when no function of that name exists. Otherwise
+  ry resolves the call to that function. `dump-types`, hovers, and inlay
+  hints show the new modes where they used to show `unknown` (#648).
+- `dump-facts` exports the new `mode` values `environment` and `language`
+  without a schema bump. Its documentation now says that enum values and
+  object fields can grow within a schema version. Read an unrecognized
+  value as missing evidence.
+- Inlay hints stay short and mark hidden known fields and uncertainty.
+  The expanded inlay detail shows the type facts up to a size limit.
+  `dump-types` output is unchanged (#591).
+- `--exit-zero` also covers file read and discovery failures during a
+  check. Usage errors still exit nonzero (#604).
+- Report a malformed, unreadable, or parser-limited serialized data file
+  as a degraded scope instead of reading it as empty (#585).
+- The vendored typeshed moves to r-typeshed 0565da9. lubridate and knitr
+  gain export inventories, so `library(lubridate)`, `library(knitr)`, and
+  their `import()` directives resolve those packages' names and formals.
+  Before, ry treated them as unstubbed packages that may supply any name.
+  A script that attaches them can now get RY010 for a name neither
+  package exports. The individual stub fixes are listed under Fixed.
 
 ### Fixed
 
-- Indexed replacement (`x[i] <- v`, `x[[i]] <- v`, `x$a <- v`) updates the
-  binding's exported type: the mode joins upward as R coerces it, a named
-  write extends the names, and a positive literal subscript or the value
-  extends the length. `dump-facts` no longer reports the pre-write type for
-  such bindings (#839).
+- `x[i] <- v`, `x[[i]] <- v`, and `x$a <- v` update the binding's
+  exported type. The mode widens as R coerces it, a named write adds the
+  name, and a positive literal subscript or the value extends the length.
+  `dump-facts` no longer reports the type from before the write (#839).
 - `x[["a"]] <- v` and `x$a <- v` on an atomic vector are valid R and no
-  longer report RY061: `[[<-` replaces in place, while `$<-` warns and
-  coerces the LHS to a list. The rule keeps firing for the read-side `$`
-  operator (#840).
-- `rep()` length inference matches arguments as R does: a third positional
-  argument is `length.out`, not `each`, partial names such as `len =` and
-  `ti =` bind, and a literal `length.out` sets the length on its own. This
-  removes false RY002 reports on `rep(x, length.out = 1)`, `rep(x, 2, 1)`
-  and `rep(x, len = 1)`.
-- A left-associative binary-operator chain such as a 300-term `1 + 1 + ...`
-  or a long `|>` pipeline is flat R code and no longer trips the 128-level
-  syntax nesting limit; real nesting still does (#842).
-- `ry check` reports a file it cannot read or parse at all (such as one past
-  ry's syntax nesting limits) as one RY000 in every output format, instead of
-  only a stderr line, so `--output-format json --exit-zero` no longer shows a
-  clean `[]` for it (#743).
-- The language server publishes the same RY000 for an open buffer it cannot
-  parse, instead of keeping the findings from its last parse, and clears it
-  once the buffer parses again (#785).
-- The RY000 for a file ry cannot parse gives a character column, like every
-  other finding, instead of a byte column after multibyte characters (#784).
+  longer report RY061. `[[<-` replaces in place, and `$<-` warns and turns
+  the vector into a list. RY061 still reports `$` reads (#840).
+- `rep()` matches its arguments as R does. A third positional argument is
+  `length.out`, not `each`. Partial names such as `len =` and `ti =` bind,
+  and a literal `length.out` sets the length on its own. This removes
+  false RY002 reports on `rep(x, length.out = 1)`, `rep(x, 2, 1)`, and
+  `rep(x, len = 1)`.
+- A long left-associative operator chain, such as a 300-term
+  `1 + 1 + ...` or a long `|>` pipeline, no longer hits the 128-level
+  syntax nesting limit. Real nesting still does (#842).
+- Check files with long flat `else if` chains instead of skipping them at
+  the 128-level nesting limit. Up to 1024 `else if` arms may nest,
+  counting chains inside chains. lavaan's `lav_object_inspect.R` is now
+  checked (#696).
+- `ry check` reports a file it cannot read or parse at all as one RY000 in
+  every output format, not only as a line on stderr. Before,
+  `--output-format json --exit-zero` printed a clean `[]` for such a file
+  (#743).
+- The RY000 for a file ry cannot parse gives a character column, like
+  every other finding, instead of a byte column after multibyte
+  characters (#789).
+- The language server publishes the same RY000 for an open buffer it
+  cannot parse, instead of keeping the findings from the last good parse.
+  It clears the RY000 once the buffer parses again (#785).
+- A NUL byte inside a `#` comment is comment text. It no longer causes a
+  false RY000 that hid the file's other findings (#698).
+- `exclude` patterns apply when the check root is relative, as in
+  `ry check`, `ry check .`, and `ry check ./R`. Before, ry ignored them
+  (#642).
+- `ry server` exits on the LSP `exit` notification, with code 0 after
+  `shutdown` and 1 otherwise. Before, it waited for stdin to close (#643).
+- `ry check --watch` no longer misses an edit made just after the
+  "watching N file(s)" line (#660).
+- After the last workspace folder is removed, the language server no
+  longer re-indexes that folder or republishes diagnostics for its closed
+  files (#638).
+- End quietly instead of panicking when stdout closes early, as in
+  `ry check | head` (#626).
+- Check files with thousands of top-level functions in linear time.
+  torch's generated `RcppExports.R` took 22 s and now takes under 2 s
+  (#697).
+- Skip diagnostics in an argument that the exact callee never evaluates.
+  `ign <- function(x) 1L; ign("oops" + 1L)` no longer reports RY040, since
+  R never evaluates `"oops" + 1L` (#656).
+- Return types no longer depend on function names in deep call chains,
+  and a recursive function keeps its base case, so
+  `r <- function(n) if (n == 0L) "x" else r(n - 1L); r(1L) + 1L` now
+  reports (#657).
+- A project function named like a base function, such as `identity()`,
+  no longer types explicit `base::identity()` calls. This removes false
+  RY040 reports (#668).
+- Choose S4 methods by their full signature. The result no longer depends
+  on registration order, which removes false RY040 reports and finds
+  missed ones (#650).
+- `p + NULL` with a ggplot object, or any other literal `NULL` next to an
+  operand that may dispatch, no longer reports RY040 (#707).
+- Skip diagnostics in the arm that a literal `if` never runs, such as the
+  body of `if (FALSE)` or the `else` of `if (TRUE)` (#703).
+- A name assigned in an arm of an `if` used as a value is bound after the
+  `if`. This removes a false RY010 (#694).
+- `tryCatch(error = h, expr)` takes its type from `expr`, not from the
+  handler. This removes a false RY001 (#720).
+- A passing type test such as `is.character(x)` drops the zero length of
+  a `NULL` default, which removes a false RY001 on `logical<len=0>`
+  (#695).
+- A closure defined in `local()`, `test_that()`, or an R6 class body
+  shadows the base function of the same name. This removes a false RY091
+  (#718).
+- The inner target of `a <- b <- function(...)` at top level is a package
+  binding. This removes a false RY010 in other files (#693).
+- Track literal dplyr column additions, removals, and renames through
+  common verbs. This removes two false RY060 reports for
+  `group_by(big = ...)` in the pinned dplyr corpus. Dynamic and custom S3
+  results stay conservative (#353).
+- Bind the target of a base `delayedAssign()` without evaluating its
+  promise. This removes false RY010 reports for lazily bound values
+  (#349).
+- Treat a project's own `%<-%` or `%->%`, such as rlang's
+  `standalone-zeallot.R` copy, as destructuring like zeallot's.
+  `c(found, other) %<-% value` binds both names instead of leaving `found`
+  at its `NULL` placeholder (#706).
+- Apply the `data()` and `load()` loaders only when no local, parameter,
+  or project binding of that name may be the callee. This removes false
+  RY061 reports on Shiny's `data <- reactive(...)` followed by `data()$x`
+  (#717).
+- Accept a logical `NA` callback result in purrr's typed maps, which widen
+  it to the target type's `NA` (#352).
+- Resolve base functions in package `R/` code without whole-package
+  imports, since R finds base before attached packages. The `switch()`
+  check now reports a `NULL` selector inside such packages, as it already
+  did in scripts (#568).
+- RY070 no longer reports a call guarded by `is.function(x)` when ry
+  inferred no function type for `x` (#741).
+- A mode guard such as `is.list(x)` or `is.numeric(x)` no longer keeps a
+  stale type for `x` when ry inferred none of the tested mode. The guarded
+  arm sees an unknown value (#752).
+- A closure no longer gets RY010 for a free name that its enclosing block
+  binds later. This covers `local({ ... })`, including when `local` may be
+  masked, other braced call arguments such as `suppressWarnings({ ... })`,
+  and `switch()` arms. It removes false positives in cli, pak, and rlang
+  (#690).
+- Enumerate every binding in a serialized workspace that holds an external
+  pointer, such as a readr tibble saved into `R/sysdata.rda`. Before, ry
+  stopped at the pointer and reported the later bindings unbound (#714).
+- Function bodies see `<<-` updates from writers defined after them or in
+  another package file, such as a `NULL` placeholder that `.onLoad` fills.
+  This removes false RY001 and RY070 reports (#706).
+- RY070 no longer reports a call head bound to a join of `NULL` or a value
+  with a function, such as an optional callback (#700).
+- Stop checking a closure's free variables against its defining frame once
+  `environment(f) <- rho` moves it. This removes false RY070 reports on
+  lme4's `mkTheta <- NULL` R CMD check placeholders (#716).
+- A call head bound to an opaque or function-valued local or parameter
+  calls that value, not the base function of the same name. `dt()` on a
+  `dt` argument no longer takes the arity or return type of `stats::dt`
+  (#722).
+- `$` on a plain list follows R's partial matching. A unique prefix such as
+  `res$nv` reads the `nvalid` field instead of `NULL`, which removes a
+  false RY040 (#721).
+- `$` on a base data frame follows the same partial matching, so `df$nv`
+  reads a unique `nvalid` column instead of reporting RY060. Tibbles keep
+  RY060, since their `$` never partially matches (#753).
+- A column subset such as `tb[, "a"]` keeps the tibble class, since a
+  tibble never drops to a vector without `drop = TRUE`. A prefix `$` on it
+  now reports RY060, not nothing or a false RY061 (#771).
+- Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
+  results, such as `merge(a, b)[, 1] - 1`. The vendored base stub returns
+  a data frame from `read.table()`, `read.csv()`, and `read.delim()`, an
+  opaque value from `merge()`, and a double matrix from `gc()` (#709).
+- A literal positional `x[[1]] <- value` replaces the element type a list
+  recorded. A computed `x[[i]] <- value` or a positional `x[i] <- value`
+  forgets the recorded element types. This removes false RY061 reports in
+  ade4 (#715).
+- RY070 no longer reports a call to a package S4 generic that shares its
+  name with a value formal, such as `res()` next to `res = FALSE` (#712).
+- A formal or local named `c`, `signature`, `setMethod`, `setGeneric`, or
+  `standardGeneric` masks S4 registration only inside a function that
+  registers. Before, `error = function(c)` anywhere turned off every S4
+  method and scalar fact in the project (#780).
+- Bind `.Generic`, `.Class`, `.Method`, and `.Group` in S3 methods named
+  for a known or NAMESPACE-registered generic. The same holds for a helper
+  that `registerS3method()` or `.S3method()` registers in a top-level
+  `evalqOnLoad()` block. This removes false RY010 reports such as
+  lubridate's `comp_posix_date` (#348).
+- `cut()` on a dendrogram, such as `cut(dend, h)$lower`, no longer reports
+  RY061. The vendored base stub declares `cut` an S3 generic, so ry
+  dispatches to `cut.dendrogram()` (#711).
+- A name assigned inside a `[` subscript stays bound when the receiver is
+  opaque or a matrix, as in `x[iu <- upper.tri(x)]`. This removes false
+  RY010 reports in lme4 and DescTools (#713).
+- A callee's formal no longer takes the type of the caller's forwarded
+  default when the caller tests that argument before the call, as in
+  `if (!is.null(save_period)) cb_save(save_period)` (#719).
+- A literal `x[[N]]` on a partly named list reads by position.
+  `list(a = "s", list(b = 2))[[1]]` reads `"s"`, so `$b` on it reports
+  RY061 (#758).
+- Stop applying an omitted `NULL` default after guards that exclude it.
+  The guards are `if (is.null(x)) return(...)`, `!missing(x)`, every
+  `!is.null()` operand of `&&`, `length(x) == 1`, `length(x) > 0`, and a
+  `for` loop over `x`. These no longer give a false RY001 or RY070 (#692).
+- A local bound to a guard predicate narrows like the guard itself.
+  `has_size <- !is.null(size); if (has_size) ...` drops the omitted
+  `NULL` default like `if (!is.null(size))` does, until either name is
+  rebound (#692).
+- After `if (is.null(x) || x == 1) return(...)`, `x` is not `NULL`,
+  whatever the other operand tests. After a return guard whose mode test a
+  local always passes, such as `y <- "a"; if (is.character(y)) return(x)`,
+  the local is unknown, since R never gets there with that value (#692).
+- A passing `if` test such as `x == ""`, `!is.null(x) && x == ""`, or
+  `!x %in% c("a", "b")` proves that `x` is `NULL` or scalar, as
+  `stopifnot()` already did. A `c()` of literals keeps scalar facts. A
+  later `is.null(x) || pred(x)` guard no longer reports a false RY032
+  (#702).
+- A successful `stopifnot()` proves that a value is scalar or `NULL` for
+  later RY032 checks, which removes the false positive on purrr's guarded
+  `prepend()`. Only a few base calls that do not dispatch keep the fact.
+  Any other call or replacement assignment drops it. A proven vector
+  alternative survives simple aliases and loop joins, so RY032 reports an
+  error on the first iteration or on an empty iterator.
+- An S3 generic inherits `{{ x }}` defusing from its project methods, as
+  it already inherits `enquo()` quoting. `generic(df, col = mpg)` no
+  longer reports `mpg` as RY010 when the method forwards `{{ col }}`
+  (#687).
+- Recognize an S3 generic that runs statements before its final
+  `UseMethod()`, such as `check_not_missing(data)`. The generic inherits
+  its methods' `{{ x }}` defusing unless those statements read the
+  argument (#774).
+- A `missing(col)` check no longer counts as a use when ry decides whether
+  a function defuses `col`. After
+  `if (missing(col)) stop(); dplyr::select(data, {{ col }})`, callers'
+  bare column names no longer report RY010 (#688).
+- Passing `col` to a project validator that only tests its formal with
+  `missing()` no longer counts as a use, so a later `{{ col }}` still
+  defuses it. An example is the `check_not_missing()` that cards copies
+  from insightsengineering's `standalone-checks.R` (#688).
+- The vendored rlang stub says `caller_arg()` captures its argument, so a
+  validator default such as `arg_name = rlang::caller_arg(x)` no longer
+  counts as forcing `x` (#688).
 - RY010 reports a bare unbound name passed to a defused formal when the
-  call omits a sibling formal whose default reads it (`label = col`) and the
-  body uses that sibling before the embrace, since R then forces it (#790).
+  call omits a sibling formal whose default reads it (`label = col`) and
+  the body uses that sibling before the embrace, since R then forces it
+  (#790).
 - RY010 no longer reports a bare name passed to a formal that only a used
   sibling's default captures (`q = rlang::enquo(col)`), since R never
   forces it (#793).
-- Stop selections from claiming their input's length. `return: "arg0"`
-  combined with a `return_length` rule now keeps the first argument's mode
-  and class but re-counts its elements, dropping whole-value facts; a data
-  frame keeps its columns with unknown row counts. With the vendored stubs,
-  `head`, `tail`, `unique`, `setdiff`, `union`, `na.omit`, `subset`, and
-  `window` no longer produce false RY002 and RY041 reports such as
-  `if (head(x, 1) > 0)` on a length-3 `x`. Stubs can declare
-  `zero_if_any_param_zero` with one parameter and the new
-  `zero_if_all_params_zero` and `same_emptiness` rules; a selection proven
-  nonempty from a known constant vector keeps its value, so
-  `as.integer(unique(c(1e10, 1e10)))` still reports RY119.
-- Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
-- Bind the target of a base `delayedAssign()` without evaluating its promise,
-  removing false RY010 reports for lazily bound values (#349).
-- Treat a project's own `%<-%` or `%->%`, such as rlang's
-  `standalone-zeallot.R` copy, as destructuring like zeallot's, so
-  `c(found, other) %<-% value` binds both names instead of leaving `found` at
-  its `NULL` placeholder (#706).
-- Apply the `data()` and `load()` loaders only when no local, parameter, or
-  project binding of that name may be the callee, removing false RY061
-  reports on Shiny's `data <- reactive(...)`; `data()$x` (#717).
-- Accept a logical `NA` callback result in purrr's typed maps, which widen it
-  to the target's `NA` (#352).
-- End quietly instead of panicking when stdout closes early, as in
-  `ry check | head` (#626).
-- Resolve base functions in package `R/` code without whole-package imports,
-  where R finds base before attached packages. The `switch` EXPR check now
-  reports a NULL selector inside such packages, as it already did in
-  scripts (#568).
-- Stop RY070 from reporting a call guarded by `is.function(x)` when ry
-  inferred no function type for `x` (#741).
-- Stop mode guards such as `is.list(x)` and `is.numeric(x)` from keeping a
-  stale type for `x` when ry inferred none of the tested mode; the guarded
-  arm now sees an unknown value (#752).
-- Let closures in a `local()` block read helpers the block assigns later,
-  removing RY010 false positives in cli, pak, and rlang.
-- Enumerate every binding in a serialized workspace that holds an external
-  pointer, such as a `readr` tibble saved into `R/sysdata.rda`, instead of
-  stopping at the pointer and reporting the later bindings unbound (#714).
-- Let function bodies see `<<-` updates from writers defined after them or
-  in another package file, such as a `NULL` placeholder filled by
-  `.onLoad`, removing false RY001 and RY070 reports (#706).
-- Stop RY070 from reporting a call head bound to a NULL-or-function or
-  value-or-function join, such as an optional callback (#700).
-- Stop checking a closure's free variables against its defining frame once
-  `environment(f) <- rho` re-homes it, removing false RY070 reports on
-  lme4's `mkTheta <- NULL` R CMD check placeholders (#716).
-- Check files with long flat `else if` chains instead of skipping them at
-  the 128-level syntax nesting limit. Up to 1024 `else if` arms may nest,
-  counting chains inside chains; lavaan's `lav_object_inspect.R` is now
-  checked (#696).
-- Treat a call head bound to an opaque or function-valued local or
-  parameter as that callable instead of the same-named base function, so
-  `dt()` on a `dt` argument no longer takes `stats::dt`'s arity or return
-  type (#722).
-- Follow R's partial matching for `$` on a plain list: a unique prefix such
-  as `res$nv` reads the `nvalid` field instead of NULL, removing a false
-  RY040 (#721).
-- Follow the same partial matching for `$` on a base data frame, so
-  `df$nv` reads a unique `nvalid` column instead of reporting RY060.
-  Tibbles keep RY060, since their `$` never partial-matches (#753).
-- Keep a tibble's class on a column subset such as `tb[, "a"]`, which a
-  tibble never drops to a vector without `drop = TRUE`. A prefix `$` on it
-  now reports RY060 instead of nothing or a false RY061 (#771).
-- Stop reporting list arithmetic on `merge()`, `read.csv()`, and `gc()`
-  results such as `merge(a, b)[, 1] - 1`. The vendored base stubs
-  (r-typeshed affe513f) now return a data frame from `read.table` and its
-  `read.csv`/`read.delim` variants, an opaque value from `merge`, and a
-  double matrix from `gc` (#709).
-- Let a literal positional `x[[1]] <- value` replace the element type a
-  list recorded, and make a computed `x[[i]] <- value` or a positional
-  `x[i] <- value` forget the recorded element types, removing RY061 false
-  positives in ade4 (#715).
-- Stop RY070 from reporting a call to a package S4 generic whose name a
-  value formal shares, such as `res()` next to `res = FALSE` (#712).
-- Treat a formal or local named `c`, `signature`, `setMethod`,
-  `setGeneric`, or `standardGeneric` as masking S4 registration only in a
-  function that registers, so `error = function(c)` elsewhere no longer
-  turns off every S4 method and scalar fact in the project (#780).
-- Check files with thousands of top-level functions in linear time. torch's
-  generated `RcppExports.R` took 22 s alone and now takes under 2 s (#697).
-- Bind `.Generic`, `.Class`, `.Method`, and `.Group` in S3 methods named for
-  a known or NAMESPACE-registered generic, and in a helper that
-  `registerS3method()` or `.S3method()` registers in a top-level
-  `evalqOnLoad()` block, removing RY010 false positives such as lubridate's
-  `comp_posix_date` (#348).
-- Stop reporting `$` on `cut()` of a dendrogram, such as `cut(dend, h)$lower`,
-  as RY061. The vendored base stub (r-typeshed 13d19dcb) declares `cut` as an
-  S3 generic, so ry dispatches to `cut.dendrogram` (#711).
-- Keep a name assigned inside a `[` subscript bound when the receiver is
-  opaque or a matrix, as in `x[iu <- upper.tri(x)]`, removing false RY010
-  reports in lme4 and DescTools (#713).
-- Stop typing a callee's formal as the caller's forwarded default when a
-  condition in the caller tests that argument before the call, as in
-  `if (!is.null(save_period)) cb_save(save_period)` (#719).
-- Read a literal `x[[N]]` on a partly named list by position: `list()`
-  numbers only the unnamed elements, so `list(a = "s", list(b = 2))[[1]]`
-  no longer reads the unnamed list and now reports RY061 on `$b` (#758).
-- Stop applying an omitted `NULL` default after guards that exclude it:
-  `if (is.null(x)) return(...)`, `!missing(x)`, every `!is.null()`
-  conjunct of `&&`, `length(x) == 1` or `length(x) > 0`, and a `for`
-  body over `x`. These no longer report a false RY001 or RY070 (#692).
-- Count a passed `if` test such as `x == ""` or `!is.null(x) && x == ""` as
-  proof that `x` is NULL or scalar, as `stopifnot` already did, so a later
-  `is.null(x) || pred(x)` guard no longer reports a false RY032 (#702).
-- Count a passed `if (!x %in% c("a", "b"))` test as the same scalar proof, and
-  let a `c()` of literals keep scalar facts, so the later guard no longer
-  reports a false RY032 (#702).
-- Let an S3 generic inherit `{{ x }}` defusing from its project methods, as it
-  already inherits `enquo()` quoting, so `generic(df, col = mpg)` no longer
-  reports `mpg` as RY010 when the method forwards `{{ col }}` (#687).
-- Recognise an S3 generic that runs statements before its final
-  `UseMethod()`, such as `check_not_missing(data)`, so it inherits its
-  methods' `{{ x }}` defusing unless that preamble reads the argument (#774).
-- Stop RY010 from reporting a closure's free name that a braced call
-  argument binds later, as in `suppressWarnings({ ... })`, a `switch()` arm,
-  or `local({ ... })` when `local` may be masked (#690).
-- Treat plain assignments in a top-level rlang-style `on_load({...})` block
-  as package bindings, so reads from other files no longer get RY010 (#691).
-- Count rlang's lazy `name %<~% expr` in such a block as a package binding
-  too, and a name both arms of a direct `if`/`else` there bind, removing
-  pkgload's RY010 reads of its lazy imports (#691).
-- Skip a `missing(col)` check when deciding whether a function defuses `col`,
-  so `if (missing(col)) stop(); dplyr::select(data, {{ col }})` no longer
-  makes callers' bare column names RY010 (#688).
-- Treat the objects `Rcpp::loadModule()` installs as package bindings: a
-  literal `what` binds exactly those names, and `what = TRUE` stops RY010
-  for names a function does not assign itself (#704).
-- For `loadModule("mod", TRUE)`, bind exactly the `class_<T>("Name")` and
-  `function("name", ...)` objects the package's `src/` `RCPP_MODULE(mod)`
-  declares, so typos and other unbound names report RY010 again (#704).
-- Treat passing `col` to a project validator that only tests its formal with
-  `missing()`, like the standalone `check_not_missing()` that cards vendors
-  from insightsengineering's standalone-checks.R, as no use of `col`, so a
-  later `{{ col }}` still defuses it (#688).
-- Vendor r-typeshed 7d874359: `rlang::caller_arg()` captures its argument, so
-  a validator default such as `arg_name = rlang::caller_arg(x)` no longer
-  counts as forcing `x` (#688).
+- Plain assignments in a top-level rlang-style `on_load({...})` block are
+  package bindings, so reads from other files no longer get RY010. Names
+  that both arms of a direct `if`-`else` in the block bind count too
+  (#691).
+- rlang's lazy `lhs %<~% rhs` binds `lhs` and defers `rhs`, at top level
+  and inside `on_load()`. pkgload's `desc_desc %<~% desc::desc` lazy
+  imports no longer report RY010 (#691, #706).
+- `Rcpp::loadModule()` binds the objects it installs as package bindings.
+  A literal `what` binds exactly those names. `what = TRUE` binds exactly
+  the `class_<T>("Name")` and `function("name", ...)` objects that the
+  package's `src/` declares in `RCPP_MODULE(mod)`, so typos still report
+  RY010 (#704).
 - Keep trusting a `length(x) == 1L &&` guard when the project's only
-  `length.*` methods are `function(x) length(unclass(x))`, and name the
-  method, with a note at its definition, when RY032 distrusts the guard
-  because of one (#701).
-- Apply `--typeshed` stubs' `captures_promise` arguments when deciding whether
-  a project function captures its formal, so a wrapper around a stubbed
-  capture no longer reports its caller's name as RY010 (#776).
+  `length.*` methods are `function(x) length(unclass(x))`. When RY032
+  distrusts a guard because of such a method, the message names the
+  method and adds a note at its definition (#701).
+- Apply the `captures_promise` arguments of `--typeshed` stubs when
+  deciding whether a project function captures its formal. A wrapper
+  around a stubbed capture no longer reports its caller's name as RY010
+  (#776).
 - Stop applying an omitted default's type in the arm selected by a passing
   test of that parameter that ry cannot decide, such as `is_tensor(dims)`,
-  `inherits(model, "ets") && is.null(lambda)` or `"values" %in% names(sel)`
+  `inherits(model, "ets") && is.null(lambda)`, or
+  `"values" %in% names(sel)` (#710).
+- Stop reporting a classless value inside the arm that a mode test
+  rejects when ry typed the value as the tested mode, such as the `else`
+  of `is.numeric(shape)` on an integer `shape`. R never enters that arm
   (#710).
-- Stop reporting a classless value inside the arm a mode test rejects when ry
-  typed it as the tested mode, such as the `else` of `is.numeric(shape)` on an
-  integer `shape`. R never enters that arm (#710).
-- Narrow through a local bound to a guard predicate, so
-  `has_size <- !is.null(size); if (has_size) ...` drops the omitted `NULL`
-  default like `if (!is.null(size))` does, until either name is rebound (#692).
-- Past `if (is.null(x) || x == 1) return(...)`, `x` is non-`NULL` whatever
-  the other operand tests, and past a return guard whose mode test a local
-  always passes (`y <- "a"; if (is.character(y)) return(x)`) the local is
-  unknown, since R never gets there with that value (#692).
-- Type a `$` or `[[` name missing from a list whose names ry only partly
-  knows (`list(...)`, an `lapply()` result, fields written to an argument
-  or environment) as unknown instead of NULL, removing RY001 false
-  positives in metafor, R.oo, terra, and gridGraphics (#689).
-- Keep every step of a nested replacement such as `x$f[[i]]$g <- v`: an
-  index step ry does not model makes `x$f` forget its element types instead
-  of recording `x$f$g`, removing RY061 false positives in forecast and rgl
-  (#708).
-- Vendor r-typeshed d3514747: rlang's `lhs %<~% rhs` binds `lhs` and defers
-  `rhs`, so pkgload's `desc_desc %<~% desc::desc` lazy imports no longer read
-  the bound name as an unbound variable (#706).
-- Vendor r-typeshed a7838670: `Sys.Date()` returns a `Date` and `Sys.time()`
-  a `POSIXct`. RY061 still reports `$` on them, and on any classed atomic
-  value, when no `$.<class>` method exists in the stubs, the project, its
-  registrations, its imports or the enclosing scope. Code under a passing
-  `is.numeric()` on a Date, POSIXt, difftime or factor value, or under a
-  failing `inherits()` test of a class the value is known to carry, is no
-  longer reported: R never runs it.
-- In a package, top-level assignments and `<<-` writes in tests, `inst/` and
-  other files outside `R/` no longer bind names for `R/` code, which restores
-  RY010s in terra hidden by tinytest variables (#804).
-- Likewise, a function defined in a test or other file outside `R/` no longer
+- A `$` or `[[` name missing from a list whose names ry knows only in part
+  is unknown, not `NULL`. Such lists come from `list(...)`, `lapply()`,
+  and fields written to an argument or environment. This removes false
+  RY001 reports in metafor, R.oo, terra, and gridGraphics (#689).
+- Keep every step of a nested replacement such as `x$f[[i]]$g <- v`. An
+  index step that ry does not model makes `x$f` forget its element types
+  instead of recording `x$f$g`. This removes false RY061 reports in
+  forecast and rgl (#708).
+- `Sys.Date()` returns a `Date` and `Sys.time()` a `POSIXct` in the
+  vendored base stub. RY061 still reports `$` on them, and on any classed
+  atomic value, when no `$.<class>` method exists in the stubs, the
+  project, its registrations, its imports, or the enclosing scope. ry no
+  longer reports code that R never runs: code under a passing
+  `is.numeric()` on a Date, POSIXt, difftime, or factor value, and code
+  under a failing `inherits()` test of a class the value is known to
+  carry.
+- `sprintf()` is empty when `fmt` or any value is empty, like
+  `file.path()`. Before, the vendored stub claimed the length of the
+  longest argument.
+- knitr's `all_labels()` and `all_rcpp_labels()` capture their filters, so
+  `all_labels(engine == "R")` no longer reports RY010.
+- Selection functions no longer claim their input's length. `return: "arg0"`
+  with a `return_length` rule keeps the first argument's mode and class
+  but counts its elements again, and drops facts about the whole value. A
+  data frame keeps its columns with unknown row counts. With the vendored
+  stubs, `head()`, `tail()`, `unique()`, `setdiff()`, `union()`,
+  `na.omit()`, `subset()`, and `window()` no longer give false RY002 and
+  RY041 reports such as `if (head(x, 1) > 0)` on a length-3 `x`. Stubs can
+  declare `zero_if_any_param_zero` with one parameter and the new
+  `zero_if_all_params_zero` and `same_emptiness` rules. A selection proven
+  nonempty from a known constant vector keeps its value, so
+  `as.integer(unique(c(1e10, 1e10)))` still reports RY119.
+- In a package, top-level assignments and `<<-` writes in tests, `inst/`,
+  and other files outside `R/` no longer bind names for `R/` code. This
+  restores RY010 reports in terra that tinytest variables hid (#804).
+- A function defined in a test or other file outside `R/` no longer
   resolves a bare call from `R/` code, so its return type no longer types
   package code (#806).
-- A built-in guard (`is.null(x)`, `length(x) == 1`, `missing(x)`, ...)
-  whose callee a project or local function redefines, also as
-  `` `is.null` <- ``, no longer narrows `x`, and RY032 no longer trusts a
+- A built-in guard such as `is.null(x)`, `length(x) == 1`, or `missing(x)`
+  no longer narrows `x` when a project or local function redefines its
+  callee, also through `` `is.null` <- ``. RY032 no longer trusts a
   `length(x) == 1L` guard under a backtick `` `length` `` mask (#802).
 
 ## [0.11.0] - 2026-09-22
@@ -2781,7 +2859,8 @@ in under a second in release mode.
 
 - Initial release.
 
-[Unreleased]: https://github.com/sims1253/ry/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/sims1253/ry/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/sims1253/ry/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/sims1253/ry/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/sims1253/ry/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/sims1253/ry/compare/v0.9.0...v0.9.2

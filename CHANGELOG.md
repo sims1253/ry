@@ -15,10 +15,8 @@ of R Markdown and Quarto files. It also reads `box::use()` imports and
 severities. Most of the fixes remove false positives
 found by checking the top 500 CRAN packages.
 
-The vendored typeshed is r-typeshed 0565da9. It matches r-typeshed 0.6.4
-except for the new data.table stub, which ry does not vendor yet. ry does
-not model how `[.data.table` scopes column names, so with that stub
-`library(data.table); dt[val > 1]` would report `val` as RY010.
+The vendored typeshed moves to r-typeshed 0.6.4, which adds export
+inventories for lubridate, knitr, and data.table.
 
 ### Added
 
@@ -76,9 +74,11 @@ not model how `[.data.table` scopes column names, so with that stub
   type. That `list()` adds one element that holds the whole vector, not
   `n` elements. Write `rep(list(v), n)` instead (#359).
 - Add RY128 for a `diag()` call whose matrix dimension is proven invalid.
-  That is a negative or `NA` `nrow` or `ncol`, or, when neither is given,
-  a length-one numeric `x` proven negative or `NA`. `diag()` reads such an
-  `x` as the dimension, not as a diagonal entry, so R errors. GPArotation
+  That is an `nrow` or `ncol` that is `NA` or negative after truncation to
+  an integer, or a length-one numeric `x` with the same property when `x`
+  is the only argument. `diag()` reads such an `x` as the dimension, not
+  as a diagonal entry, so R errors. `diag(-0.5)` and
+  `diag(-1, names = FALSE)` are valid and stay silent. GPArotation
   shipped this bug as `diag(d)`. A vector `x`, a classed `x`, and computed
   signs such as `diag(sign(...))` stay silent (#320).
 - RY001 reports a `switch()` selector that is still a formal whose default
@@ -116,7 +116,7 @@ not model how `[.data.table` scopes column names, so with that stub
 - Set rule severities per file with ordered `[[rule-overrides]]` tables
   in `ry.toml`. Matching files stay in project analysis (#583).
 - Check an unsaved buffer with `ry check - --stdin-filename PATH`. The
-  buffer replaces the file on disk and gets the same project context and
+  buffer replaces the disk contents for analysis and gets the same project context and
   diagnostics as a saved file (#582).
 - Document how to check against a uvr project library through `R_LIBS`
   (#615) and how to install the Arch Linux AUR packages (#590).
@@ -179,12 +179,28 @@ not model how `[.data.table` scopes column names, so with that stub
   check. Usage errors still exit nonzero (#604).
 - Report a malformed, unreadable, or parser-limited serialized data file
   as a degraded scope instead of reading it as empty (#585).
-- The vendored typeshed moves to r-typeshed 0565da9. lubridate and knitr
-  gain export inventories, so `library(lubridate)`, `library(knitr)`, and
-  their `import()` directives resolve those packages' names and formals.
-  Before, ry treated them as unstubbed packages that may supply any name.
-  A script that attaches them can now get RY010 for a name neither
-  package exports. The individual stub fixes are listed under Fixed.
+- The vendored typeshed moves to r-typeshed 0.6.4 (commit 3041ace).
+  lubridate, knitr, and data.table gain export inventories, so
+  `library()` and `import()` of those packages resolve their names and
+  formals. Before, ry treated them as unstubbed packages that may supply
+  any name. A script that attaches them can now get RY010 for a name none
+  of them exports. The individual stub fixes are listed under Fixed.
+- Environment `paths` and `include-build-ignored` patterns match like
+  rule-override and typehint paths. On Unix, `\` is a filename
+  character, not a separator. A path matches by its physical location,
+  and a non-UTF-8 filename no longer matches through its lossy UTF-8
+  spelling (#641).
+- With data.table attached, `x[val > 1]` on a receiver of unknown type
+  treats `val` as a possible column instead of reporting RY010, because
+  `x` may be a data.table. This covers function parameters and `fread()`
+  results. The data.table stub types `data.table()`, `as.data.table()`,
+  `rbindlist()`, `setDT()`, `CJ()`, and `SJ()` as data.tables, so their
+  results get the same treatment without `library(data.table)`. Atomic
+  vectors and names outside `[` keep RY010. The stub also declares the
+  column names that `setkey()`, `setindex()`, `setorder()`, and `frank()`
+  quote, so `setorder(dt, grp)` stays silent. `setkeyv()` and
+  `setindexv()` read their `cols` argument, so an unbound name there now
+  reports RY010.
 
 ### Fixed
 
@@ -242,8 +258,10 @@ not model how `[.data.table` scopes column names, so with that stub
   `r <- function(n) if (n == 0L) "x" else r(n - 1L); r(1L) + 1L` now
   reports (#657).
 - A project function named like a base function, such as `identity()`,
-  no longer types explicit `base::identity()` calls. This removes false
-  RY040 reports (#668).
+  no longer types explicit `base::identity()` calls. The same holds for
+  qualified callbacks such as `sapply(1:3, base::identity)`, for omitted
+  arguments, and for forwarded defaults. This removes false RY040 reports
+  (#668, #670).
 - Choose S4 methods by their full signature. The result no longer depends
   on registration order, which removes false RY040 reports and finds
   missed ones (#650).
@@ -267,6 +285,10 @@ not model how `[.data.table` scopes column names, so with that stub
   common verbs. This removes two false RY060 reports for
   `group_by(big = ...)` in the pinned dplyr corpus. Dynamic and custom S3
   results stay conservative (#353).
+- `select()` applies its selectors in order, as tidyselect does, so
+  `select(d, -x, y)` keeps `y` and `g` instead of only `y`. A join no
+  longer claims a shared non-key column such as `v`, which R returns as
+  `v.x` and `v.y`. Both remove false RY060 reports (#640).
 - Bind the target of a base `delayedAssign()` without evaluating its
   promise. This removes false RY010 reports for lazily bound values
   (#349).

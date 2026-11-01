@@ -589,6 +589,16 @@ fn data_table_quoting_attached_elsewhere_follows_the_stub() {
         );
     }
 
+    let imported = check_with("dat <- list()\nsetkey(dat, undefined_key)\n", |c| {
+        attached_elsewhere(c);
+        c.set_imported_from(HashMap::from([("setkey".into(), "otherpkg".into())]));
+    });
+    assert!(
+        imported.iter().any(|diagnostic| diagnostic.code == "RY010"
+            && diagnostic.message.contains("`undefined_key`")),
+        "setkey() imported from another package is not data.table's: {imported:?}"
+    );
+
     let eager = check_with(
         "dat <- list()\nsetkeyv(dat, undefined_cols)\n",
         attached_elsewhere,

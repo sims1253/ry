@@ -2742,11 +2742,15 @@ impl Checker {
     /// decides which functions quote, so the eager `setkeyv()` and
     /// `setindexv()` are still checked. `name` is the full callee, so a
     /// qualified call such as `otherpkg::setkey()` matches no stub entry.
-    /// A parameter or a project function of the same name is checked as
-    /// written.
+    /// A parameter, a project function, or an `importFrom()` from another
+    /// package with the same name is checked as written.
     fn data_table_quoting_unresolved(&self, name: &str, scope: &Scope) -> Option<FunctionSig> {
         if !self.loaded.contains("data.table")
             || self.resolve_typeshed_sig_ref(name).is_some()
+            || self
+                .imported_from
+                .get(name)
+                .is_some_and(|package| package != "data.table")
             || scope.lexical_definition(name).is_some()
             || self.call_head_bound_locally(name, scope)
         {

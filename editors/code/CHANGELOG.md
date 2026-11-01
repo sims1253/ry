@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.12.0] - 2026-10-31
+## [0.12.0] - 2026-11-01
 
 - Bundle ry 0.12.0 with 17 new rules (RY112 to RY128) and argument checks
   on calls to the project's own functions. See the core `CHANGELOG.md`.

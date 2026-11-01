@@ -4,7 +4,7 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
-## [0.12.0] - 2026-10-31
+## [0.12.0] - 2026-11-01
 
 This release adds 17 rules (RY112 to RY128) and checks calls to the
 project's own functions. RY090 and RY091 check their arguments, RY092

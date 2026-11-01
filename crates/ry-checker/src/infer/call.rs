@@ -2719,7 +2719,53 @@ impl Checker {
         if is_nse_symbol_fn(lookup_name) {
             return Some(RType::unknown());
         }
+
+        if let Some(signature) = self.data_table_quoting_unresolved(semantic_name, scope) {
+            let bindings = match_params(&signature.params, args);
+            for (index, argument) in args.iter().enumerate() {
+                if eval_mode_for_arg(&signature, &bindings, index)
+                    != Some(ry_typeshed::EvalMode::QuotedExpression)
+                {
+                    let _ = self.infer(&argument.value, scope);
+                }
+            }
+            return Some(RType::unknown());
+        }
         None
+    }
+
+    /// The data.table signature for a bare call to a data.table function
+    /// that quotes arguments (`setkey()`, `setorder()`, `rollup()`) while
+    /// this file's stub lookup misses data.table because another project
+    /// file attaches it. The caller skips the quoted arguments and checks
+    /// the rest, such as the table and `na.last`. The data.table stub
+    /// decides which functions quote, so the eager `setkeyv()` and
+    /// `setindexv()` are still checked. `name` is the full callee, so a
+    /// qualified call such as `otherpkg::setkey()` matches no stub entry.
+    /// A parameter, a project function, or an `importFrom()` from another
+    /// package with the same name is checked as written.
+    fn data_table_quoting_unresolved(&self, name: &str, scope: &Scope) -> Option<FunctionSig> {
+        if !self.loaded.contains("data.table")
+            || self.resolve_typeshed_sig_ref(name).is_some()
+            || self
+                .imported_from
+                .get(name)
+                .is_some_and(|package| package != "data.table")
+            || scope.lexical_definition(name).is_some()
+            || self.call_head_bound_locally(name, scope)
+        {
+            return None;
+        }
+        self.package_typeshed("data.table")?
+            .functions
+            .get(name)
+            .filter(|signature| {
+                signature
+                    .eval
+                    .values()
+                    .any(|mode| *mode == ry_typeshed::EvalMode::QuotedExpression)
+            })
+            .cloned()
     }
 
     /// The default two-argument `assign("name", value)`: rebind in the

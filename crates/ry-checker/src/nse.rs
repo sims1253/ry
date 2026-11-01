@@ -241,7 +241,14 @@ impl Checker {
     /// When the schema cannot prove a name absent, bare value-position
     /// symbols are column candidates before scope functions. An opaque
     /// receiver with no table evidence may be a degraded atomic vector
-    /// (`c(if (p) 1L, 2L)`), so names that resolve nowhere keep RY010.
+    /// (`c(if (p) 1L, 2L)`), so names that resolve nowhere keep RY010,
+    /// unless data.table is on this file's search path (`bare_loaded`)
+    /// and the receiver's mode is unknown: then it may be a data.table
+    /// whose columns are unknown (`function(d) d[val > 1]`). Another
+    /// file's `library()` does not count, and a known environment or
+    /// language object is never a data.table. A NAMESPACE `import()` or
+    /// `importFrom()` of data.table does count: data.table's `cedta()`
+    /// treats a namespace that imports it as data.table-aware.
     pub(crate) fn table_index_mask_scope(&self, base_scope: &Scope, table: &RType) -> Scope {
         let mut scope = self.dplyr_data_mask_scope(base_scope, table);
         scope.insert(
@@ -261,11 +268,26 @@ impl Checker {
             if let Some(frame) = scope.data_mask.as_mut() {
                 Arc::make_mut(frame).columns_first = true;
             }
-            if !frame_like(table) && table.columns.is_none() {
+            if !frame_like(table)
+                && table.columns.is_none()
+                && !(table.mode.is_unknown() && self.data_table_aware())
+            {
                 scope.data_mask_unknown = base_scope.data_mask_unknown;
             }
         }
         scope
+    }
+
+    /// Whether data.table's `[` scoping can reach this file: data.table is
+    /// on its search path (`library()` or a NAMESPACE `import()`), or the
+    /// package imports any of its names (`importFrom()`). These match the
+    /// import check in data.table's `cedta()`.
+    fn data_table_aware(&self) -> bool {
+        self.bare_loaded.contains("data.table")
+            || self
+                .imported_from
+                .values()
+                .any(|package| package == "data.table")
     }
 
     pub(crate) fn dplyr_data_mask_scope(&self, base_scope: &Scope, df_type: &RType) -> Scope {

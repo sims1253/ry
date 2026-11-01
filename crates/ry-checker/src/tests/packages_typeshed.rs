@@ -494,6 +494,141 @@ fn nse_symbol_fallback_does_not_overlap_stub_eval_modes() {
     );
 }
 
+/// data.table's stub declares the column names that `setkey()`,
+/// `setindex()`, `setorder()`, and `frank()` capture with `substitute()`,
+/// and the `j` that `rollup()` evaluates in the table's columns, while
+/// `setkeyv()` takes a character vector and reads it.
+#[test]
+fn data_table_stub_quotes_column_name_arguments() {
+    let quoted = check(
+        "library(data.table)\n\
+         dat <- fread(\"x.csv\")\n\
+         setkey(dat, grp)\n\
+         setindex(dat, grp)\n\
+         setorder(dat, grp, -val)\n\
+         r <- frank(dat, grp, val)\n\
+         g <- rollup(dat, j = sum(amount), by = \"grp\")\n",
+    );
+    assert!(
+        quoted.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "quoted column names are not references: {quoted:?}"
+    );
+
+    let eager = check(
+        "library(data.table)\n\
+         dat <- fread(\"x.csv\")\n\
+         setkeyv(dat, undefined_cols)\n",
+    );
+    assert!(
+        eager.iter().any(|diagnostic| diagnostic.code == "RY010"),
+        "setkeyv() reads its `cols` argument: {eager:?}"
+    );
+}
+
+/// When another project file attaches data.table, this file's stub lookup
+/// misses the data.table stub. The functions that stub quotes still skip
+/// their column names, while `setkeyv()` reads its argument, a project
+/// function named `setkey` is checked as written, and without any
+/// data.table attachment `setkey()` is an ordinary unknown call.
+#[test]
+fn data_table_quoting_attached_elsewhere_follows_the_stub() {
+    let attached_elsewhere = |c: &mut Checker| {
+        c.set_shared_loaded(Arc::new(HashSet::from(["data.table".to_string()])));
+    };
+    let quoted = check_with(
+        "dat <- list()\n\
+         setkey(dat, grp)\n\
+         setindex(dat, grp)\n\
+         setorder(dat, grp, -val)\n\
+         r <- frank(dat, grp)\n\
+         g <- rollup(dat, j = sum(amount), by = \"grp\")\n",
+        attached_elsewhere,
+    );
+    assert!(
+        quoted.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "quoted column names are not references: {quoted:?}"
+    );
+
+    let evaluated = check_with(
+        "dat <- list()\n\
+         setkey(missing_table, grp)\n\
+         r <- frank(dat, grp, na.last = missing_flag)\n",
+        attached_elsewhere,
+    );
+    let unbound: Vec<_> = evaluated
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "RY010")
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        unbound.len() == 2
+            && unbound
+                .iter()
+                .any(|message| message.contains("`missing_table`"))
+            && unbound
+                .iter()
+                .any(|message| message.contains("`missing_flag`")),
+        "the table and options are evaluated, the column names are not: {evaluated:?}"
+    );
+
+    for (note, source) in [
+        (
+            "qualified to another package",
+            "dat <- list()\notherpkg::setkey(dat, undefined_key)\n",
+        ),
+        (
+            "a parameter",
+            "dat <- list()\nf <- function(setkey) setkey(dat, undefined_key)\n",
+        ),
+    ] {
+        let shadowed = check_with(source, attached_elsewhere);
+        assert!(
+            shadowed.iter().any(|diagnostic| diagnostic.code == "RY010"
+                && diagnostic.message.contains("`undefined_key`")),
+            "setkey() as {note} is not data.table's: {shadowed:?}"
+        );
+    }
+
+    let imported = check_with("dat <- list()\nsetkey(dat, undefined_key)\n", |c| {
+        attached_elsewhere(c);
+        c.set_imported_from(HashMap::from([("setkey".into(), "otherpkg".into())]));
+    });
+    assert!(
+        imported.iter().any(|diagnostic| diagnostic.code == "RY010"
+            && diagnostic.message.contains("`undefined_key`")),
+        "setkey() imported from another package is not data.table's: {imported:?}"
+    );
+
+    let eager = check_with(
+        "dat <- list()\nsetkeyv(dat, undefined_cols)\n",
+        attached_elsewhere,
+    );
+    assert!(
+        eager.iter().any(|diagnostic| diagnostic.code == "RY010"
+            && diagnostic.message.contains("`undefined_cols`")),
+        "setkeyv() reads its `cols` argument: {eager:?}"
+    );
+
+    let own = check_with(
+        "dat <- list()\nsetkey <- function(x, key) key\nsetkey(dat, undefined_key)\n",
+        attached_elsewhere,
+    );
+    assert!(
+        own.iter().any(|diagnostic| diagnostic.code == "RY010"
+            && diagnostic.message.contains("`undefined_key`")),
+        "a project's own setkey() evaluates its arguments: {own:?}"
+    );
+
+    let unattached = check("dat <- list()\nsetkey(dat, undefined_key)\n");
+    assert!(
+        unattached
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY010"
+                && diagnostic.message.contains("`undefined_key`")),
+        "without data.table, setkey() is an unknown call: {unattached:?}"
+    );
+}
+
 #[test]
 fn rlang_eager_helpers_read_their_arguments() {
     // rlang's sym/abort/inform/new_formula/new_quosure evaluate their

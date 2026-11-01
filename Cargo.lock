@@ -1488,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "ry-checker"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "criterion",
  "hashbrown 0.17.1",
@@ -1509,7 +1509,7 @@ dependencies = [
 
 [[package]]
 name = "ry-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1534,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "ry-config"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "glob",
  "miette",
@@ -1549,7 +1549,7 @@ dependencies = [
 
 [[package]]
 name = "ry-core"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "ry-lsp"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "proptest",
  "rayon",
@@ -1584,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "ry-testkit"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1595,7 +1595,7 @@ dependencies = [
 
 [[package]]
 name = "ry-typeshed"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "flate2",
  "serde",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "ry-workspace"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "bzip2",
  "flate2",

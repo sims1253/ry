@@ -35,7 +35,7 @@ global = "ubuntu-latest"
 runner = "macos-15"
 
 [dist.github-custom-runners.aarch64-apple-darwin]
-runner = "macos-14"
+runner = "macos-15"
 
 [dist.github-custom-runners.x86_64-pc-windows-msvc]
 runner = "windows-2022"

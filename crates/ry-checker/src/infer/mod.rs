@@ -19,6 +19,7 @@ pub(crate) mod construct;
 mod contract;
 pub(crate) mod custom_operator;
 pub(crate) mod dynamic_closure;
+mod frame_writes;
 pub(crate) mod ifelse;
 pub(crate) mod index;
 pub(crate) mod loops;
@@ -1403,6 +1404,15 @@ impl Checker {
             self.load_hook_frames.pop();
         }
         self.check_declaration_return(span, function_name, declaration.as_ref());
+        if self.capture_scopes && !self.discarding {
+            // `on.exit()` code runs after the last statement, so its writes
+            // belong to the scope-exit snapshot only (#867).
+            for name in crate::collect::on_exit_frame_writes(body).names {
+                if fn_scope.get(&name).is_some() {
+                    fn_scope.insert(name, RType::unknown());
+                }
+            }
+        }
         self.record_scope(function_name, span, params, &fn_scope);
         self.superassigned_captures.pop();
         self.enclosing_formals.pop();

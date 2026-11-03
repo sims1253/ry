@@ -55,6 +55,7 @@ impl Checker {
             && self.call_proves_no_rebind(func, args, scope);
         let kind = self.base_value_kind(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
+        self.apply_visible_frame_writes(func, args, scope);
         let result = kind.unwrap_or(result);
         scope.uncertainty.unseen_rebinds |= !keeps_bindings;
         self.apply_call_effect(&effect, scope);
@@ -2768,7 +2769,8 @@ impl Checker {
             .cloned()
     }
 
-    /// The default two-argument `assign("name", value)`: rebind in the
+    /// The default two-argument `assign("name", value)`, or one whose third
+    /// argument (`pos` or `envir`) is `environment()`: rebind in the
     /// current environment.
     fn infer_local_assign_call(
         &mut self,
@@ -2776,7 +2778,19 @@ impl Checker {
         args: &[Arg],
         scope: &mut Scope,
     ) -> Option<RType> {
-        if semantic_name != "assign" || args.len() != 2 {
+        let this_frame = match args {
+            [_, _] => true,
+            [_, _, envir] => {
+                matches!(envir.name.as_deref(), None | Some("pos" | "envir"))
+                    && self.targets_this_frame(Some(&envir.value), scope)
+            }
+            _ => false,
+        };
+        if semantic_name != "assign"
+            || !this_frame
+            || !matches!(args[0].name.as_deref(), None | Some("x"))
+            || !matches!(args[1].name.as_deref(), None | Some("value"))
+        {
             return None;
         }
         let name = match &args[0].value {

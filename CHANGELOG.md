@@ -11,6 +11,11 @@ All notable changes to ry are documented in this file.
   `dump-facts` no longer exports the type and class from before the
   write. Base `length<-` on a classless vector keeps the mode and takes
   the new length (#862).
+- `eval(quote(x <- v))`, `evalq(x <- v)`, `rm(x)`, and
+  `assign("x", v, envir = environment())` now update `x` in the current
+  frame, and `on.exit(x <- v)` widens `x` in the function's scope-exit
+  snapshot. `rm(x)` exports `x` as unknown rather than removing it, so a
+  later read stays free of RY010 when other code rebinds the name (#867).
 
 ## [0.12.0] - 2026-11-01
 

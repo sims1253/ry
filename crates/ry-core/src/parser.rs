@@ -1324,6 +1324,8 @@ fn collect_syntax_violations(
     let mut pipe_rhs = Vec::new();
     let mut placeholders = Vec::new();
     let mut brackets = 0_usize;
+    // R stops at its first overflow, so report once per outermost bracket.
+    let mut overflow_reported = false;
     // Pre-order walk in source order, which the bracket count depends on.
     let mut cursor = root.walk();
     'walk: loop {
@@ -1380,7 +1382,14 @@ fn collect_syntax_violations(
                     ")" | "]" | "}" => brackets.saturating_sub(1),
                     _ => brackets + 1,
                 };
-                if before < R_CONTEXT_STACK_SIZE && brackets >= R_CONTEXT_STACK_SIZE {
+                if brackets == 0 {
+                    overflow_reported = false;
+                }
+                if !overflow_reported
+                    && before < R_CONTEXT_STACK_SIZE
+                    && brackets >= R_CONTEXT_STACK_SIZE
+                {
+                    overflow_reported = true;
                     out.push(violation(
                         node,
                         format!(

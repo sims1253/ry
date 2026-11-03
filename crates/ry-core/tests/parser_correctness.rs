@@ -893,6 +893,13 @@ fn r_parse_rejections_match_base_r() {
         // depth limit, which refuses the file with an RY000 of its own.
         (format!("f({}", deep("(", ")", 49)) + ")", overflow, false),
         (deep("x[[", "]]", 25), overflow, false),
+        // Counts that hover at the limit (`{ if (x)` opens and closes `(`)
+        // report the overflow once, as R stops at its first.
+        (
+            format!("x <- {}1{}", "{ if (x) ".repeat(57), " }".repeat(57)),
+            overflow,
+            false,
+        ),
     ];
     for (source, message, misparsed) in &rejected {
         let file = parse(source);

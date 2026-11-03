@@ -3723,7 +3723,23 @@ impl Checker {
                     schema.columns.clear();
                 }
                 schema.complete = false;
-                scope.insert(base_name.clone(), base_t.with_columns(Arc::new(schema)));
+                let old = base_t.length;
+                let mut updated = base_t.with_columns(Arc::new(schema));
+                if matches!(kind, IndexKind::Double | IndexKind::Single) {
+                    // A positional write on a class-less list keeps or
+                    // extends it, while NULL deletes: `[[<-` one element,
+                    // `[<-` any number of them. A classed list may run
+                    // its own method, which proves nothing (#863).
+                    let may_delete = crate::may_delete_element(&vt);
+                    updated.length = match kind {
+                        _ if !updated.class.is_classless() => Length::Unknown,
+                        IndexKind::Single if may_delete => Length::Unknown,
+                        _ => Length::lower_bound(
+                            old.min_possible().saturating_sub(usize::from(may_delete)),
+                        ),
+                    };
+                }
+                scope.insert(base_name.clone(), updated);
                 return true;
             }
             return false;

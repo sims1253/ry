@@ -397,3 +397,43 @@ fn unknown_name_presence_widens_list_and_delete_lengths() {
     let (_, scope) = check_with_scope("l <- list(a = 1L, b = 2L); l[[1]] <- 10L; l$b <- NULL");
     assert_eq!(scope.get("l").unwrap().length.exact(), None);
 }
+
+/// The list and named writes from #863, with GNU R 4.6.1's length. Before
+/// the fix the positional list writes kept the pre-write length. Each
+/// exported length must admit R's, and the known-length positional write
+/// on an atomic vector stays exact.
+#[test]
+fn list_and_named_writes_admit_the_length_r_produces() {
+    fn admits(length: Length, actual: usize) -> bool {
+        match length.exact() {
+            Some(exact) => exact == actual,
+            None => length.min_possible() <= actual,
+        }
+    }
+    for (source, name, actual) in [
+        ("l <- list(); for (i in 1:3) l[[i]] <- i", "l", 3),
+        ("l <- list(1, 2, 3, 4); l[[2]] <- NULL", "l", 3),
+        ("l <- list(1, 2); l[2] <- NULL", "l", 1),
+        ("x <- 1:3; x[\"a\"] <- 1L", "x", 4),
+        ("x <- 1:3; x$a <- 1", "x", 4),
+    ] {
+        let (_, scope) = check_with_scope(source);
+        let value = scope.get(name).unwrap();
+        assert!(admits(value.length, actual), "{source}: {value:?}");
+    }
+    let (_, scope) = check_with_scope("x <- 1:3; x[2] <- 1L");
+    assert_eq!(scope.get("x").unwrap().length, Length::Known(3));
+}
+
+/// A positional write that cannot delete keeps a class-less list's
+/// elements, so the old length stays a lower bound; a classed list may
+/// run its own method and proves nothing.
+#[test]
+fn positional_list_write_keeps_a_lower_bound() {
+    let (_, scope) = check_with_scope("l <- list(1, 2); l[[3]] <- 5");
+    assert_eq!(scope.get("l").unwrap().length, Length::AtLeast(2));
+    let (_, scope) = check_with_scope("l <- list(1, 2); l[2] <- 5");
+    assert_eq!(scope.get("l").unwrap().length, Length::AtLeast(2));
+    let (_, scope) = check_with_scope("l <- structure(list(1, 2), class = \"rec\"); l[[3]] <- 5");
+    assert_eq!(scope.get("l").unwrap().length, Length::Unknown);
+}

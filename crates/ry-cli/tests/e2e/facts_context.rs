@@ -159,7 +159,8 @@ fn repeated_runs_and_reversed_file_arguments_produce_identical_json() {
     assert!(paths.windows(2).all(|pair| pair[0] < pair[1]));
     for path in paths {
         assert!(Path::new(path).is_absolute());
-        assert_eq!(Path::new(path).canonicalize().unwrap(), Path::new(path));
+        // ry spells resolved paths without the Windows `\\?\` prefix.
+        assert_eq!(dunce::canonicalize(path).unwrap(), Path::new(path));
     }
 }
 
@@ -279,7 +280,8 @@ fn unselected_shiny_marker_invalidates_ambient_binding_facts() {
     assert_eq!(binding_names(&before), binding_names(&removed));
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn non_utf8_discovered_and_truncated_paths_return_explicit_errors() {
     use std::ffi::OsString;

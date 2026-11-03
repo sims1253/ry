@@ -1126,8 +1126,18 @@ mod shared_tests {
     fn discovery_includes_all_r_source_extensions() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
+        // One stem per extension: `source.R` and `source.r` are the same
+        // file on case-insensitive filesystems (macOS, Windows).
+        let name = |extension: &str| {
+            let case = if extension.chars().all(|c| c.is_ascii_uppercase()) {
+                "upper"
+            } else {
+                "lower"
+            };
+            format!("{case}_{}.{extension}", extension.to_ascii_lowercase())
+        };
         for extension in ["R", "r", "S", "s", "q"] {
-            std::fs::write(root.join(format!("source.{extension}")), "value <- 1L\n").unwrap();
+            std::fs::write(root.join(name(extension)), "value <- 1L\n").unwrap();
         }
         std::fs::write(root.join("source.txt"), "not R\n").unwrap();
 
@@ -1135,7 +1145,7 @@ mod shared_tests {
         paths.sort();
 
         let mut expected = ["R", "r", "S", "s", "q"]
-            .map(|extension| root.join(format!("source.{extension}")))
+            .map(|extension| root.join(name(extension)))
             .into_iter()
             .collect::<Vec<_>>();
         expected.sort();

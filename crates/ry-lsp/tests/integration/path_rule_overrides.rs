@@ -42,9 +42,9 @@ async fn path_policy_matches_cli_and_reloads_in_editor() {
     let scratch = harness::open_published(&mut session, &scratch_uri, 1, source).await;
     assert_eq!(severity(&scratch, "RY040"), Some(2), "{scratch}");
 
-    let unsaved_uri = tower_lsp::lsp_types::Url::from_file_path(fixture.path("R/unsaved.R"))
-        .unwrap()
-        .to_string();
+    // Spell the unsaved buffer under the resolved folder the server was
+    // given, as an editor would; `fixture.path` may be an 8.3 alias on Windows.
+    let unsaved_uri = format!("{}/unsaved.R", file_uri(&fixture.path("R")));
     let unsaved = harness::open_published(&mut session, &unsaved_uri, 1, source).await;
     assert_eq!(severity(&unsaved, "RY040"), Some(1), "{unsaved}");
 
@@ -54,6 +54,9 @@ async fn path_policy_matches_cli_and_reloads_in_editor() {
             "warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nignore = [\"RY040\"]\n",
         )
         .unwrap();
+    // Opening the unsaved buffer can republish `main`; drain that so the
+    // next publication is the one the config change causes.
+    harness::drain_publications(&mut session, &main_uri).await;
     let mark = session.publication_mark();
     notify_changed(&mut session, &file_uri(&fixture.path("ry.toml"))).await;
     let changed = session

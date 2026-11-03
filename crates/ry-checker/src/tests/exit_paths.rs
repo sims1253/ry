@@ -1,0 +1,91 @@
+use super::*;
+
+/// The recorded scope-exit snapshot of each named function in `src`.
+fn function_exits(src: &str) -> Vec<(String, Scope)> {
+    let mut c = Checker::new("test.R");
+    c.enable_scope_capture();
+    c.check(&parse_file("test.R", src));
+    c.take_scope_records()
+        .into_iter()
+        .filter_map(|record| Some((record.name?, record.scope)))
+        .collect()
+}
+
+fn exit_type(exits: &[(String, Scope)], function: &str, binding: &str) -> RType {
+    let (_, scope) = exits
+        .iter()
+        .find(|(name, _)| name == function)
+        .unwrap_or_else(|| panic!("no record for {function}"));
+    scope
+        .get(binding)
+        .cloned()
+        .unwrap_or_else(|| panic!("{function}: no binding {binding}"))
+}
+
+/// Whether `ty` leaves room for a value of `mode`.
+fn admits(ty: &RType, mode: Mode) -> bool {
+    match &ty.members {
+        Some(members) => members.iter().any(|member| admits(member, mode)),
+        None => ty.mode == mode || ty.mode == Mode::Opaque,
+    }
+}
+
+// R 4.6.1: `f(TRUE)` is "integer", `f(FALSE)` is "character" (#859).
+#[test]
+fn scope_exit_joins_states_that_leave_through_return() {
+    let exits = function_exits(
+        "f <- function(c) {\n  x <- 1L\n  if (c) return(typeof(x))\n  x <- \"a\"\n  typeof(x)\n}\n\
+         g <- function(c) {\n  x <- 1L\n  if (c) {\n    return(x)\n  }\n  x <- \"a\"\n  x\n}\n",
+    );
+    for function in ["f", "g"] {
+        let x = exit_type(&exits, function, "x");
+        assert!(admits(&x, Mode::Integer), "{function}: {x:?}");
+        assert!(admits(&x, Mode::Character), "{function}: {x:?}");
+    }
+}
+
+// A `return()` inside a callback leaves the callback, so the enclosing
+// function's exit keeps its precise final type.
+#[test]
+fn callback_returns_do_not_reach_the_enclosing_scope_exit() {
+    let exits = function_exits(
+        "f <- function(xs) {\n  x <- 1L\n  vapply(xs, function(v) return(v), 1)\n  x <- \"a\"\n  x\n}\n",
+    );
+    let x = exit_type(&exits, "f", "x");
+    assert_eq!(x.mode, Mode::Character, "{x:?}");
+}
+
+// R 4.6.1: `f(0)` and `g(0)` leave `x` integer; `h(0)` and `h2(0)` leave
+// `i` NULL, replacing an earlier binding (#860).
+#[test]
+fn loops_that_may_not_run_keep_their_entry_state() {
+    let exits = function_exits(
+        "f <- function(n) { x <- 1L; for (i in seq_len(n)) x <- \"a\"; x }\n\
+         g <- function(n) { x <- 1L; while (n > 0) { x <- \"a\"; n <- 0 }; x }\n\
+         h <- function(n) { for (i in seq_len(n)) NULL; i }\n\
+         h2 <- function(n) { i <- \"z\"; for (i in seq_len(n)) NULL; i }\n\
+         b <- function(n) { i <- \"z\"; for (i in seq_len(n)) if (i > 1) break; i }\n",
+    );
+    for function in ["f", "g"] {
+        let x = exit_type(&exits, function, "x");
+        assert!(admits(&x, Mode::Integer), "{function}: {x:?}");
+        assert!(admits(&x, Mode::Character), "{function}: {x:?}");
+    }
+    for function in ["h", "h2", "b"] {
+        let i = exit_type(&exits, function, "i");
+        assert!(admits(&i, Mode::Null), "{function}: {i:?}");
+        assert!(admits(&i, Mode::Integer), "{function}: {i:?}");
+        assert!(!admits(&i, Mode::Character), "{function}: {i:?}");
+    }
+}
+
+// R 4.6.1: `for (i in 1:3)` always runs, leaving `x` "character" and `i`
+// "integer".
+#[test]
+fn loops_proven_to_run_keep_precise_exit_types() {
+    let exits = function_exits("k <- function() { x <- 1L; for (i in 1:3) x <- \"a\"; x }\n");
+    let x = exit_type(&exits, "k", "x");
+    assert_eq!(x.mode, Mode::Character, "{x:?}");
+    let i = exit_type(&exits, "k", "i");
+    assert_eq!(i.mode, Mode::Integer, "{i:?}");
+}

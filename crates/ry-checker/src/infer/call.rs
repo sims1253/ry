@@ -3460,7 +3460,10 @@ impl Checker {
                 // `enclosing_formals` (see its definition), unlike
                 // `enter_function_body`'s wider frame state.
                 self.push_enclosing_formals(params, *span);
+                // Its `return()` leaves this literal, not the enclosing body.
+                self.begin_exit_paths();
                 self.walk_block(body, &mut inner, None);
+                self.end_exit_paths();
                 self.enclosing_formals.pop();
                 RType::scalar(Mode::Function)
             }

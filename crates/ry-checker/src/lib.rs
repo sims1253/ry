@@ -1904,6 +1904,10 @@ pub struct Checker {
     capture_references: bool,
     reference_capture: Option<Box<reference_facts::ReferenceCapture>>,
     scope_records: Vec<ScopeRecord>,
+    // One frame per function body walked while `capture_scopes` is set:
+    // the joined states of the paths that left it through `return()`.
+    // Only scope recording reads them, so diagnostics cannot move.
+    scope_exit_paths: Vec<Option<Box<Scope>>>,
     // Assignment-site types for editor hints, captured only on request.
     assignment_types: Option<HashMap<Span, RType>>,
     // Armed vacuous-all guards (RY110), installed by the pass-3 walk at
@@ -2153,6 +2157,7 @@ impl Checker {
             capture_references: false,
             reference_capture: None,
             scope_records: Vec::new(),
+            scope_exit_paths: Vec::new(),
             assignment_types: None,
             vacuous_guards: Vec::new(),
             vacuous_helpers: FxMap::default(),
@@ -2430,25 +2435,49 @@ impl Checker {
         records
     }
 
+    /// Open a frame for the `return()` paths of a function body about to
+    /// be walked. Pair with [`Self::end_exit_paths`].
+    pub(crate) fn begin_exit_paths(&mut self) {
+        if self.capture_scopes {
+            self.scope_exit_paths.push(None);
+        }
+    }
+
+    pub(crate) fn end_exit_paths(&mut self) -> Option<Box<Scope>> {
+        if self.capture_scopes {
+            self.scope_exit_paths.pop().flatten()
+        } else {
+            None
+        }
+    }
+
     // Snapshot one completed function-body scope. Called at the end of
     // `walk_stmt`'s two function-definition arms; `discarding` guards the
-    // fixpoint / signature-building re-walks of the same body.
+    // fixpoint / signature-building re-walks of the same body. A call can
+    // leave through `return()` as well as by falling through, so the
+    // snapshot joins `returned` (those paths) into the final state.
     pub(crate) fn record_scope(
         &mut self,
         name: Option<&str>,
         span: Span,
         params: &[Param],
         scope: &Scope,
+        returned: Option<Box<Scope>>,
     ) {
         if !self.capture_scopes || self.discarding {
             return;
         }
+        let mut exit = Some(Box::new(scope.clone()));
+        if let Some(returned) = returned {
+            infer::loops::join_path(&mut exit, &returned);
+        }
+        let scope = *exit.expect("scope exit state");
         self.scope_records.push(ScopeRecord {
             kind: ScopeRecordKind::Function,
             name: name.map(str::to_string),
             span,
             params: params.iter().map(|p| (p.name.clone(), p.span)).collect(),
-            scope: scope.clone(),
+            scope,
         });
     }
 

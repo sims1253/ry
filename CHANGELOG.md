@@ -4,6 +4,17 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `dump-facts` joins the state at each `return()` into a function's scope
+  snapshot. Before, `x <- 1L; if (c) return(x); x <- "a"` exported `x` as
+  character only (#859).
+- A loop that may run zero times keeps its entry state as a possible exit,
+  and a `for` variable admits `NULL` when the sequence may be empty. Before,
+  `x <- 1L; for (i in seq_len(n)) x <- "a"` exported `x` as character only
+  and `i` as integer only. A loop proven to run, such as
+  `for (i in 1:3)`, keeps the body's types (#860).
+
 ## [0.12.0] - 2026-11-01
 
 This release adds 17 rules (RY112 to RY128) and checks calls to the

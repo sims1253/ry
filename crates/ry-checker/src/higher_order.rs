@@ -694,7 +694,10 @@ impl Checker {
                 let t = elem_types.get(i).cloned().unwrap_or(RType::unknown());
                 fn_scope.insert(p.name.clone(), t);
             }
+            // Its `return()` leaves the callback, not the enclosing body.
+            self.begin_exit_paths();
             self.walk_block(body, &mut fn_scope, None);
+            self.end_exit_paths();
         }
     }
 

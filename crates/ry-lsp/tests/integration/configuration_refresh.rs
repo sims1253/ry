@@ -436,7 +436,14 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
             );
             assert_eq!(pattern["pattern"], "replacement.toml");
         } else {
-            assert_eq!(pattern, &json!(replacement));
+            // String patterns use `/` on every platform.
+            let expected = replacement.to_string_lossy();
+            let expected = if cfg!(windows) {
+                expected.replace('\\', "/")
+            } else {
+                expected.into_owned()
+            };
+            assert_eq!(pattern, &json!(expected));
         }
         let after = session
             .published_diagnostics_after(&uri, mark)

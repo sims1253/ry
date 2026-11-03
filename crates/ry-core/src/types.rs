@@ -326,12 +326,28 @@ impl Length {
 /// `guarded` marks names established by a passing class test such as
 /// `inherits(x, "foo")` or `is.data.frame(x)`. Such a test proves the
 /// guard held, not the value's whole class vector.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// `storage_proxy` marks a class that stands in for the result of an S3
+/// method the checker models by storage mode only, such as a base `Ops`
+/// method that falls through to the primitive (`Sys.Date() + 1`). Checks
+/// keep using the stored class; exported facts report it as unknown.
+/// Equality ignores the marker so it cannot change inference.
+#[derive(Debug, Clone, Eq, Default)]
 pub struct ClassVector {
     pub names: [Option<Arc<str>>; 4],
     pub len: u8,
     pub known: bool,
     pub guarded: bool,
+    pub storage_proxy: bool,
+}
+
+impl PartialEq for ClassVector {
+    fn eq(&self, other: &Self) -> bool {
+        self.names == other.names
+            && self.len == other.len
+            && self.known == other.known
+            && self.guarded == other.guarded
+    }
 }
 
 impl ClassVector {
@@ -344,7 +360,22 @@ impl ClassVector {
             len: 0,
             known: true,
             guarded: false,
+            storage_proxy: false,
         }
+    }
+
+    /// The classless state the storage model gives an unmodeled S3 method
+    /// result, marked so exported facts do not claim it is classless.
+    pub fn storage_proxy() -> Self {
+        ClassVector {
+            storage_proxy: true,
+            ..ClassVector::empty()
+        }
+    }
+
+    /// Whether exported facts may report this class vector as known.
+    pub fn export_known(&self) -> bool {
+        self.known && !self.storage_proxy
     }
 
     /// A single-class value, e.g. `structure(x, class = "foo")`.
@@ -354,6 +385,7 @@ impl ClassVector {
             len: 1,
             known: true,
             guarded: false,
+            storage_proxy: false,
         }
     }
 
@@ -375,6 +407,7 @@ impl ClassVector {
             len: 0,
             known: false,
             guarded: false,
+            storage_proxy: false,
         }
     }
 
@@ -906,7 +939,8 @@ impl RType {
 
     /// Primitive storage result for addition, subtraction or multiplication.
     /// Use [`Self::arith_for`] for operator-specific coercion. Class dispatch
-    /// belongs to the checker; this operation returns no class or schema.
+    /// belongs to the checker; this operation returns no schema, and a known
+    /// class only when both operands are classless.
     ///
     /// Union semantics: distribute over members;
     /// the op errors ONLY if every member-pair errors. A union of
@@ -969,12 +1003,24 @@ impl RType {
             // An unknown length cannot prove that the call reaches the error.
             return Some(RType::unknown());
         }
+        // R's primitive copies the class attribute of the longer operand, but
+        // a classed operand may own an `Ops` method that this storage model
+        // cannot see, and an unknown class may be either. Only two classless
+        // operands prove the result classless; the checker applies the
+        // primitive retention rule once it has ruled out dispatch.
+        let class = if self.class.is_classless() && rhs.class.is_classless() {
+            if self.class.storage_proxy || rhs.class.storage_proxy {
+                ClassVector::storage_proxy()
+            } else {
+                ClassVector::empty()
+            }
+        } else {
+            ClassVector::unknown()
+        };
         Some(RType {
             mode,
             length,
-            // The primitive storage model does not infer class dispatch or
-            // attribute propagation from operand types alone.
-            class: ClassVector::empty(),
+            class,
             columns: None,
             fn_sig: None,
             value_facts: ValueFacts::default(),
@@ -1047,13 +1093,17 @@ impl RType {
         if self.mode.is_unknown() || other.mode.is_unknown() {
             return RType::unknown();
         }
-        if self == other {
-            return self;
-        }
-        if self.same_shape(&other) {
-            return self.merge_same_shape(&other);
-        }
-        union_of(self, other)
+        // Equality ignores the export-only proxy marker; keep it from either side.
+        let proxy = self.class.storage_proxy || other.class.storage_proxy;
+        let mut joined = if self == other {
+            self
+        } else if self.same_shape(&other) {
+            self.merge_same_shape(&other)
+        } else {
+            return union_of(self, other);
+        };
+        joined.class.storage_proxy |= proxy;
+        joined
     }
 
     /// Element type of an iterable used in `for (var in iter)`. For an
@@ -1956,13 +2006,15 @@ mod tests {
     }
 
     #[test]
-    fn arith_strips_class() {
-        let lhs = RType::scalar(Mode::Double).with_class(ClassVector::single("lm"));
-        let rhs = RType::scalar(Mode::Double);
-        let r = lhs.arith(rhs).unwrap();
-        assert!(!r.class.is_unknown());
-        assert!(!r.class.has_known_class());
+    fn arith_class_is_empty_only_for_classless_operands() {
+        let plain = RType::scalar(Mode::Double);
+        let r = plain.clone().arith(plain.clone()).unwrap();
         assert_eq!(r.class, ClassVector::empty());
+        // A classed operand may own an `Ops` method, and an unknown class
+        // may be anything; neither proves the result classless (#865).
+        let classed = RType::scalar(Mode::Double).with_class(ClassVector::single("lm"));
+        assert!(classed.arith(plain.clone()).unwrap().class.is_unknown());
+        assert!(RType::unknown().arith(plain).unwrap().class.is_unknown());
     }
 
     #[test]

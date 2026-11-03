@@ -1,8 +1,9 @@
 //! R type lattice.
 //!
 //! Models what R's `typeof()` would return, plus length, class, and,
-//! where known, a column schema, a function signature, and union members.
-//! It has no NA facts. This is intentionally coarser than R's
+//! where known, a column schema, a function signature, union members, and
+//! bounded value facts (exact numeric bounds and NA provenance, see
+//! [`ValueFacts`]). This is intentionally coarser than R's
 //! actual semantics: S4 and RC are stubbed, environments and language
 //! objects carry no contents model, and "unknown" (`Mode::Opaque`) is used
 //! whenever inference gives up (e.g. function call whose signature is not in

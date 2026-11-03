@@ -1089,6 +1089,9 @@ impl RType {
                     None => RType::unknown(),
                 }
             }
+            // A class on the union itself applies to every member.
+            _ if self.class.contains("factor") => RType::scalar(Mode::Character),
+            _ if !self.class.known || self.class.guarded => RType::unknown(),
             Mode::Union => match self.members.as_ref() {
                 Some(ms) => {
                     let elems: Vec<RType> = ms.iter().map(|m| m.element()).collect();
@@ -1098,8 +1101,6 @@ impl RType {
                 }
                 None => RType::unknown(),
             },
-            _ if self.class.contains("factor") => RType::scalar(Mode::Character),
-            _ if !self.class.known || self.class.guarded => RType::unknown(),
             _ => {
                 let mut element = RType::new(self.mode, Length::One)
                     .with_value_facts(self.value_facts.for_subset());
@@ -1705,6 +1706,24 @@ mod tests {
         let guarded =
             RType::new(Mode::Integer, Length::Known(2)).with_class(ClassVector::guard("foo"));
         assert!(guarded.element().mode.is_unknown());
+        let union = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double));
+        assert!(
+            union
+                .with_class(ClassVector::unknown())
+                .element()
+                .mode
+                .is_unknown()
+        );
+    }
+
+    #[test]
+    fn element_of_classed_union_follows_the_union_class() {
+        // `structure(if (flag) 1L else 2, class = "factor", levels = ...)`.
+        let union = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double));
+        let factor = union.clone().with_class(ClassVector::single("factor"));
+        assert_eq!(factor.element(), RType::scalar(Mode::Character));
+        let date = union.with_class(ClassVector::single("Date"));
+        assert_eq!(date.element().mode, Mode::Union);
     }
 
     #[test]

@@ -52,9 +52,7 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
             } else {
                 ancestor
             };
-            ancestor
-                .canonicalize()
-                .unwrap_or_else(|_| ancestor.to_path_buf())
+            dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf())
         })
 }
 
@@ -724,7 +722,7 @@ fn package_relative_path(path: &Path, root: &Path) -> Option<PathBuf> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let path = parent.canonicalize().ok()?.join(path.file_name()?);
+    let path = dunce::canonicalize(parent).ok()?.join(path.file_name()?);
     path.strip_prefix(root).ok().map(Path::to_path_buf)
 }
 
@@ -791,7 +789,7 @@ fn visit_r_sources(
             continue;
         }
         visit(file);
-        if let Ok(identity) = Path::new(&file.path).canonicalize() {
+        if let Ok(identity) = dunce::canonicalize(&file.path) {
             supplied.insert(identity);
         }
     }
@@ -799,7 +797,7 @@ fn visit_r_sources(
         return;
     };
     for path in paths {
-        let Ok(identity) = path.canonicalize() else {
+        let Ok(identity) = dunce::canonicalize(&path) else {
             continue;
         };
         if supplied.contains(&identity) {

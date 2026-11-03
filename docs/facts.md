@@ -74,6 +74,55 @@ scopes. Named functions inside those arguments can still have records. A
 missing record means that ry did not export that fact; it does not prove that
 a scope or binding does not exist.
 
+## What facts do not prove
+
+A concrete fact is what static analysis derives from the source under the
+assumptions below. It is not an observation of a run. Before a consumer acts
+on a fact as if it held at runtime, such as skipping a type check, it needs
+its own guard for each assumption.
+
+- **No method dispatch.** A base function's result comes from its stub, as
+  if no S3 method runs. With a method defined for the argument's class, R
+  returns whatever the method returns:
+
+  ```r
+  g <- function(v) {
+    n <- length(v)  # exported as integer[1]
+    n
+  }
+  length.foo <- function(x) "not a length"
+  typeof(g(structure(list(), class = "foo")))  # "character"
+  ```
+
+  Making every such result opaque would cost most diagnostics, so this is a
+  documented assumption rather than a bug.
+
+- **Frame writes the source does not show.** A callee can write to its
+  caller's frame, so a value fact holds only between operations that could
+  change the frame:
+
+  ```r
+  h <- function() assign("x", "a", envir = parent.frame())
+  f <- function() {
+    x <- 1L  # f's x is exported as integer[1]
+    h()
+    x
+  }
+  typeof(f())  # "character"
+  ```
+
+- **Class.** A known empty class list means that ry saw no class attribute
+  from stub contracts and local construction. It is not proof of
+  `!is.object(x)`. A stub can omit a class: `table(c(1, 1, 2))` is exported
+  with a known empty class, but `oldClass()` returns `"table"` in R. S4
+  objects are not modeled, and implicit classes are never exported: a matrix
+  has `class(m)` `c("matrix", "array")` and a closure has `"function"`, with
+  `oldClass()` `NULL` for both.
+
+- **`binding.type` is not a scope invariant.** It is the type at scope exit
+  (see [Scope snapshots](#scope-snapshots)). Earlier statements in the scope
+  can see a different type for the same name.
+
 ## Reference facts (schema version 2)
 
 ```sh
@@ -326,7 +375,8 @@ Each type is an object with `kind: "r_type"` and the following fields:
 information. `environment` is a known environment; its class is never
 established, because environment attributes are shared by reference.
 `language` is a known symbol or call (`is.language()`), including formulas.
-Both export `function` as `not_applicable`. A known empty class list means no explicit class. The checker
+Both export `function` as `not_applicable`. A known empty class list means no explicit class was found;
+see [What facts do not prove](#what-facts-do-not-prove). The checker
 stores at most four class names. At capacity, `may_be_truncated` is true
 because it cannot establish whether the original vector was longer.
 

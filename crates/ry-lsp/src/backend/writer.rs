@@ -342,18 +342,18 @@ impl IndexWriter {
         // Compare resolved identities: the client may name the configured
         // file through a symlink or a Windows 8.3 alias.
         let identity = |path: PathBuf| ry_config::scoped_path_identity(&path).unwrap_or(path);
-        let config_paths: Vec<PathBuf> = custom_config_paths(&*self.state.lock().await)
-            .into_iter()
-            .map(identity)
-            .collect();
+        // Release the state lock before resolving, which touches the disk.
+        let config_paths = custom_config_paths(&*self.state.lock().await);
+        let config_paths: Vec<PathBuf> = config_paths.into_iter().map(identity).collect();
         let config_or_baseline_changed = changes.iter().any(|change| {
             let path = change.uri.path();
             path.ends_with("ry.toml")
                 || path.ends_with(".json")
-                || change
-                    .uri
-                    .to_file_path()
-                    .is_ok_and(|path| config_paths.contains(&identity(path)))
+                || (!config_paths.is_empty()
+                    && change
+                        .uri
+                        .to_file_path()
+                        .is_ok_and(|path| config_paths.contains(&identity(path))))
         });
         let resolution_changed =
             config_or_baseline_changed

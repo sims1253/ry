@@ -411,10 +411,13 @@ fn magrittr_leading_dot_pipe_builds_a_function() {
         assert_eq!(t.mode, Mode::Function, "{name}: {t:?}");
     }
     // The native pipe has no functional-sequence form: `_` on the left of
-    // `|>` stays an ordinary (unbound) name.
+    // `|>` is a placeholder R rejects at parse time (#841).
     let native = check("k <- _ |> identity()\n");
     assert!(
-        native.iter().any(|d| d.code == "RY010"),
+        native
+            .iter()
+            .any(|d| d.code == "RY000"
+                && d.message == "syntax error: invalid use of pipe placeholder"),
         "native `_` has no lambda form: {native:?}"
     );
     // A native pipe inside a magrittr tee is still not a leading-dot

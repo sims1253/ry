@@ -1402,13 +1402,19 @@ fn collect_syntax_violations(
         }
     }
     // A placeholder inside a pipe RHS the shape check already rejected
-    // (`x |> (_)`, `x |> f(y = _)[1]`) is the same R error.
-    placeholders.retain(|p: &crate::ast::SyntaxViolation| {
-        !pipe_rhs
-            .iter()
-            .any(|rhs: &Span| rhs.start <= p.span.start && p.span.end <= rhs.end)
-    });
-    out.extend(placeholders);
+    // (`x |> (_)`, `x |> f(y = _)[1]`) is the same R error; the shape
+    // violation inherits the misread `_`.
+    for placeholder in placeholders {
+        let covering = out.iter_mut().find(|v| {
+            pipe_rhs.contains(&v.span)
+                && v.span.start <= placeholder.span.start
+                && placeholder.span.end <= v.span.end
+        });
+        match covering {
+            Some(shape) => shape.misparsed = true,
+            None => out.push(placeholder),
+        }
+    }
     out.sort_by_key(|v| (v.span.start, v.span.end));
     out
 }

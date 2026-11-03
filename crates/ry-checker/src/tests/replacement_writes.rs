@@ -397,3 +397,54 @@ fn unknown_name_presence_widens_list_and_delete_lengths() {
     let (_, scope) = check_with_scope("l <- list(a = 1L, b = 2L); l[[1]] <- 10L; l$b <- NULL");
     assert_eq!(scope.get("l").unwrap().length.exact(), None);
 }
+
+/// #862: a replacement function ry has not audited may return anything,
+/// so its target keeps no mode, length, or class. GNU R 4.6.1: `x` is
+/// character and `h`, `k`, and `l` are objects of class `"myc"`.
+#[test]
+fn unaudited_replacement_widens_its_target() {
+    let source = "\
+x <- 1L; `foo<-` <- function(x, value) \"s\"; foo(x) <- 1
+h <- 1; oldClass(h) <- \"myc\"
+k <- 1; attributes(k) <- list(class = \"myc\")
+l <- 1; mostattributes(l) <- list(class = \"myc\")
+";
+    let (diagnostics, scope) = check_with_scope(source);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    for name in ["x", "h", "k", "l"] {
+        assert_eq!(scope.get(name), Some(&RType::unknown()), "{name}");
+    }
+}
+
+/// Base `length<-` on a classless vector keeps the storage mode and takes
+/// the new length (R truncates `2.7` to 2). A classed value may dispatch,
+/// and a project `length<-` returns anything.
+#[test]
+fn base_length_replacement_keeps_mode_and_takes_the_new_length() {
+    for (source, mode, length) in [
+        ("y <- 1:3; length(y) <- 5", Mode::Integer, Length::Known(5)),
+        (
+            "y <- list(1); length(y) <- 2.7",
+            Mode::List,
+            Length::Known(2),
+        ),
+        ("y <- 1:3; length(y) <- 0L", Mode::Integer, Length::Zero),
+        (
+            "y <- 1:3; n <- nchar(Sys.time()); length(y) <- n",
+            Mode::Integer,
+            Length::Unknown,
+        ),
+    ] {
+        let (_, scope) = check_with_scope(source);
+        let y = scope.get("y").unwrap();
+        assert_eq!((y.mode, y.length), (mode, length), "{source}: {y:?}");
+        assert!(y.class.is_classless(), "{source}: {y:?}");
+    }
+    for source in [
+        "y <- factor(\"a\"); length(y) <- 2",
+        "`length<-` <- function(x, value) \"s\"; y <- 1:3; length(y) <- 5",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert_eq!(scope.get("y"), Some(&RType::unknown()), "{source}");
+    }
+}

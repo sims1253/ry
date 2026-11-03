@@ -3097,7 +3097,7 @@ impl Checker {
         }
 
         if self.assign_class_attribute(target, class_write, scope)
-            || self.assign_replacement_target(target, scope)
+            || self.assign_replacement_target(target, &vt, scope)
         {
             return false;
         }
@@ -3196,13 +3196,13 @@ impl Checker {
                 for argument in args {
                     self.infer(&argument.value, scope);
                 }
-                // An unmodeled replacement (`oldClass<-`, `attributes<-`, a
-                // project `f<-`) may attach a class, so a known environment
-                // or language binding cannot keep its classless proof.
+                // An unaudited replacement (`oldClass<-`, `attributes<-`, a
+                // project `f<-`) returns whatever its setter builds, so no
+                // mode, length, or class survives it (#862). Audited setters
+                // return before reaching here. An already unknown binding
+                // keeps its markers, as for `x[i] <- v`.
                 if let Some(Expr::Ident { name, .. }) = args.first().map(|arg| &arg.value)
-                    && scope
-                        .get(name)
-                        .is_some_and(|ty| ty.mode.is_known_non_vector())
+                    && scope.get(name).is_some_and(|ty| *ty != RType::unknown())
                 {
                     scope.insert(name.clone(), RType::unknown());
                 }
@@ -3296,13 +3296,33 @@ impl Checker {
     /// Replacement calls such as `dimnames(x) <- value` mutate `x`; the
     /// accessor expression is not an ordinary read/call that should be
     /// argument-checked. Keep the binding but conservatively forget its shape.
-    pub(crate) fn assign_replacement_target(&mut self, target: &Expr, scope: &mut Scope) -> bool {
+    pub(crate) fn assign_replacement_target(
+        &mut self,
+        target: &Expr,
+        value: &RType,
+        scope: &mut Scope,
+    ) -> bool {
         let Expr::Call { func, args, .. } = target else {
             return false;
         };
         let Expr::Ident { name: accessor, .. } = func.as_ref() else {
             return false;
         };
+        if accessor == "length"
+            && let [
+                Arg {
+                    name: None,
+                    value: Expr::Ident { name, .. },
+                    ..
+                },
+            ] = args.as_slice()
+            && let Some(resized) = scope
+                .get(name)
+                .and_then(|base| self.base_length_replacement(base, value, scope))
+        {
+            scope.insert(name.clone(), resized);
+            return true;
+        }
         if !matches!(
             accessor.as_str(),
             "names"
@@ -3329,6 +3349,50 @@ impl Checker {
             scope.mark_list_origin(name.clone());
         }
         true
+    }
+
+    /// Base `length<-` on a classless atomic vector or list keeps its
+    /// storage mode and truncates or pads (with `NA` or `NULL`) to the new
+    /// length, dropping `dim`. A classed value may dispatch to a method.
+    fn base_length_replacement(&self, base: &RType, value: &RType, scope: &Scope) -> Option<RType> {
+        if !base.class.is_classless()
+            || !matches!(
+                base.mode,
+                Mode::Logical
+                    | Mode::Integer
+                    | Mode::Double
+                    | Mode::Complex
+                    | Mode::Character
+                    | Mode::Raw
+                    | Mode::List
+            )
+            || scope.data_mask_unknown
+            || self.user_stubs.contains_key("base")
+            || !self.resolves_to_base("length<-", scope)
+            || self.literal_bindings_may_be_shadowed(
+                ["length<-", "`length<-`"],
+                &HashSet::new(),
+                scope,
+            )
+        {
+            return None;
+        }
+        // R truncates a fractional length; NA or a negative one is an error.
+        let length = match value.value_facts.numeric_bounds {
+            Some((low, high))
+                if low == high
+                    && value.length == Length::One
+                    && matches!(value.mode, Mode::Integer | Mode::Double) =>
+            {
+                let length = f64::from_bits(low);
+                if !(length.is_finite() && length >= 0.0) {
+                    return None;
+                }
+                crate::exact_length(length as usize)
+            }
+            _ => Length::Unknown,
+        };
+        Some(RType::new(base.mode, length))
     }
 
     pub(crate) fn assign_nested_record_path(

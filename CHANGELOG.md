@@ -4,6 +4,14 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- A replacement function ry has not audited, such as `oldClass<-`,
+  `attributes<-`, or a project `foo<-`, now widens its target to unknown.
+  `dump-facts` no longer exports the type and class from before the
+  write. Base `length<-` on a classless vector keeps the mode and takes
+  the new length (#862).
+
 ## [0.12.0] - 2026-11-01
 
 This release adds 17 rules (RY112 to RY128) and checks calls to the

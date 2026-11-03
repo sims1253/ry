@@ -20,17 +20,20 @@ jobs:
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@49fda20b3f489226feadfba7767be1db54e2cee1 # 1.90.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-      - run: cargo check --workspace --all-targets
+      - run: cargo check --locked --workspace --all-targets
 
   build-test:
     name: Build & test
     runs-on: ubuntu-latest
+    # p90 is about 9 minutes over the last 100 runs.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,18 +43,18 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Build
-        run: cargo build --workspace --all-targets
+        run: cargo build --locked --workspace --all-targets
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
       - name: Script unit tests
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Performance regression tests
-        run: cargo test -p ry-checker --test perf --release -- --ignored --test-threads=1
+        run: cargo test --locked -p ry-checker --test perf --release -- --ignored --test-threads=1
       - name: Clippy (deny warnings)
         # RUSTFLAGS in the env block denies warnings workflow-wide; cargo
         # forwards it to the clippy driver, so a step-level flag is
         # redundant.
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --locked --workspace --all-targets
       - name: rustfmt
         run: cargo fmt --all -- --check
 
@@ -62,6 +65,7 @@ jobs:
   dist-check:
     name: dist generate --check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -127,7 +131,7 @@ jobs:
       # Typeshed auditing and stub generation moved to the r-typeshed
       # repository together with the stubs; its CI covers them.
       - name: Oracle suite
-        run: cargo test -p ry-checker --test oracle --test semantic_lists -- --include-ignored --nocapture
+        run: cargo test --locked -p ry-checker --test oracle --test semantic_lists -- --include-ignored --nocapture
 
   # The Zed extension is excluded from the root workspace because
   # zed_extension_api does not follow ry's MSRV (CONTRIBUTING.md), so
@@ -136,6 +140,7 @@ jobs:
   zed-extension:
     name: Zed extension
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

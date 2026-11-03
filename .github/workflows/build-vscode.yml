@@ -126,6 +126,7 @@ jobs:
   # Publisher identity consistency check
   publisher-consistency:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     # The workflow-level default working-directory is editors/code; this job
     # inspects paths relative to the repository root.
     defaults:

@@ -254,6 +254,56 @@ fn unnamed_list_elements_export_schema_keys_without_named_field_claims() {
     assert!(columns["entries"][0].get("name").is_none());
 }
 
+/// The witnesses from #861, #863, and #864, checked against GNU R 4.6.1.
+#[test]
+fn loop_elements_list_writes_and_dots_lists_export_r_lengths_and_modes() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("shapes.R"),
+        "\
+factor_loop <- function() { g <- factor(c(\"a\", \"b\")); for (v in g) NULL; v }
+date_loop <- function() { g <- Sys.Date(); for (v in g) NULL; v }
+unknown_loop <- function(g) { for (v in g) NULL; v }
+grow <- function() { l <- list(); for (i in 1:3) l[[i]] <- i; l }
+drop2 <- function() { l <- list(1, 2, 3, 4); l[[2]] <- NULL; l }
+drop1 <- function() { l <- list(1, 2); l[2] <- NULL; l }
+keep <- function() { x <- 1:3; x[2] <- 1L; x }
+dots <- function(...) { rest <- list(...); rest }
+lead <- function(a, ...) { rest <- list(a, ...); rest }
+",
+    )
+    .unwrap();
+    let output = facts(dir.path(), &["shapes.R"]);
+    let scopes = output["files"][0]["scopes"].as_array().unwrap();
+    let ty = |scope: &str, name: &str| {
+        let scope = scopes.iter().find(|entry| entry["name"] == scope).unwrap();
+        binding(scope, name)["type"].clone()
+    };
+
+    let v = ty("factor_loop", "v");
+    assert_eq!(v["mode"], "character", "{v}");
+    assert_eq!(v["length"], json!({"kind": "known", "value": 1}), "{v}");
+    let v = ty("date_loop", "v");
+    assert_eq!(v["mode"], "double", "{v}");
+    assert_eq!(v["length"], json!({"kind": "known", "value": 1}), "{v}");
+    let v = ty("unknown_loop", "v");
+    assert_eq!(v["mode"], "opaque", "{v}");
+
+    assert_eq!(ty("grow", "l")["length"], json!({"kind": "unknown"}));
+    assert_eq!(
+        ty("drop2", "l")["length"],
+        json!({"kind": "at_least", "value": 3})
+    );
+    assert_eq!(ty("drop1", "l")["length"], json!({"kind": "unknown"}));
+    assert_eq!(
+        ty("keep", "x")["length"],
+        json!({"kind": "known", "value": 3})
+    );
+
+    assert_eq!(ty("dots", "rest")["length"], json!({"kind": "unknown"}));
+    assert_eq!(ty("lead", "rest")["length"], json!({"kind": "nonempty"}));
+}
+
 #[test]
 fn dynamic_assignments_do_not_invent_imported_or_captured_provenance() {
     let dir = tempfile::tempdir().unwrap();

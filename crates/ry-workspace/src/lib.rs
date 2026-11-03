@@ -579,7 +579,8 @@ pub fn resolve_workspace_context(
                     degraded.insert((path.clone(), *reason));
                 }
             }
-            let sysdata = root.join("R/sysdata.rda");
+            // Per component, so Windows notices name `R\sysdata.rda`.
+            let sysdata = root.join("R").join("sysdata.rda");
             // This file is optional. The inventory's single open decides
             // absence; a separate existence probe would race that open.
             if let Some(inventory) = serialized_inventory(&sysdata, max_serialized_bytes) {
@@ -1755,7 +1756,7 @@ mod package_grouping_tests {
             format!("Package: {name}\nVersion: 0.0.1\n"),
         )
         .unwrap();
-        root.canonicalize().unwrap()
+        dunce::canonicalize(root).unwrap()
     }
 
     /// Files group by nearest `DESCRIPTION` ancestor: each package's

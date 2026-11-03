@@ -303,7 +303,9 @@ fn visible_frame_writes_reach_the_scope_exit_snapshot() {
 f <- function() { x <- 1L; eval(quote(x <- \"a\")); x }
 e <- function() { x <- 1L; evalq(x <- \"a\"); x }
 g <- function() { x <- 1L; assign(\"x\", \"a\", envir = environment()); x }
+g2 <- function() { x <- 1L; assign(envir = environment(), x = \"x\", value = \"a\", inherits = FALSE); x }
 h <- function() { x <- 1L; rm(x); 1 }
+h2 <- function() { x <- 1L; rm(x, inherits = FALSE); 1 }
 k <- function() { x <- 1L; on.exit(x <- \"a\"); x }
 other <- function() { x <- 1L; eval(quote(x <- \"a\"), new.env()); x }
 ",
@@ -315,9 +317,10 @@ other <- function() { x <- 1L; eval(quote(x <- \"a\"), new.env()); x }
         let scope = scopes.iter().find(|scope| scope["name"] == name).unwrap();
         binding(scope, "x")["type"]["mode"].clone()
     };
-    for name in ["f", "e", "h", "k"] {
+    for name in ["f", "e", "h", "h2", "k"] {
         assert_eq!(x_mode(name), "opaque", "{name}");
     }
     assert_eq!(x_mode("g"), "character");
+    assert_eq!(x_mode("g2"), "character");
     assert_eq!(x_mode("other"), "integer");
 }

@@ -15,8 +15,14 @@ stopifnot(inherits(h, "myc"), inherits(k, "myc"), inherits(l, "myc"))
 f <- function() { x <- 1L; eval(quote(x <- "a")); x }
 e <- function() { x <- 1L; evalq(x <- "a"); x }
 g <- function() { x <- 1L; assign("x", "a", envir = environment()); x }
+g2 <- function() {
+  x <- 1L
+  assign(envir = environment(), x = "x", value = "a", inherits = FALSE)
+  x
+}
 r <- function() { x <- 1L; rm(x); exists("x", inherits = FALSE) }
+r2 <- function() { x <- 1L; rm(x, inherits = FALSE); exists("x", inherits = FALSE) }
 exit <- NULL
 w <- function() { x <- 1L; on.exit(x <- "a"); on.exit(exit <<- x, add = TRUE); x }
 stopifnot(identical(f(), "a"), identical(e(), "a"), identical(g(), "a"))
-stopifnot(!r(), identical(w(), 1L), identical(exit, "a"))
+stopifnot(identical(g2(), "a"), !r(), !r2(), identical(w(), 1L), identical(exit, "a"))

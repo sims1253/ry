@@ -84,6 +84,7 @@ impl Checker {
             match (argument.name.as_deref(), &argument.value) {
                 (None, Expr::Ident { name, .. } | Expr::String(name, _)) => names.push(name),
                 (Some("envir"), envir) if self.targets_this_frame(Some(envir), scope) => {}
+                (Some("inherits"), Expr::Logical(false, _)) => {}
                 _ => return,
             }
         }

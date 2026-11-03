@@ -159,7 +159,8 @@ fn repeated_runs_and_reversed_file_arguments_produce_identical_json() {
     assert!(paths.windows(2).all(|pair| pair[0] < pair[1]));
     for path in paths {
         assert!(Path::new(path).is_absolute());
-        assert_eq!(Path::new(path).canonicalize().unwrap(), Path::new(path));
+        // ry spells resolved paths without the Windows `\\?\` prefix.
+        assert_eq!(dunce::canonicalize(path).unwrap(), Path::new(path));
     }
 }
 

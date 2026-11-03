@@ -58,6 +58,12 @@ bzip2 = "0.6"
 flate2 = "1"
 liblzma = { version = "0.4.8", default-features = false, features = ["static"] }
 
+# Optimize dependencies, not workspace crates, in dev builds. Tests spend
+# most of their time in tree-sitter and other dependencies, so this halves
+# `cargo test` while keeping debugging and incremental rebuilds unchanged.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 strip = "symbols"
 

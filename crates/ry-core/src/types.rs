@@ -1060,7 +1060,11 @@ impl RType {
     /// atomic vector this is a length-1 value of the same mode; for a
     /// list it is a length-1 list; for opaque input it stays opaque.
     /// The class and column schema are dropped: iterating over a classed
-    /// vector yields the bare elements in R.
+    /// vector such as a `Date` yields the bare elements in R. A factor is
+    /// the exception: `for` reads it through `asCharacterFactor`, so each
+    /// element is a level string, whatever the storage mode. An atomic
+    /// value whose class is unknown, or only guarded, may be a factor, so
+    /// it claims no element mode (#861).
     ///
     /// For a `Mode::Union`, the element type is the union of each member's
     /// element type. Distributing -- rather than passing
@@ -1094,6 +1098,8 @@ impl RType {
                 }
                 None => RType::unknown(),
             },
+            _ if self.class.contains("factor") => RType::scalar(Mode::Character),
+            _ if !self.class.known || self.class.guarded => RType::unknown(),
             _ => {
                 let mut element = RType::new(self.mode, Length::One)
                     .with_value_facts(self.value_facts.for_subset());
@@ -1677,6 +1683,38 @@ mod tests {
         let e = v.element();
         assert_eq!(e.mode, Mode::Integer);
         assert_eq!(e.length, Length::One);
+    }
+
+    #[test]
+    fn element_of_factor_is_a_level_string() {
+        // `for (v in factor(c("a", "b")))` binds `v` to "a", then "b".
+        let factor =
+            RType::new(Mode::Integer, Length::Known(2)).with_class(ClassVector::single("factor"));
+        assert_eq!(factor.element(), RType::scalar(Mode::Character));
+        let ordered = RType::new(Mode::Integer, Length::Known(2))
+            .with_class(ClassVector::from_slice(&["ordered", "factor"]));
+        assert_eq!(ordered.element(), RType::scalar(Mode::Character));
+    }
+
+    #[test]
+    fn element_of_unknown_class_claims_no_mode() {
+        // An unknown or merely guarded class may still inherit "factor".
+        let unknown =
+            RType::new(Mode::Integer, Length::Known(2)).with_class(ClassVector::unknown());
+        assert!(unknown.element().mode.is_unknown());
+        let guarded =
+            RType::new(Mode::Integer, Length::Known(2)).with_class(ClassVector::guard("foo"));
+        assert!(guarded.element().mode.is_unknown());
+    }
+
+    #[test]
+    fn element_of_date_stays_double() {
+        let date =
+            RType::new(Mode::Double, Length::Known(2)).with_class(ClassVector::single("Date"));
+        let element = date.element();
+        assert_eq!(element.mode, Mode::Double);
+        assert_eq!(element.length, Length::One);
+        assert!(element.class.is_classless());
     }
 
     #[test]

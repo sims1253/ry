@@ -9,6 +9,7 @@ mod editor_playground;
 mod encoding_e2e;
 mod facts_context;
 mod facts_e2e;
+mod facts_oracle;
 mod facts_references;
 mod parse_failures;
 mod related_locations;

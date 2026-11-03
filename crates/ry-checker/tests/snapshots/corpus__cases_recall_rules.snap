@@ -122,7 +122,7 @@ expression: rows
   diagnostics:
     - code: RY105
       line: 145
-      message: "`n` is a length-1 double, so `length(...)` is 1 here and this length guard is always TRUE"
+      message: "`n` is a length-1 integer, so `length(...)` is 1 here and this length guard is always TRUE"
       severity: warning
 - case: "RY105: classed scalar local is silent"
   diagnostics: []

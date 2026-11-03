@@ -304,7 +304,7 @@ expression: rows
   diagnostics:
     - code: RY003
       line: 465
-      message: "`if` condition is `double`; R coerces nonzero to TRUE"
+      message: "`if` condition is `integer`; R coerces nonzero to TRUE"
       severity: info
 - case: sum() over an alias of is.na skips the coercion nudge
   diagnostics: []

@@ -84,7 +84,13 @@ fn checker_identities() -> BTreeSet<String> {
         let absolute = Path::new(&path);
         let relative: String = absolute
             .strip_prefix(&package_dir)
-            .map(|rel| rel.to_string_lossy().into_owned())
+            // The report spells `/` on every platform.
+            .map(|rel| {
+                rel.iter()
+                    .map(|part| part.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
             .unwrap_or_else(|_| {
                 absolute
                     .file_name()

@@ -363,24 +363,27 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
         let patterns = &request["params"]["registrations"][0]["registerOptions"]["watchers"];
         let pattern = &patterns.as_array().unwrap().last().unwrap()["globPattern"];
         if relative {
+            // The folder URI names the resolved directory (see `file_uri`).
             assert_eq!(
                 pattern["baseUri"],
-                initial
-                    .parent()
-                    .and_then(|p| tower_lsp::lsp_types::Url::from_directory_path(p).ok())
-                    .unwrap()
-                    .to_string()
+                format!("{}/", file_uri(initial.parent().unwrap()))
             );
             assert_eq!(pattern["pattern"], "custom[[]1[]].toml");
         } else {
+            let resolved = tower_lsp::lsp_types::Url::parse(&file_uri(&initial))
+                .unwrap()
+                .to_file_path()
+                .unwrap();
+            let resolved = resolved.to_string_lossy();
+            // String patterns use `/` on every platform.
+            let resolved = if cfg!(windows) {
+                resolved.replace('\\', "/")
+            } else {
+                resolved.into_owned()
+            };
             assert_eq!(
                 pattern,
-                &json!(
-                    initial
-                        .to_string_lossy()
-                        .replace('[', "[[]")
-                        .replace("1]", "1[]]")
-                )
+                &json!(resolved.replace('[', "[[]").replace("1]", "1[]]"))
             );
         }
         let initial_diagnostics = harness::open_published(&mut session, &uri, 1, source).await;

@@ -142,7 +142,8 @@ fn package_local_module_and_dplyr_import_reach_lsp_pipeline() {
     client.notify("exit", Value::Null).unwrap();
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn native_caller_directory_drives_relative_module_lookup_in_cli() {
     use std::os::unix::ffi::OsStringExt;

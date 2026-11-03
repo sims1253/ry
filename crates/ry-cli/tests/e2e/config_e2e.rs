@@ -7,7 +7,7 @@ use std::path::Path;
 use ry_testkit::{CliOutput, ry};
 use serde_json::json;
 
-use crate::support::{Files, check, install_namespace, unbound_names, write};
+use crate::support::{Files, check, install_namespace, native, unbound_names, write};
 
 fn stub(package: &str, function: &str, mode: &str) -> String {
     format!(
@@ -188,9 +188,9 @@ fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
     assert_eq!(
         ry040(&findings),
         [
-            ["./R/defs.R", "error"],
-            ["./R/scratch/try.R", "warning"],
-            ["./scripts/use.R", "warning"],
+            [native("./R/defs.R"), "error".into()],
+            [native("./R/scratch/try.R"), "warning".into()],
+            [native("./scripts/use.R"), "warning".into()],
         ]
     );
     assert!(
@@ -204,7 +204,13 @@ fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
         &temp.path().join("scripts"),
         &["../R/defs.R", "--output-format", "json"],
     );
-    assert_eq!(ry040(&direct.findings()), [["../R/defs.R", "error"]]);
+    // A file operand keeps its spelling, so compare by path components.
+    let direct = ry040(&direct.findings());
+    assert!(
+        matches!(&direct[..], [[path, severity]]
+            if Path::new(path) == Path::new("../R/defs.R") && severity == "error"),
+        "{direct:?}"
+    );
 
     let cli = run(&["--error", "RY040"]);
     assert!(
@@ -240,7 +246,7 @@ fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
     assert!(
         ry040(&suppressed)
             .iter()
-            .all(|[path, _]| path != "./R/defs.R"),
+            .all(|[path, _]| *path != native("./R/defs.R")),
         "source-local suppression must hide its own diagnostic: {suppressed:?}"
     );
     assert!(
@@ -1489,7 +1495,11 @@ fn explain_files_keeps_json_valid_and_reports_deliberate_reinclusion() {
             .iter()
             .any(|d| d["code"] == "RY000")
     );
-    assert!(included.stderr().contains("include ./vignettes/broken.R"));
+    assert!(
+        included
+            .stderr()
+            .contains(&format!("include {}", native("./vignettes/broken.R")))
+    );
 }
 
 #[test]
@@ -1518,7 +1528,11 @@ fn explicitly_requested_build_ignored_directory_still_gets_checked() {
             .any(|d| d["code"] == "RY000"),
         "{diagnostics}"
     );
-    assert!(output.stderr().contains("include vignettes/doc.R"));
+    assert!(
+        output
+            .stderr()
+            .contains(&format!("include {}", native("vignettes/doc.R")))
+    );
 }
 
 /// Missing and unreadable inputs fail the run, named on stderr, and stdout

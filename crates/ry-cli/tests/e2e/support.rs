@@ -12,6 +12,16 @@ pub fn check() -> CliProcess {
     ry!().arg("check").env("RY_NO_INSTALLED_LIBRARIES", "1")
 }
 
+/// `path`, written with `/`, as ry displays it on this platform: Windows
+/// output joins path components with `\\`.
+pub fn native(path: &str) -> String {
+    if cfg!(windows) {
+        path.replace('/', "\\")
+    } else {
+        path.to_string()
+    }
+}
+
 /// `(relative path, contents)` pairs to create.
 pub type Files<'a> = &'a [(&'a str, &'a [u8])];
 

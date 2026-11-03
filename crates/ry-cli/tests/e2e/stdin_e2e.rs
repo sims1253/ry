@@ -6,7 +6,7 @@ use std::path::Path;
 use ry_testkit::{CliOutput, ry};
 use serde_json::json;
 
-use crate::support::{Files, write};
+use crate::support::{Files, native, write};
 
 /// `ry check - --stdin-filename <logical> --output-format json <extra>`.
 fn stdin(root: &Path, logical: &str, extra: &[&str], input: &[u8]) -> CliOutput {
@@ -115,7 +115,9 @@ fn overlay_replaces_stale_disk_copy_in_directory_scan() {
     assert_eq!(buffer.codes(), ["RY010"]);
     let stderr = buffer.stderr();
     assert_eq!(
-        stderr.matches("include ./R/main.R (stdin overlay)").count(),
+        stderr
+            .matches(&format!("include {} (stdin overlay)", native("./R/main.R")))
+            .count(),
         1,
         "{stderr}"
     );
@@ -170,7 +172,7 @@ fn unsaved_file_is_checked_without_writing_it() {
     assert_eq!(buffer.code(), Some(1), "{buffer:?}");
     assert_eq!(buffer.codes(), ["RY010", "RY040"]);
     // Spelled below the directory root so it groups with its neighbours.
-    assert_eq!(buffer.json()[1]["path"], "./R/new.R");
+    assert_eq!(buffer.json()[1]["path"], native("./R/new.R"));
     assert!(!temp.path().join("R/new.R").exists());
 
     // stdin is the only source of an unsaved file; naming it again as a

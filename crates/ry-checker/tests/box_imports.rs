@@ -387,7 +387,8 @@ fn symlinked_modules_resolve_imports_beside_their_target() {
     assert!(!has(&result[1].1, "RY040"), "overlay: {:#?}", result[1].1);
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn unsaved_unicode_module_overlay_does_not_borrow_raw_filename_source() {
     use std::os::unix::ffi::OsStringExt;

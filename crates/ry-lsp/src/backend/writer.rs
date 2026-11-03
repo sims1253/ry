@@ -339,7 +339,13 @@ impl IndexWriter {
     /// Reload and rescan when package metadata, data, stub, or config files
     /// change. When only sources changed, refresh their index entries.
     async fn watched_files(&mut self, changes: Vec<FileEvent>) {
-        let config_paths = custom_config_paths(&*self.state.lock().await);
+        // Compare resolved identities: the client may name the configured
+        // file through a symlink or a Windows 8.3 alias.
+        let identity = |path: PathBuf| ry_config::scoped_path_identity(&path).unwrap_or(path);
+        let config_paths: Vec<PathBuf> = custom_config_paths(&*self.state.lock().await)
+            .into_iter()
+            .map(identity)
+            .collect();
         let config_or_baseline_changed = changes.iter().any(|change| {
             let path = change.uri.path();
             path.ends_with("ry.toml")
@@ -347,7 +353,7 @@ impl IndexWriter {
                 || change
                     .uri
                     .to_file_path()
-                    .is_ok_and(|path| config_paths.contains(&path))
+                    .is_ok_and(|path| config_paths.contains(&identity(path)))
         });
         let resolution_changed =
             config_or_baseline_changed

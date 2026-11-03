@@ -455,6 +455,56 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
     }
 }
 
+/// A configuration file named through a symlink still reloads when the
+/// client reports the change under its resolved path, as for macOS's
+/// `/var` or a Windows 8.3 alias.
+#[cfg(unix)]
+#[tokio::test]
+async fn custom_configuration_reloads_when_events_name_the_resolved_path() {
+    let fixture = FixtureProject::empty().unwrap();
+    let outside = FixtureProject::empty().unwrap();
+    let real = outside
+        .write_file("real/custom.toml", "ignore = [\"RY010\"]\n")
+        .unwrap();
+    let alias = fixture.path("alias");
+    std::os::unix::fs::symlink(real.parent().unwrap(), &alias).unwrap();
+    let source = "x <- never_bound_here\n";
+    let path = fixture.write_file("main.R", source).unwrap();
+    let uri = file_uri(&path);
+    let (mut session, server) = spawn_session(
+        &[fixture.root()],
+        json!({"workspace": {
+            "configuration": true,
+            "didChangeWatchedFiles": {"dynamicRegistration": true, "relativePatternSupport": true}
+        }}),
+        None,
+    )
+    .await;
+    session
+        .respond_to_request(
+            "workspace/configuration",
+            json!([{"configuration": alias.join("custom.toml")}, {}]),
+        )
+        .await
+        .unwrap();
+    session
+        .respond_to_request("client/registerCapability", json!(null))
+        .await
+        .unwrap();
+    let initial = harness::open_published(&mut session, &uri, 1, source).await;
+    assert_eq!(count_code(&initial, "RY010"), 0);
+
+    std::fs::write(&real, "ignore = []\n").unwrap();
+    let mark = session.publication_mark();
+    notify_changed(&mut session, &file_uri(&real)).await;
+    let after = session
+        .published_diagnostics_after(&uri, mark)
+        .await
+        .unwrap();
+    assert_eq!(count_code(&after, "RY010"), 1);
+    harness::join_session(session, server).await;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Typeshed stub reload
 //

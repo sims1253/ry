@@ -1537,8 +1537,9 @@ fn missing_and_unreadable_inputs_fail_the_run() {
         ],
     );
     let missing = |name: &str| format!("{}: no such file or directory", path(name).display());
-    // (inputs, stderr fragments, names reported unbound)
-    let mut cases = vec![
+    // (inputs, stderr fragments, names reported unbound). Typed here because
+    // only the unix-only cases below would otherwise infer the last element.
+    let mut cases: Vec<(Vec<std::path::PathBuf>, Vec<String>, Vec<&str>)> = vec![
         (
             vec![path("nonexistent.R")],
             vec![missing("nonexistent.R")],

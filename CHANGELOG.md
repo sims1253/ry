@@ -4,6 +4,15 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop reporting RY000 for calls and subsets nested 43 to 49 deep, which
+  GNU R parses. Argument and parameter lists no longer count toward ry's
+  syntax nesting limit. Past the limit, a file within R's 49-bracket limit
+  gets the new RY129 warning ("file not checked") instead of RY000 and no
+  longer fails the run. Nesting past R's own limit reports RY000 with R's
+  "contextstack overflow" (#887).
+
 ## [0.12.0] - 2026-11-01
 
 This release adds 17 rules (RY112 to RY128) and checks calls to the

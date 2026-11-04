@@ -800,13 +800,19 @@ pub(crate) struct CheckContext<'a> {
 /// file on stderr and keep going. Failed files drop out of the pass and
 /// count as parse errors, which fail the run's exit code. Each one also
 /// comes back as a file-level RY000, at the parser's position when it has
-/// one, so machine-readable output names the file too (#743).
+/// one, so machine-readable output names the file too (#743). Source
+/// nested past ry's limit at a depth R allows comes back as an RY129
+/// warning instead and is not a parse error (#887).
 fn report_check_parse_failure(
     path: &std::path::Path,
     error: &pipeline::ParseError,
 ) -> ry_checker::Diagnostic {
     match error {
         pipeline::ParseError::Read(error) => eprintln!("ry: {}: {}", path.display(), error),
+        pipeline::ParseError::Parse {
+            error: error @ ry_core::ParseError::NestingLimit { .. },
+            ..
+        } => eprintln!("ry: {}: {}", path.display(), error),
         pipeline::ParseError::Parse { error, .. } => {
             eprintln!("ry: {}: parse error: {}", path.display(), error)
         }
@@ -848,8 +854,13 @@ fn run_check_once(
         pipeline::FailureAction::Skip
     })
     .expect("check's parse-failure policy never aborts");
-    parse_errors += paths.len() - all_parsed.len();
-    for (path, diagnostic, text) in failures.into_inner().expect("parse-failure list lock") {
+    let failures = failures.into_inner().expect("parse-failure list lock");
+    let not_analyzed = failures
+        .iter()
+        .filter(|(_, diagnostic, _)| diagnostic.code == ry_checker::rules::NESTING_LIMIT)
+        .count();
+    parse_errors += paths.len() - all_parsed.len() - not_analyzed;
+    for (path, diagnostic, text) in failures {
         if let Some(text) = text {
             srcs.insert(diagnostic.path.clone(), text);
         }

@@ -204,6 +204,15 @@ mod tests {
     use ry_core::RParser;
     use tower_lsp::lsp_types::Position;
 
+    /// A file URI under a workspace root and the display path ry keys it
+    /// by. A drive keeps the URI a valid file path on Windows.
+    fn ws_uri(name: &str) -> (Url, String) {
+        let root = if cfg!(windows) { "C:\\ws" } else { "/ws" };
+        let uri = Url::from_file_path(std::path::Path::new(root).join(name)).unwrap();
+        let path = uri_to_path(&uri);
+        (uri, path)
+    }
+
     fn edit(line: u32, start: u32, end: u32, text: &str) -> TextDocumentContentChangeEvent {
         TextDocumentContentChangeEvent {
             range: Some(Range {
@@ -266,6 +275,9 @@ mod tests {
         assert!(doc.tree.is_some());
     }
 
+    // Undecodable bytes share a lossy display path only on Unix; Windows
+    // file URIs must decode to UTF-8, so these stay distinct there.
+    #[cfg(unix)]
     #[test]
     fn colliding_uris_keep_their_own_text_and_the_last_edit_is_active() {
         let first = Url::parse("file:///tmp/bad%FF.R").unwrap();
@@ -295,20 +307,18 @@ mod tests {
     #[tokio::test]
     async fn an_edit_reparses_only_the_edited_document() {
         let mut state = State::default();
-        for i in 0..3 {
-            let uri = Url::parse(&format!("file:///ws/file{i}.R")).unwrap();
-            state.docs.open(uri, format!("x{i} <- {i}L\n"), 1);
+        let files: Vec<_> = (0..3).map(|i| ws_uri(&format!("file{i}.R"))).collect();
+        for (i, (uri, _)) in files.iter().enumerate() {
+            state.docs.open(uri.clone(), format!("x{i} <- {i}L\n"), 1);
         }
         let state = tokio::sync::Mutex::new(state);
         let mut parses = Vec::new();
-        for i in 0..3 {
-            let (file, _) = parsed_file(&state, &format!("/ws/file{i}.R"))
-                .await
-                .unwrap();
+        for (_, path) in &files {
+            let (file, _) = parsed_file(&state, path).await.unwrap();
             parses.push(file);
         }
 
-        let edited = Url::parse("file:///ws/file1.R").unwrap();
+        let edited = files[1].0.clone();
         let change = TextDocumentContentChangeEvent {
             range: None,
             range_length: None,
@@ -316,9 +326,7 @@ mod tests {
         };
         assert!(state.lock().await.docs.change(&edited, vec![change], 2));
         for (i, before) in parses.iter().enumerate() {
-            let (after, text) = parsed_file(&state, &format!("/ws/file{i}.R"))
-                .await
-                .unwrap();
+            let (after, text) = parsed_file(&state, &files[i].1).await.unwrap();
             assert_eq!(Arc::ptr_eq(before, &after), i != 1, "file{i}.R");
             assert_eq!(after.source, text);
         }
@@ -331,9 +339,9 @@ mod tests {
     async fn concurrent_parses_of_one_edit_keep_the_first_stored_ast() {
         use crate::test_seam::{self, Seam};
 
-        let path = "/ws/main.R";
+        let (uri, path) = ws_uri("main.R");
+        let path = path.as_str();
         let mut state = State::default();
-        let uri = Url::parse("file:///ws/main.R").unwrap();
         state.docs.open(uri, "x <- 1L\n".to_string(), 1);
         let state = tokio::sync::Mutex::new(state);
 

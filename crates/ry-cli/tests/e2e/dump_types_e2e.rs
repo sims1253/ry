@@ -250,7 +250,8 @@ fn directory_input_dumps_every_discovered_file() {
     let dump = output.json();
     let files = dump["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
-    assert!(files[0]["path"].as_str().unwrap().ends_with("R/analysis.R"));
+    // Components, so the check holds for `\\` separators too.
+    assert!(std::path::Path::new(files[0]["path"].as_str().unwrap()).ends_with("R/analysis.R"));
 }
 
 /// Assignments in expression position — inside a call argument, chained
@@ -567,7 +568,8 @@ fn degraded_scopes_are_noted_on_stderr_only() {
     let dump = output.json();
     let files = dump["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
-    assert!(files[0]["path"].as_str().unwrap().ends_with("R/x.R"));
+    // Components, so the check holds for `\\` separators too.
+    assert!(std::path::Path::new(files[0]["path"].as_str().unwrap()).ends_with("R/x.R"));
 }
 
 #[test]

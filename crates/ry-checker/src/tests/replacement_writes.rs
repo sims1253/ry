@@ -427,13 +427,20 @@ fn list_and_named_writes_admit_the_length_r_produces() {
 
 /// A positional write that cannot delete keeps a class-less list's
 /// elements, so the old length stays a lower bound; a classed list may
-/// run its own method and proves nothing.
+/// run its own method and proves nothing, and so does a rebound operator
+/// (GNU R 4.6.1: with `[[<-` returning `list()`, `l` has length 0).
 #[test]
 fn positional_list_write_keeps_a_lower_bound() {
     let (_, scope) = check_with_scope("l <- list(1, 2); l[[3]] <- 5");
     assert_eq!(scope.get("l").unwrap().length, Length::AtLeast(2));
     let (_, scope) = check_with_scope("l <- list(1, 2); l[2] <- 5");
     assert_eq!(scope.get("l").unwrap().length, Length::AtLeast(2));
-    let (_, scope) = check_with_scope("l <- structure(list(1, 2), class = \"rec\"); l[[3]] <- 5");
-    assert_eq!(scope.get("l").unwrap().length, Length::Unknown);
+    for source in [
+        "l <- structure(list(1, 2), class = \"rec\"); l[[3]] <- 5",
+        "`[[<-` <- function(x, i, value) list(); l <- list(1, 2); l[[3]] <- 5",
+        "`[<-` <- function(x, i, value) list(); l <- list(1, 2); l[3] <- 5",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert_eq!(scope.get("l").unwrap().length, Length::Unknown, "{source}");
+    }
 }

@@ -3729,10 +3729,18 @@ impl Checker {
                     // A positional write on a class-less list keeps or
                     // extends it, while NULL deletes: `[[<-` one element,
                     // `[<-` any number of them. A classed list may run
-                    // its own method, which proves nothing (#863).
+                    // its own method, and a rebound operator may return
+                    // anything, which proves nothing (#863).
+                    let operator = if matches!(kind, IndexKind::Double) {
+                        "[[<-"
+                    } else {
+                        "[<-"
+                    };
+                    let base_operator = self.resolves_to_base(operator, scope)
+                        && !ops_chooser::operator_rebound(self, operator, scope);
                     let may_delete = crate::may_delete_element(&vt);
                     updated.length = match kind {
-                        _ if !updated.class.is_classless() => Length::Unknown,
+                        _ if !updated.class.is_classless() || !base_operator => Length::Unknown,
                         IndexKind::Single if may_delete => Length::Unknown,
                         _ => Length::lower_bound(
                             old.min_possible().saturating_sub(usize::from(may_delete)),

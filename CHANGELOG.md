@@ -4,6 +4,13 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- A ratcheted parse differential in `ecosystem/run.sh --check`: GNU R's
+  `parse()` and ry's RY000 must agree on every `.R` file of both corpora
+  and base R's sources (12,594 files, no disagreements), so a false
+  RY000 on valid R or newly accepted R-rejected input fails CI (#841).
+
 ### Fixed
 
 - Report RY000 for syntax GNU R's `parse()` rejects but tree-sitter

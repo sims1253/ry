@@ -16,6 +16,9 @@ All notable changes to ry are documented in this file.
 - Stop reporting RY000 for a native-pipe call to a special function that
   passes the `_` placeholder, such as `` x |> `+`(e1 = _, e2 = 1) ``,
   which R accepts.
+- On Windows, a source whose resolved path is over 260 characters again
+  matches the scoped `paths` of its config and stays in its package's
+  context, rather than being skipped as if it were outside them (#880).
 - Arithmetic with no `Ops` method keeps the class of the longer operand,
   as R's primitive does: the left class wins at equal lengths, and empty
   results drop it. `structure(1, class = "foo") * 2` no longer reports

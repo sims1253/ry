@@ -275,6 +275,53 @@ mod native_display_tests {
     }
 }
 
+/// `std::fs::canonicalize` without Windows' verbatim `\\?\` prefix when
+/// the plain path names the same file, so the prefix stays out of messages.
+/// Path length does not matter: std adds the prefix back when it opens a
+/// long path, and a deep source must keep prefix-matching its short root.
+pub fn canonical_path(path: &Path) -> std::io::Result<PathBuf> {
+    let resolved = std::fs::canonicalize(path)?;
+    Ok(plain_disk_path(&resolved).unwrap_or(resolved))
+}
+
+/// `\\?\C:\a\b` as `C:\a\b` when Win32 reads every name back unchanged.
+/// Only Windows parses the prefix, so elsewhere this is `None`.
+fn plain_disk_path(path: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+    const DEVICES: [&str; 22] = [
+        "AUX", "CON", "NUL", "PRN", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+
+    let mut components = path.components();
+    match components.next() {
+        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::VerbatimDisk(_)) => {}
+        _ => return None,
+    }
+    // Win32 trims trailing dots and spaces, reads `:` as a stream separator,
+    // and reads `con`, `nul.txt`, `com1 .R`, ... as devices.
+    let plain = components.all(|component| match component {
+        Component::RootDir => true,
+        Component::Normal(name) => name.to_str().is_some_and(|name| {
+            let stem = name
+                .split('.')
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches(' ');
+            !name.ends_with(['.', ' '])
+                && !name.contains(|c: char| c < ' ' || r#"<>:"/\|?*"#.contains(c))
+                && !DEVICES
+                    .iter()
+                    .any(|device| stem.eq_ignore_ascii_case(device))
+        }),
+        _ => false,
+    });
+    if !plain {
+        return None;
+    }
+    path.to_str()?.strip_prefix(r"\\?\").map(PathBuf::from)
+}
+
 /// Resolve the longest existing prefix with filesystem semantics. This
 /// preserves the meaning of `symlink/..` and of final symlink files while
 /// still matching unsaved files and virtual descendants under an existing
@@ -284,7 +331,7 @@ pub fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
     let absolute = std::path::absolute(path).ok()?;
     let mut suffix = Vec::new();
     for ancestor in absolute.ancestors() {
-        match dunce::canonicalize(ancestor) {
+        match canonical_path(ancestor) {
             Ok(mut resolved) => {
                 for component in suffix.into_iter().rev() {
                     match component {
@@ -908,6 +955,71 @@ paths = ["inst/shiny/**"]
         assert!(!paths.matches(&root.join("else/R/a.R")));
         assert!(!paths.matches(&root.join("R/../else/a.R")));
         assert!(!paths.matches(&root.join("../outside/R/a.R")));
+    }
+
+    /// Windows spells a resolved path over MAX_PATH (260 characters) with
+    /// its verbatim `\\?\` prefix; a short root has none. The deep source
+    /// must still match its root's scope (#880).
+    #[test]
+    fn scoped_paths_match_sources_deeper_than_max_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let deep = root.join("R").join("d".repeat(120)).join("e".repeat(120));
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("a.R"), "x <- 1L\n").unwrap();
+        assert!(deep.join("a.R").as_os_str().len() > 260);
+
+        let in_r = ScopedPaths::new(root, &["R/**".into()]).unwrap();
+        assert!(in_r.matches(&deep.join("a.R")));
+        assert!(in_r.matches(&deep.join("unsaved.R")));
+    }
+
+    #[test]
+    fn canonical_paths_deeper_than_max_path_drop_the_verbatim_prefix_and_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let deep = temp.path().join("d".repeat(120)).join("e".repeat(120));
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("a.R"), "x <- 1L\n").unwrap();
+        let resolved = canonical_path(&deep.join("a.R")).unwrap();
+        assert!(resolved.as_os_str().len() > 260);
+        assert!(
+            !resolved.to_string_lossy().starts_with(r"\\?\"),
+            "{resolved:?}"
+        );
+        assert_eq!(fs::read_to_string(&resolved).unwrap(), "x <- 1L\n");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn plain_disk_paths_ignore_length_but_keep_names_win32_would_change() {
+        // NTFS allows names of up to 255 characters.
+        let long = format!(r"C:\{}\{}\a.R", "d".repeat(255), "e".repeat(150));
+        assert_eq!(
+            super::plain_disk_path(Path::new(&format!(r"\\?\{long}"))),
+            Some(PathBuf::from(long))
+        );
+        for verbatim in [
+            r"\\?\C:\pkg\CON\a.R",
+            r"\\?\C:\pkg\nul.tar.gz",
+            r"\\?\C:\pkg\com1 .R",
+            r"\\?\C:\pkg\a.R:stream",
+            r"\\?\C:\pkg\dir.\a.R",
+            r"\\?\C:\pkg\dir \a.R",
+            r"\\?\UNC\server\share\a.R",
+            r"C:\pkg\a.R",
+        ] {
+            assert_eq!(
+                super::plain_disk_path(Path::new(verbatim)),
+                None,
+                "{verbatim}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn plain_disk_paths_keep_unix_backslashes() {
+        assert_eq!(super::plain_disk_path(Path::new(r"\\?\C:\a.R")), None);
     }
 
     #[cfg(unix)]

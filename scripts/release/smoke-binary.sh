@@ -18,6 +18,7 @@ case "$target" in
 esac
 
 work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
 if [[ $target == *-windows-* ]]; then
   unzip -q "$artifacts/ry-cli-$target.zip" -d "$work"
   ry=$work/ry.exe
@@ -27,8 +28,13 @@ else
 fi
 
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
-actual=$("$ry" --version)
+status=0
+actual=$("$ry" --version) || status=$?
 echo "$actual"
+if [[ $status != 0 ]]; then
+  echo "::error::$target: the binary failed to start (--version exited with code $status)"
+  exit 1
+fi
 if [[ $actual != "ry $version" ]]; then
   echo "::error::$target: expected 'ry $version' from --version, got '$actual'"
   exit 1

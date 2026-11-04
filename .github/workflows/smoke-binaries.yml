@@ -20,6 +20,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(inputs.plan).ci.github.artifacts_matrix }}
     runs-on: ${{ matrix.runner }}
+    # A binary that hangs instead of exiting must not hold the release.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

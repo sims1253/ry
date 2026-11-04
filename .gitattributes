@@ -1,0 +1,4 @@
+# Check text out with LF on every platform. Fixtures, snapshots and docs
+# assert byte offsets and exact text, which a CRLF checkout on Windows
+# would shift. Binary files (.rda, images) are detected and left alone.
+* text=auto eol=lf

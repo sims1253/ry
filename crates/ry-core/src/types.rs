@@ -1275,10 +1275,10 @@ impl RType {
 /// `Length::Unknown`.
 fn union_of(a: RType, b: RType) -> RType {
     let mut members: Vec<RType> = Vec::new();
-    let push_dedup = |v: &mut Vec<RType>, t: RType| {
-        if !v.iter().any(|m| m == &t) {
-            v.push(t);
-        }
+    let push_dedup = |v: &mut Vec<RType>, t: RType| match v.iter_mut().find(|m| **m == t) {
+        // Equality ignores the export-only proxy marker; keep it.
+        Some(member) => member.class.storage_proxy |= t.class.storage_proxy,
+        None => v.push(t),
     };
     match a.mode {
         Mode::Union => {
@@ -2005,6 +2005,17 @@ mod tests {
         assert_eq!(cv.first().as_deref(), Some("a"));
         assert!(cv.contains("d"));
         assert!(!cv.contains("e"));
+    }
+
+    #[test]
+    fn union_dedup_keeps_the_storage_proxy_marker() {
+        let plain = RType::scalar(Mode::Double);
+        let proxy = plain.clone().with_class(ClassVector::storage_proxy());
+        let either = plain.join(RType::scalar(Mode::Character));
+        let joined = either.join(proxy);
+        let members = joined.members.expect("union members");
+        let double = members.iter().find(|m| m.mode == Mode::Double).unwrap();
+        assert!(double.class.storage_proxy, "{members:?}");
     }
 
     #[test]

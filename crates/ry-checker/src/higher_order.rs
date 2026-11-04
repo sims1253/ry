@@ -127,7 +127,10 @@ impl Checker {
             None
         };
         let forwarded_dots = args.iter().any(|argument| self.is_forwarded_dots(argument));
-        self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
+        // Diagnostics only: a discarding walk would emit nothing from it.
+        if !self.discarding {
+            self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
+        }
         // A fold's initializer describes only the first invocation. Later
         // accumulators are callback results, and zero iterations return the
         // initializer/input directly. Neither one invocation nor an input
@@ -502,9 +505,13 @@ impl Checker {
         // the inner function's return.
         let callback = self.unwrap_callback_identity(callback);
         match callback {
-            Expr::Function { params, body, .. } => {
-                self.callback_literal_return(params, body, call_arg_types, scope, 0)
-            }
+            Expr::Function { params, body, .. } => self.callback_literal_return(
+                params,
+                body,
+                call_arg_types,
+                scope,
+                self.closure_depth,
+            ),
             Expr::Ident { name, .. } => {
                 // A qualified callback (`base::sqrt` passed to `sapply`)
                 // never reads a local binding, and names a project

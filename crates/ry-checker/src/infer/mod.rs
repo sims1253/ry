@@ -959,7 +959,11 @@ impl Checker {
                 // runs in discarding mode and emits nothing on its own, so
                 // without this walk almost all real R code would go
                 // unchecked.
-                if let Expr::Function { params, body, span } = value {
+                // A discarding walk (signature or fixpoint inference) emits
+                // nothing, and the body walk cannot change this scope.
+                if let Expr::Function { params, body, span } = value
+                    && !self.discarding
+                {
                     self.enter_function_body(
                         binding_name(target),
                         true,
@@ -2805,6 +2809,7 @@ impl Checker {
         // the body (the named-return closure pattern). `if` branches
         // are walked without splitting the scope (v1 approximation).
         let mut returns: Vec<RType> = Vec::new();
+        let prev_depth = std::mem::replace(&mut self.closure_depth, depth + 1);
         self.walk_block(body, &mut scope, Some(&mut returns));
         // The trailing expression -- or a bare trailing function
         // literal, the closure-factory pattern -- is the implicit
@@ -2812,6 +2817,7 @@ impl Checker {
         if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
             returns.push(t);
         }
+        self.closure_depth = prev_depth;
         self.discarding = prev_discarding;
         if returns.is_empty() {
             return None;
@@ -2895,6 +2901,10 @@ impl Checker {
         scope: &mut Scope,
         mut returns: Option<&mut Vec<RType>>,
     ) {
+        #[cfg(test)]
+        {
+            self.block_walks += 1;
+        }
         self.walk_block_with(statements, |checker, statement, _| {
             checker.walk_stmt(statement, scope, returns.as_deref_mut());
         });
@@ -4524,7 +4534,8 @@ impl Checker {
                 // non-emitting inference path so a function literal in a
                 // top-level expression (`g <- f(); v <- (function() 1L)()`)
                 // resolves the same way as one inside a return slot.
-                let value = self.function_value_from_literal(params, body, scope, 0);
+                let value =
+                    self.function_value_from_literal(params, body, scope, self.closure_depth);
                 // A closure defined here may later superassign into the
                 // bindings this scope flattens; its definition is the
                 // point after which those bindings are unknown-typed

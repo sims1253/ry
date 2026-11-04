@@ -6,6 +6,12 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Check nested function literals in time linear in their depth. Each
+  level used to multiply the work by 2 to 5, so 20 nested
+  `f <- function() { ... }` levels took 5 s and 12 nested `lapply()`
+  callbacks over a minute. The existing three-level cap on nested closure
+  signatures now also applies to literals assigned or passed to a call
+  inside another literal (#893).
 - Report RY000 for syntax GNU R's `parse()` rejects but tree-sitter
   accepts: repeated formals (`function(x, x)`), two expressions on one
   line (`fjkdsfa 2`), a top-level dangling `else`, a `_` placeholder

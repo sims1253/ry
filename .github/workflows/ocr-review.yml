@@ -122,6 +122,10 @@ jobs:
           effort: high
           # 'max' works only on the OpenAI-compatible protocol.
           llm_reasoning_effort: max
+          # The action's default body disables thinking, which GLM thinking
+          # models reject with 400 code 1210. An empty body keeps only the
+          # reasoning_effort above (#851).
+          llm_extra_body: '{}'
           stream_progress: 'true'
           background: ${{ steps.pr-context.outputs.title || github.event.pull_request.title }}
           # Set only for issue_comment. The action reads pull_request events.
@@ -144,6 +148,10 @@ jobs:
           effort: high
           # 'max' works only on the OpenAI-compatible protocol.
           llm_reasoning_effort: max
+          # The action's default body disables thinking, which GLM thinking
+          # models reject with 400 code 1210. An empty body keeps only the
+          # reasoning_effort above (#851).
+          llm_extra_body: '{}'
           stream_progress: 'true'
           background: ${{ steps.pr-context.outputs.title || github.event.pull_request.title }}
           # Set only for issue_comment. The action reads pull_request events.

@@ -2361,9 +2361,9 @@ impl Checker {
         // when the guard narrowed at least one binding that can yield a
         // refinement at all — a union with a NULL member or a pure-`NULL`
         // binding (the `narrow_away_from_null` member scan is that set's
-        // cheap encoding), or a binding an arm narrowed to an unknown
-        // value: exactly what `union_guard_continuation_refinement`
-        // admits. Guard-free `if`s and other guards keep their previous
+        // cheap encoding), a binding an arm narrowed to an unknown
+        // value, or one whose length bound an arm raised: exactly what
+        // `union_guard_continuation_refinement` admits. Guard-free `if`s and other guards keep their previous
         // cost: for them it returns `None` regardless of the divergence
         // flags.
         let guard_may_refine = narrowed.iter().any(|name| {
@@ -2376,12 +2376,23 @@ impl Checker {
                         || original.is_some_and(|original| view.is_length_bound_narrowing(original))
                 })
         });
-        // A project `return` binding is an ordinary call that continues.
+        // A project `return` binding, outside the `if` or in the arm
+        // itself, is an ordinary call that continues.
         let guard_may_refine =
             guard_may_refine && !ops_chooser::operator_rebound(self, "return", scope);
-        let then_return_diverges = guard_may_refine && !then_diverges && self.arm_diverges(then);
-        let else_return_diverges =
-            guard_may_refine && !else_diverges && else_.is_some_and(|arm| self.arm_diverges(arm));
+        let binds_return = |delta: &crate::scope_journal::BranchDelta| {
+            ["return", "`return`"]
+                .iter()
+                .any(|name| delta.changed.contains_key(*name))
+        };
+        let then_return_diverges = guard_may_refine
+            && !then_diverges
+            && !binds_return(&then_delta)
+            && self.arm_diverges(then);
+        let else_return_diverges = guard_may_refine
+            && !else_diverges
+            && !binds_return(&else_delta)
+            && else_.is_some_and(|arm| self.arm_diverges(arm));
         let union_guard_facts: Vec<(String, RType)> = if narrowed.is_empty() {
             Vec::new()
         } else {

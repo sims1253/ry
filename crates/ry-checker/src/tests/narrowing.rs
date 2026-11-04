@@ -545,6 +545,8 @@ fn length_lower_bound_exit_controls_stay_silent() {
         "f <- function(x) { if (length(x) <= 1L) lapply(1, function(i) return(i)); if (x) 1L }",
         // A project `return` is an ordinary call that continues.
         "f <- function(x) { return <- function(v) v; if (length(x) <= 1L) return(NULL); if (x) 1L }",
+        "f <- function(x) { if (length(x) <= 1L) { return <- function(v) v; return(NULL) }; if (x) 1L }",
+        "f <- function(x) { if (length(x) <= 1L) { `return` <- function(v) v; return(NULL) }; if (x) 1L }",
         // A defaulted parameter keeps its omitted-call type.
         "f <- function(x = NULL) { if (length(x) <= 1L) return(NULL); if (x) 1L }",
         // The bound is used up, rebound, or about another value.

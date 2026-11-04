@@ -129,8 +129,8 @@ impl Checker {
         // keeps its cost profile comparable): they only run when at
         // least one narrowed binding can yield a refinement at all — a
         // union with a NULL member or a pure-`NULL` binding, the set
-        // `narrow_away_from_null` admits, or a binding an arm narrowed
-        // to an unknown value.
+        // `narrow_away_from_null` admits, a binding an arm narrowed to
+        // an unknown value, or one whose length bound an arm raised.
         let guard_may_refine = narrowed_originals.iter().any(|(name, original, _)| {
             original
                 .as_ref()
@@ -149,9 +149,18 @@ impl Checker {
         });
         let guard_may_refine =
             guard_may_refine && !super::ops_chooser::operator_rebound(self, "return", scope);
-        let then_return_diverges = guard_may_refine && !then_diverges && self.block_diverges(then);
+        let binds_return = |arm: &Scope| {
+            ["return", "`return`"]
+                .iter()
+                .any(|name| arm.get(name) != scope.get(name))
+        };
+        let then_return_diverges = guard_may_refine
+            && !then_diverges
+            && !binds_return(&then_scope)
+            && self.block_diverges(then);
         let else_return_diverges = guard_may_refine
             && !else_diverges
+            && !binds_return(&else_scope)
             && else_.is_some_and(|statements| self.block_diverges(statements));
         for (name, original, original_default_parameter) in narrowed_originals {
             let Some(original) = original else {

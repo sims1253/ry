@@ -329,6 +329,22 @@ fn methodless_unary_ops_keep_the_class_when_the_storage_mode_stays() {
 }
 
 #[test]
+fn unary_not_takes_each_union_members_result() {
+    // `!` on a raw value is raw, so a raw-or-logical operand may be either.
+    let (_, scope) = check_with_scope("x <- if (runif(1) > 0.5) as.raw(1) else TRUE\nout <- !x");
+    let result = scope.get("out").unwrap();
+    let mut modes: Vec<_> = result
+        .members
+        .as_ref()
+        .expect("a union result")
+        .iter()
+        .map(|member| format!("{:?}", member.mode))
+        .collect();
+    modes.sort();
+    assert_eq!(modes, ["Logical", "Raw"], "{result:?}");
+}
+
+#[test]
 fn unary_ops_with_a_base_method_export_an_unknown_class() {
     // `Ops.Date`, `Ops.POSIXt` and `Ops.factor` decide these in R (most of
     // them error or warn), so facts must not claim a known class.

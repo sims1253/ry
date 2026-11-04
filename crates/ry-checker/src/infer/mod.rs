@@ -4455,13 +4455,30 @@ impl Checker {
                                 format!("cannot apply `!` to `{}`", t.mode),
                             );
                         }
-                        // `!` on raw is bitwise and stays raw.
-                        let mode = if t.mode == Mode::Raw {
-                            Mode::Raw
-                        } else {
-                            Mode::Logical
+                        // `!` on raw is bitwise and stays raw; a union with
+                        // a raw member takes each member's result. Other
+                        // unions stay one logical of the union's length.
+                        let negated = |operand: &RType| {
+                            let mode = if operand.mode == Mode::Raw {
+                                Mode::Raw
+                            } else {
+                                Mode::Logical
+                            };
+                            RType::new(mode, operand.length)
                         };
-                        let mut result = RType::new(mode, t.length);
+                        let mut result = match (&t.mode, &t.members) {
+                            (Mode::Union, Some(members))
+                                if members.iter().any(|member| member.mode == Mode::Raw) =>
+                            {
+                                members
+                                    .iter()
+                                    .map(negated)
+                                    .reduce(RType::join)
+                                    .unwrap_or_else(|| negated(&t))
+                            }
+                            _ => negated(&t),
+                        };
+                        let mode = result.mode;
                         if let Some(class) = self.unary_fallback_class(*op, &t, mode, scope) {
                             result.class = class;
                         }

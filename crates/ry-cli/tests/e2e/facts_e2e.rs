@@ -85,6 +85,26 @@ fn classed_union_retains_union_level_facts() {
 }
 
 #[test]
+fn primitive_ops_fallback_does_not_export_a_known_empty_class() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("ops.R"),
+        "a <- Sys.Date() + 1\nb <- structure(1, class = \"foo\") * 2\nx <- readRDS(\"x.rds\")\nz <- x + 1\nn <- 1 + 2\n",
+    )
+    .unwrap();
+    let output = facts(dir.path(), &["ops.R"]);
+    let top = &output["files"][0]["scopes"][0];
+    let class = |name| &binding(top, name)["type"]["class"];
+    // `+.Date` decides `a`'s class, which the checker does not model.
+    assert_eq!(class("a")["kind"], "unknown");
+    assert_eq!(class("b")["kind"], "known");
+    assert_eq!(class("b")["names"], json!(["foo"]));
+    assert_eq!(class("z")["kind"], "unknown");
+    assert_eq!(class("n")["kind"], "known");
+    assert_eq!(class("n")["names"], json!([]));
+}
+
+#[test]
 fn byte_spans_round_trip_unicode_tabs_and_multiline_functions() {
     let dir = tempfile::tempdir().unwrap();
     let source = "é <- 1L\r\nf <- function(λ) {\r\n\t結果 <- λ\r\n\t結果\r\n}\r\n`空 白` <- 1L\r\n";

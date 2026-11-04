@@ -215,3 +215,69 @@ fn plain_vector_fallback_rejects_both_empty_length_representations() {
         }
     }
 }
+
+#[test]
+fn methodless_arithmetic_keeps_the_primitive_class() {
+    // GNU R copies the longer operand's class; at equal lengths the left's
+    // wins, a classless left keeps the right's, and comparisons and empty
+    // results drop it (#865).
+    let foo = ClassVector::single("foo");
+    for (expr, class) in [
+        ("structure(1, class = 'foo') * 2", foo.clone()),
+        ("2 * structure(1, class = 'foo')", foo.clone()),
+        ("structure(c(1, 2, 3), class = 'foo') - 1", foo.clone()),
+        (
+            "structure(1, class = 'foo') + structure(1, class = 'bar')",
+            foo.clone(),
+        ),
+        (
+            "structure(1, class = 'bar') + structure(c(1, 2), class = 'foo')",
+            foo.clone(),
+        ),
+        (
+            "structure(1, class = 'foo') + c(1, 2, 3)",
+            ClassVector::empty(),
+        ),
+        (
+            "structure(numeric(0), class = 'foo') + 1",
+            ClassVector::empty(),
+        ),
+        ("structure(1, class = 'foo') == 2", ClassVector::empty()),
+        ("x + 1", ClassVector::unknown()),
+        (
+            "structure(c(1, 2), class = 'foo') + seq_len(length(x))",
+            ClassVector::unknown(),
+        ),
+    ] {
+        let source = format!("x <- readRDS('x.rds')\nout <- {expr}");
+        let (diagnostics, scope) = check_with_scope(&source);
+        let result = scope.get("out").unwrap();
+        assert_eq!(result.class, class, "{source}");
+        assert!(!result.class.storage_proxy, "{source}");
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn modeled_base_ops_method_keeps_its_checked_class_but_marks_the_proxy() {
+    // `+.Date` runs in R. Checks keep the storage model's classless state,
+    // which RY061 relies on, while facts must not claim a known class.
+    for source in [
+        "out <- Sys.Date() + 1",
+        "d <- Sys.Date() + 1\nout <- d * 1",
+        "out <- if (runif(1) > 0.5) Sys.Date() + 1 else 0",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        let result = scope.get("out").unwrap();
+        assert_eq!(result.class, ClassVector::empty(), "{source}");
+        assert!(result.class.storage_proxy, "{source}");
+        assert!(!result.class.export_known(), "{source}");
+    }
+    let (diagnostics, _) = check_with_scope("t0 <- Sys.time()\nx <- (Sys.time() - t0)$units");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY061"),
+        "{diagnostics:?}"
+    );
+}

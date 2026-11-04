@@ -4,6 +4,15 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The release workflow now starts each release binary on the runner type
+  that built it, and a binary that fails blocks the release: `ry --version`
+  must report the workspace version and `ry check` must report RY040 on a
+  small fixture. The two targets cross-compiled on x64 runners,
+  `aarch64-pc-windows-msvc` and `armv7-unknown-linux-gnueabihf`, are
+  skipped (#856).
+
 ### Fixed
 
 - Report RY000 for syntax GNU R's `parse()` rejects but tree-sitter

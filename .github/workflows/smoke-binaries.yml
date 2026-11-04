@@ -1,0 +1,40 @@
+name: Smoke binaries
+
+on:
+  workflow_call:
+    inputs:
+      # The dist plan's build matrix, so each binary starts on the runner
+      # type that built it and a new target is covered without editing this
+      # file.
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke (${{ join(matrix.targets, ', ') }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(inputs.plan).ci.github.artifacts_matrix }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
+          path: target/distrib
+      # The generated host job waits for this hook, so a binary that fails
+      # to start blocks the release upload.
+      - name: Start the release binary
+        shell: bash
+        env:
+          TARGETS: ${{ join(matrix.targets, ' ') }}
+        run: |
+          for target in $TARGETS; do
+            scripts/release/smoke-binary.sh "$target" target/distrib
+          done

@@ -19,6 +19,12 @@ All notable changes to ry are documented in this file.
 - On Windows, a source whose resolved path is over 260 characters again
   matches the scoped `paths` of its config and stays in its package's
   context, rather than being skipped as if it were outside them (#880).
+- Arithmetic with no `Ops` method keeps the class of the longer operand,
+  as R's primitive does: the left class wins at equal lengths, and empty
+  results drop it. `structure(1, class = "foo") * 2` no longer reports
+  RY061 for a `$` that dispatches to `$.foo`. `dump-facts` reports the
+  class as unknown when an operand's class is unknown or a base method
+  such as `+.Date` decides it, instead of a known empty class (#865).
 
 ## [0.12.0] - 2026-11-01
 

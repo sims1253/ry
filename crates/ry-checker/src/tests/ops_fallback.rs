@@ -342,6 +342,19 @@ fn unary_not_takes_each_union_members_result() {
         .collect();
     modes.sort();
     assert_eq!(modes, ["Logical", "Raw"], "{result:?}");
+
+    // Each member keeps its class when `!` keeps its storage mode, and a
+    // classed union on the single-logical path exports an unknown class.
+    let (_, scope) = check_with_scope(
+        "x <- if (runif(1) > 0.5) as.raw(1) else structure(TRUE, class = 'foo')\nout <- !x",
+    );
+    let members = scope.get("out").unwrap().members.clone().expect("a union");
+    let logical = members.iter().find(|m| m.mode == Mode::Logical).unwrap();
+    assert_eq!(logical.class, ClassVector::single("foo"), "{members:?}");
+    let (_, scope) = check_with_scope(
+        "x <- if (runif(1) > 0.5) NULL else structure(TRUE, class = 'foo')\nout <- !x",
+    );
+    assert!(!scope.get("out").unwrap().class.export_known());
 }
 
 #[test]

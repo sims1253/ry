@@ -4456,17 +4456,25 @@ impl Checker {
                             );
                         }
                         // `!` on raw is bitwise and stays raw; a union with
-                        // a raw member takes each member's result. Other
-                        // unions stay one logical of the union's length.
+                        // a raw member takes each member's result and class.
+                        // Other unions stay one logical of the union's
+                        // length, exported as unknown when a member is
+                        // classed.
                         let negated = |operand: &RType| {
                             let mode = if operand.mode == Mode::Raw {
                                 Mode::Raw
                             } else {
                                 Mode::Logical
                             };
-                            RType::new(mode, operand.length)
+                            let mut result = RType::new(mode, operand.length);
+                            if let Some(class) =
+                                self.unary_fallback_class(*op, operand, mode, scope)
+                            {
+                                result.class = class;
+                            }
+                            result
                         };
-                        let mut result = match (&t.mode, &t.members) {
+                        match (&t.mode, &t.members) {
                             (Mode::Union, Some(members))
                                 if members.iter().any(|member| member.mode == Mode::Raw) =>
                             {
@@ -4474,15 +4482,17 @@ impl Checker {
                                     .iter()
                                     .map(negated)
                                     .reduce(RType::join)
-                                    .unwrap_or_else(|| negated(&t))
+                                    .expect("the guard found a raw member")
+                            }
+                            (Mode::Union, Some(members)) => {
+                                let mut result = negated(&t);
+                                if !members.iter().all(|member| member.class.is_classless()) {
+                                    result.class = ClassVector::storage_proxy();
+                                }
+                                result
                             }
                             _ => negated(&t),
-                        };
-                        let mode = result.mode;
-                        if let Some(class) = self.unary_fallback_class(*op, &t, mode, scope) {
-                            result.class = class;
                         }
-                        result
                     }
                 }
             }

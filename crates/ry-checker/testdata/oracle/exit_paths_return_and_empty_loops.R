@@ -24,6 +24,9 @@ stopifnot(is.null(h(0)), identical(h(2), 2L))
 stopifnot(is.null(h2(0)), identical(h2(2), 2L))
 stopifnot(is.null(b(0)), identical(b(3), 2L))
 
-# A loop over 1:3 always runs, so its final state is the body's.
+# A loop over 1:3 always runs, so its final state is the body's. So does a
+# loop over c(1L, y), which has at least one element.
 k <- function() { x <- 1L; for (i in 1:3) x <- "a"; c(typeof(x), typeof(i)) }
 stopifnot(identical(k(), c("character", "integer")))
+k2 <- function(y) { x <- 1L; for (i in c(1L, y)) x <- "a"; typeof(x) }
+stopifnot(k2(NULL) == "character", k2(2:3) == "character")

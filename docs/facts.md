@@ -53,8 +53,9 @@ Every exported scope and binding has `snapshot_kind: "scope_exit"`. Types
 describe the states in which the recorded scope can be left. For a function,
 that is the end of its body joined with the state at each `return()` the
 checker models; a `return()` inside a nested function or callback leaves
-that function instead. There is no `--position` option. Schema 1 has no type-at-reference or resolved-symbol
-contract. Add `--references` for the bounded reference facts in schema 2.
+that function instead. There is no `--position` option. Schema 1 has no
+type-at-reference or resolved-symbol contract. Add `--references` for the
+bounded reference facts in schema 2.
 
 For example:
 
@@ -84,7 +85,7 @@ f <- function(c, n) {
 times, so `x` exports as a union of integer and character. Unless the checker
 proves that a loop runs, as for `for (i in 1:3)`, its entry state is one of
 its exits. Over an empty sequence R binds a `for` variable to `NULL`, so
-`i` here also admits `NULL`.
+ry makes no claim about `i` here.
 
 The checker analyzes nested functions using a copy of the enclosing analysis
 scope. That scope can include project facts collected before the body is walked.

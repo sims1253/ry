@@ -1095,13 +1095,15 @@ impl Checker {
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
                 self.walk_block(body, &mut inner, returns.as_deref_mut());
-                let entered = iter_t.length == Length::One
-                    || matches!(iter_t.length, Length::Known(n) if n > 0);
+                let entered = !iter_t.length.may_be_empty();
                 if !entered {
                     // Over an empty sequence R skips the body and binds
                     // the loop variable to NULL, replacing any earlier
-                    // value: that is the zero-iteration exit state.
-                    scope.insert(name.clone(), RType::new(Mode::Null, Length::Zero));
+                    // value. That NULL appears nowhere in the source and
+                    // needs an empty input, which ry does not report on,
+                    // so the variable is unknown rather than a NULL union
+                    // that `if (i == n)` after the loop would flag.
+                    scope.insert(name.clone(), RType::unknown());
                 }
                 self.finish_loop(scope, inner, false, entered);
             }

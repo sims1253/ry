@@ -1486,3 +1486,12 @@ f <- function(x, i) {
   v <- lapply(x, function(e) "a")
   v[[i]] + 1
 }
+
+## case: the loop variable after a loop that may not run is quiet
+# no-diag
+# Over an empty sequence R binds `i` to NULL. That path needs an empty
+# input, so the later length-1 uses are not reported.
+last_match <- function(x) {
+  for (i in seq_along(x)) if (x[[i]] > 0) break
+  if (i == length(x)) "last" else switch(i, "first", "other")
+}

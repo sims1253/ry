@@ -56,7 +56,8 @@ fn callback_returns_do_not_reach_the_enclosing_scope_exit() {
 }
 
 // R 4.6.1: `f(0)` and `g(0)` leave `x` integer; `h(0)` and `h2(0)` leave
-// `i` NULL, replacing an earlier binding (#860).
+// `i` NULL, replacing an earlier binding (#860). ry makes no claim about
+// `i` then, rather than a NULL union that would drive length-0 findings.
 #[test]
 fn loops_that_may_not_run_keep_their_entry_state() {
     let exits = function_exits(
@@ -73,19 +74,22 @@ fn loops_that_may_not_run_keep_their_entry_state() {
     }
     for function in ["h", "h2", "b"] {
         let i = exit_type(&exits, function, "i");
-        assert!(admits(&i, Mode::Null), "{function}: {i:?}");
-        assert!(admits(&i, Mode::Integer), "{function}: {i:?}");
-        assert!(!admits(&i, Mode::Character), "{function}: {i:?}");
+        assert_eq!(i.mode, Mode::Opaque, "{function}: {i:?}");
     }
 }
 
 // R 4.6.1: `for (i in 1:3)` always runs, leaving `x` "character" and `i`
-// "integer".
+// "integer". So does a loop over `c(1L, y)`, whose length is at least one.
 #[test]
 fn loops_proven_to_run_keep_precise_exit_types() {
-    let exits = function_exits("k <- function() { x <- 1L; for (i in 1:3) x <- \"a\"; x }\n");
-    let x = exit_type(&exits, "k", "x");
-    assert_eq!(x.mode, Mode::Character, "{x:?}");
+    let exits = function_exits(
+        "k <- function() { x <- 1L; for (i in 1:3) x <- \"a\"; x }\n\
+         k2 <- function(y) { x <- 1L; for (i in c(1L, y)) x <- \"a\"; x }\n",
+    );
+    for function in ["k", "k2"] {
+        let x = exit_type(&exits, function, "x");
+        assert_eq!(x.mode, Mode::Character, "{function}: {x:?}");
+    }
     let i = exit_type(&exits, "k", "i");
     assert_eq!(i.mode, Mode::Integer, "{i:?}");
 }

@@ -928,3 +928,5 @@ expression: rows
       line: 1487
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
+- case: the loop variable after a loop that may not run is quiet
+  diagnostics: []

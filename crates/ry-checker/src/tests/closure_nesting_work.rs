@@ -17,10 +17,15 @@ type Shape = fn(usize) -> String;
 /// timing anything.
 #[test]
 fn nested_closure_work_grows_linearly_with_depth() {
-    let shapes: [(&str, Shape, usize); 6] = [
+    let shapes: [(&str, Shape, usize); 7] = [
         (
             "assigned",
             |n| format!("{}1{}", "f <- function() { ".repeat(n), " }".repeat(n)),
+            4,
+        ),
+        (
+            "bare statement",
+            |n| format!("{}1{}", "function() { ".repeat(n), " }".repeat(n)),
             4,
         ),
         (
@@ -82,6 +87,10 @@ fn nested_closure_work_grows_linearly_with_depth() {
     for (name, shape, step) in shapes {
         let walks = [1, 2, 3].map(|k| block_walks(&shape(k * step)));
         let (first, second) = (walks[1] - walks[0], walks[2] - walks[1]);
+        assert!(
+            first > 0,
+            "{name}: {walks:?} block walks do not grow with depth"
+        );
         assert!(
             2 * second <= 3 * first,
             "{name}: {walks:?} block walks at depths {step}, {}, {}",

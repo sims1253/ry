@@ -2223,11 +2223,16 @@ fn long_else_if_chain_is_checked_on_a_small_stack() {
             for source in sources {
                 let mut project = Project::new();
                 project.add_file("chain.R".to_string(), parse("chain.R", &source));
+                // Some sources nest deeper than R's 50-slot context stack,
+                // which R rejects and ry reports as RY000 (#841). This test
+                // is about the checker's own stack, so compare only the
+                // semantic findings.
                 let codes: Vec<_> = project
                     .check()
                     .into_iter()
                     .flat_map(|(_, diagnostics)| diagnostics)
                     .map(|diagnostic| diagnostic.code)
+                    .filter(|code| *code != "RY000")
                     .collect();
                 assert_eq!(codes, ["RY010"]);
             }

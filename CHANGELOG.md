@@ -6,17 +6,13 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
-- A `double_or_int` stub return follows every data argument. Logical
-  input is integer, as integer input is: `sum(c(TRUE, FALSE))`,
-  `abs(TRUE)` and `max(TRUE)` are integer, and so is `sum(1:3)`, which
-  was double because its `...` came before `na.rm`. Any double argument
-  makes the result double (`max(1L, 2.5)`). Character or complex input
-  leaves the mode unknown instead of double, since `max("a", "b")` is
-  character and `sum()` of a complex value is complex (#866).
-- `seq()` and `seq.int()` follow R's storage rules. `seq(1, 10)` is
-  `1:10` and integer, `seq(1, 10, by = 2)` is double, and a mode that
-  depends on unknown values is `integer | double`. Arguments match as R
-  matches them, so `seq(1, 10, length = 4)` has length 4, not 10 (#866).
+- `sum(c(TRUE, FALSE))`, `sum(1:3)`, `abs(TRUE)`, `max(TRUE)` and
+  `seq(1, 10)` are integer, as in R; all were double. A `double_or_int`
+  return follows every data argument: any double makes it double, and
+  character or complex input leaves it unknown. `seq()` follows
+  `seq.default`'s storage rules and is `integer | double` where the mode
+  depends on unknown values. Its arguments match as R matches them, so
+  `seq(1, 10, length = 4)` has length 4 (#866).
 
 ## [0.12.0] - 2026-11-01
 

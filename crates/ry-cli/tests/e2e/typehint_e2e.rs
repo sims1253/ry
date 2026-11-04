@@ -226,7 +226,8 @@ fn stub_class_tests_mark_union_member_and_column_classes() {
     }
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn native_filename_collision_cannot_attach_another_files_contract() {
     use std::ffi::OsString;
@@ -251,7 +252,8 @@ fn native_filename_collision_cannot_attach_another_files_contract() {
     assert_eq!(count(temp.path(), "RY117"), 0);
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
     use std::ffi::OsString;

@@ -19,3 +19,11 @@ const STACK_PER_GROW: usize = 2 * 1024 * 1024;
 pub fn grow<R>(f: impl FnOnce() -> R) -> R {
     stacker::maybe_grow(RED_ZONE, STACK_PER_GROW, f)
 }
+
+/// Run `f` with at least `bytes` of stack, switching to a fresh segment of
+/// that size when less remains. For recursion that a depth cap bounds but
+/// whose debug-build frames still outgrow a small thread stack, such as
+/// the 1 MiB main thread on Windows.
+pub fn with_at_least<R>(bytes: usize, f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(bytes, bytes, f)
+}

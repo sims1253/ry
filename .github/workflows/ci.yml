@@ -132,6 +132,9 @@ jobs:
       # repository together with the stubs; its CI covers them.
       - name: Oracle suite
         run: cargo test --locked -p ry-checker --test oracle --test semantic_lists -- --include-ignored --nocapture
+      - name: dump-facts oracle
+        # `# oracle-facts:` fixtures: R arbitrates ry's exported facts (#858).
+        run: cargo test --locked -p ry-cli --test e2e facts_oracle -- --include-ignored --nocapture
 
   # The Zed extension is excluded from the root workspace because
   # zed_extension_api does not follow ry's MSRV (CONTRIBUTING.md), so

@@ -246,7 +246,8 @@ pub fn unambiguous_native_display_path(native: &Path, display: &str) -> bool {
     true
 }
 
-#[cfg(all(test, unix))]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(test, unix, not(target_os = "macos")))]
 mod native_display_tests {
     use super::unambiguous_native_display_path;
     use std::os::unix::ffi::OsStringExt;
@@ -283,7 +284,7 @@ pub fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
     let absolute = std::path::absolute(path).ok()?;
     let mut suffix = Vec::new();
     for ancestor in absolute.ancestors() {
-        match ancestor.canonicalize() {
+        match dunce::canonicalize(ancestor) {
             Ok(mut resolved) => {
                 for component in suffix.into_iter().rev() {
                     match component {
@@ -1177,14 +1178,20 @@ paths = ["inst/shiny/**"]
     #[test]
     fn typeshed_paths_are_resolved_from_config_directory() {
         let tmp = TempDir::new().unwrap();
+        // `/absolute-stubs` is only drive-relative on Windows.
+        let absolute = if cfg!(windows) {
+            "C:/absolute-stubs"
+        } else {
+            "/absolute-stubs"
+        };
         fs::write(
             tmp.path().join(CONFIG_FILENAME),
-            "typeshed = [\"relative-stubs\", \"/absolute-stubs\"]\n",
+            format!("typeshed = [\"relative-stubs\", \"{absolute}\"]\n"),
         )
         .unwrap();
         let cfg = Config::load_from_dir(tmp.path()).unwrap().unwrap();
         assert_eq!(cfg.typeshed[0], tmp.path().join("relative-stubs"));
-        assert_eq!(cfg.typeshed[1], PathBuf::from("/absolute-stubs"));
+        assert_eq!(cfg.typeshed[1], PathBuf::from(absolute));
     }
 
     #[test]

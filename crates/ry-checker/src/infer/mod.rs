@@ -2363,9 +2363,9 @@ impl Checker {
         // binding (the `narrow_away_from_null` member scan is that set's
         // cheap encoding), a binding an arm narrowed to an unknown
         // value, or one whose length bound an arm raised: exactly what
-        // `union_guard_continuation_refinement` admits. Guard-free `if`s and other guards keep their previous
-        // cost: for them it returns `None` regardless of the divergence
-        // flags.
+        // `union_guard_continuation_refinement` admits. Guard-free `if`s
+        // and other guards keep their previous cost: for them it returns
+        // `None` regardless of the divergence flags.
         let guard_may_refine = narrowed.iter().any(|name| {
             let original = scope.get(name);
             original.is_some_and(|original| narrow_away_from_null(original).is_some())

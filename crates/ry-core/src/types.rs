@@ -1049,7 +1049,9 @@ impl RType {
     pub fn join(self, other: RType) -> RType {
         if self.mode.is_unknown() || other.mode.is_unknown() {
             // A length above one that both sides prove survives the
-            // unknown mode (issue #838). Weaker lengths stay unknown.
+            // unknown mode (issue #838). Weaker lengths (`Nonempty`)
+            // stay unknown, as before, so ordinary opaque joins keep
+            // their type; only the bounds RY001/RY002 read are kept.
             let length = self.length.join(other.length);
             return RType {
                 length: if length.proven_above_one() {

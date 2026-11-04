@@ -275,39 +275,48 @@ mod native_display_tests {
     }
 }
 
-/// `std::fs::canonicalize` with one spelling per path. On Windows std
-/// returns the verbatim `\\?\C:\...` form, which leaks into messages.
-/// `dunce` drops the prefix when the plain form names the same file, but
-/// also keeps it on any path over MAX_PATH (260 characters), so a short
-/// root and its deep descendant got different spellings and stopped
-/// prefix-matching (#880). Length is not needed for the plain form to name
-/// the same file: std adds the prefix back itself when opening a long path.
+/// `std::fs::canonicalize` without Windows' verbatim `\\?\` prefix when
+/// the plain path names the same file, so the prefix stays out of messages.
+/// Path length does not matter: std adds the prefix back when it opens a
+/// long path, and a deep source must keep prefix-matching its short root.
 pub fn canonical_path(path: &Path) -> std::io::Result<PathBuf> {
     let resolved = std::fs::canonicalize(path)?;
     Ok(plain_disk_path(&resolved).unwrap_or(resolved))
 }
 
-/// `\\?\C:\a\b` as `C:\a\b` when each name means the same in plain
-/// form. Only Windows parses the prefix, so elsewhere this is `None`.
+/// `\\?\C:\a\b` as `C:\a\b` when Win32 reads every name back unchanged.
+/// Only Windows parses the prefix, so elsewhere this is `None`.
 fn plain_disk_path(path: &Path) -> Option<PathBuf> {
     use std::path::{Component, Prefix};
+    const DEVICES: [&str; 22] = [
+        "AUX", "CON", "NUL", "PRN", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
 
     let mut components = path.components();
     match components.next() {
         Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::VerbatimDisk(_)) => {}
         _ => return None,
     }
-    // dunce's name rules (reserved DOS names, trailing dots, ...), applied
-    // to one name at a time so its length limit never applies.
-    let plain_names = components.all(|component| match component {
+    // Win32 trims trailing dots and spaces, reads `:` as a stream separator,
+    // and reads `con`, `nul.txt`, `com1 .R`, ... as devices.
+    let plain = components.all(|component| match component {
         Component::RootDir => true,
-        Component::Normal(name) => {
-            let probe = Path::new(r"\\?\C:\").join(name);
-            dunce::simplified(&probe) != probe
-        }
+        Component::Normal(name) => name.to_str().is_some_and(|name| {
+            let stem = name
+                .split('.')
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches(' ');
+            !name.ends_with(['.', ' '])
+                && !name.contains(|c: char| c < ' ' || r#"<>:"/\|?*"#.contains(c))
+                && !DEVICES
+                    .iter()
+                    .any(|device| stem.eq_ignore_ascii_case(device))
+        }),
         _ => false,
     });
-    if !plain_names {
+    if !plain {
         return None;
     }
     path.to_str()?.strip_prefix(r"\\?\").map(PathBuf::from)
@@ -983,13 +992,17 @@ paths = ["inst/shiny/**"]
     #[cfg(windows)]
     #[test]
     fn plain_disk_paths_ignore_length_but_keep_names_win32_would_change() {
-        let long = format!(r"C:\{}\{}\a.R", "d".repeat(150), "e".repeat(150));
+        // NTFS allows names of up to 255 characters.
+        let long = format!(r"C:\{}\{}\a.R", "d".repeat(255), "e".repeat(150));
         assert_eq!(
             super::plain_disk_path(Path::new(&format!(r"\\?\{long}"))),
             Some(PathBuf::from(long))
         );
         for verbatim in [
             r"\\?\C:\pkg\CON\a.R",
+            r"\\?\C:\pkg\nul.tar.gz",
+            r"\\?\C:\pkg\com1 .R",
+            r"\\?\C:\pkg\a.R:stream",
             r"\\?\C:\pkg\dir.\a.R",
             r"\\?\C:\pkg\dir \a.R",
             r"\\?\UNC\server\share\a.R",

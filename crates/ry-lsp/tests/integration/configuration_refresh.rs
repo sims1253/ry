@@ -363,24 +363,27 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
         let patterns = &request["params"]["registrations"][0]["registerOptions"]["watchers"];
         let pattern = &patterns.as_array().unwrap().last().unwrap()["globPattern"];
         if relative {
+            // The folder URI names the resolved directory (see `file_uri`).
             assert_eq!(
                 pattern["baseUri"],
-                initial
-                    .parent()
-                    .and_then(|p| tower_lsp::lsp_types::Url::from_directory_path(p).ok())
-                    .unwrap()
-                    .to_string()
+                format!("{}/", file_uri(initial.parent().unwrap()))
             );
             assert_eq!(pattern["pattern"], "custom[[]1[]].toml");
         } else {
+            let resolved = tower_lsp::lsp_types::Url::parse(&file_uri(&initial))
+                .unwrap()
+                .to_file_path()
+                .unwrap();
+            let resolved = resolved.to_string_lossy();
+            // String patterns use `/` on every platform.
+            let resolved = if cfg!(windows) {
+                resolved.replace('\\', "/")
+            } else {
+                resolved.into_owned()
+            };
             assert_eq!(
                 pattern,
-                &json!(
-                    initial
-                        .to_string_lossy()
-                        .replace('[', "[[]")
-                        .replace("1]", "1[]]")
-                )
+                &json!(resolved.replace('[', "[[]").replace("1]", "1[]]"))
             );
         }
         let initial_diagnostics = harness::open_published(&mut session, &uri, 1, source).await;
@@ -433,7 +436,14 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
             );
             assert_eq!(pattern["pattern"], "replacement.toml");
         } else {
-            assert_eq!(pattern, &json!(replacement));
+            // String patterns use `/` on every platform.
+            let expected = replacement.to_string_lossy();
+            let expected = if cfg!(windows) {
+                expected.replace('\\', "/")
+            } else {
+                expected.into_owned()
+            };
+            assert_eq!(pattern, &json!(expected));
         }
         let after = session
             .published_diagnostics_after(&uri, mark)
@@ -450,6 +460,56 @@ async fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
         assert_eq!(count_code(&after, "RY010"), 0);
         harness::join_session(session, server).await;
     }
+}
+
+/// A configuration file named through a symlink still reloads when the
+/// client reports the change under its resolved path, as for macOS's
+/// `/var` or a Windows 8.3 alias.
+#[cfg(unix)]
+#[tokio::test]
+async fn custom_configuration_reloads_when_events_name_the_resolved_path() {
+    let fixture = FixtureProject::empty().unwrap();
+    let outside = FixtureProject::empty().unwrap();
+    let real = outside
+        .write_file("real/custom.toml", "ignore = [\"RY010\"]\n")
+        .unwrap();
+    let alias = fixture.path("alias");
+    std::os::unix::fs::symlink(real.parent().unwrap(), &alias).unwrap();
+    let source = "x <- never_bound_here\n";
+    let path = fixture.write_file("main.R", source).unwrap();
+    let uri = file_uri(&path);
+    let (mut session, server) = spawn_session(
+        &[fixture.root()],
+        json!({"workspace": {
+            "configuration": true,
+            "didChangeWatchedFiles": {"dynamicRegistration": true, "relativePatternSupport": true}
+        }}),
+        None,
+    )
+    .await;
+    session
+        .respond_to_request(
+            "workspace/configuration",
+            json!([{"configuration": alias.join("custom.toml")}, {}]),
+        )
+        .await
+        .unwrap();
+    session
+        .respond_to_request("client/registerCapability", json!(null))
+        .await
+        .unwrap();
+    let initial = harness::open_published(&mut session, &uri, 1, source).await;
+    assert_eq!(count_code(&initial, "RY010"), 0);
+
+    std::fs::write(&real, "ignore = []\n").unwrap();
+    let mark = session.publication_mark();
+    notify_changed(&mut session, &file_uri(&real)).await;
+    let after = session
+        .published_diagnostics_after(&uri, mark)
+        .await
+        .unwrap();
+    assert_eq!(count_code(&after, "RY010"), 1);
+    harness::join_session(session, server).await;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

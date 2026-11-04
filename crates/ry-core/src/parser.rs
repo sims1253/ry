@@ -1581,10 +1581,6 @@ fn unexpected_token(node: Node, src: &str) -> String {
 /// (`x |> _$a`, `` x |> `[[`(_, 1) ``, R 4.3+). R rejects every other `_` at parse time; the
 /// messages mirror R 4.6.1's.
 fn placeholder_violation(node: Node, src: &str) -> Option<&'static str> {
-    // `x |> _` is already reported by the pipe-RHS shape check.
-    if is_pipe_rhs(node) {
-        return None;
-    }
     let mut top = node;
     while let Some(up) = extraction_parent(top, src) {
         top = up;
@@ -1615,15 +1611,19 @@ fn placeholder_violation(node: Node, src: &str) -> Option<&'static str> {
         if !in_pipe_call {
             return Some("syntax error: invalid use of pipe placeholder");
         }
-        if parent.child_by_field_name("name").is_none() {
-            return Some("syntax error: pipe placeholder can only be used as a named argument");
-        }
+        // R checks the count before the argument name.
         let mut cursor = arguments.walk();
         let earlier = arguments
             .named_children(&mut cursor)
             .take_while(|arg| *arg != parent)
             .any(|arg| is_placeholder_argument(arg, src));
-        return earlier.then_some("syntax error: pipe placeholder may only appear once");
+        if earlier {
+            return Some("syntax error: pipe placeholder may only appear once");
+        }
+        return parent
+            .child_by_field_name("name")
+            .is_none()
+            .then_some("syntax error: pipe placeholder can only be used as a named argument");
     }
     Some("syntax error: invalid use of pipe placeholder")
 }

@@ -707,6 +707,7 @@ fn native_pipe_placeholder_discipline_matches_base_r() {
         ("1 |> f(x = _ + 1)", invalid),
         ("1 |> f(y = _$a)", invalid),
         ("1 |> f(y, x = _, z = _)", once),
+        ("1 |> f(x = _, _)", once),
         ("1 |> _[[1]](x)", head),
         ("1 |> _$f()", head),
         ("1 |> `+`(_, 1)", named),
@@ -728,6 +729,15 @@ fn native_pipe_placeholder_discipline_matches_base_r() {
             .collect();
         assert_eq!(messages, [message], "{source}");
         assert!(file.syntax_violations[0].misparsed, "{source}");
+    }
+    // A bare `_` RHS (`x |> _`, `x |> (_)`) is reported by the pipe-shape
+    // check, and the misread `_` still marks it misparsed.
+    for source in ["x |> _", "x |> (_)"] {
+        let file = parse(source);
+        let [violation] = file.syntax_violations.as_slice() else {
+            panic!("{source}: {:?}", file.syntax_violations);
+        };
+        assert!(violation.misparsed, "{source}");
     }
     // Accepted by R 4.6.1: one named `_` per pipe call, and `_`-rooted
     // extraction chains as the whole RHS.

@@ -693,6 +693,13 @@ async fn cli_lsp_discovery_set_equality() {
         cli_diags.iter().map(|d| d.path.clone()).collect();
 
     let root_uri = file_uri(root);
+    // The server sees the resolved root (`/private/var/...` for macOS's
+    // `/var` temp dir, a long name for an 8.3 Windows one), so published
+    // URIs are relativized against that root rather than `root`.
+    let lsp_root = tower_lsp::lsp_types::Url::parse(&root_uri)
+        .unwrap()
+        .to_file_path()
+        .unwrap();
     let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
     let (client_reader, client_writer) = tokio::io::split(client_stream);
     let (server_reader, server_writer) = tokio::io::split(server_stream);
@@ -731,8 +738,11 @@ async fn cli_lsp_discovery_set_equality() {
             return;
         }
         if let Some(uri) = message.pointer("/params/uri").and_then(Value::as_str) {
-            let path = uri.strip_prefix("file://").unwrap_or(uri);
-            lsp_uris.insert(normalize_path(Path::new(path), root));
+            let path = tower_lsp::lsp_types::Url::parse(uri)
+                .unwrap()
+                .to_file_path()
+                .unwrap();
+            lsp_uris.insert(normalize_path(path, &lsp_root));
         }
     };
     // Wait for every path the CLI found, with a deadline. An idle gap between

@@ -35,10 +35,20 @@ async fn notice_after(session: &mut ClientSession, mark: u64, reason: &str) {
         .unwrap();
     assert_eq!(notice["params"]["type"], 2);
     assert!(
-        notice["params"]["message"]
+        notice["params"]["message"].as_str().unwrap().contains(
+            &std::path::Path::new("R")
+                .join("sysdata.rda")
+                .display()
+                .to_string()
+        ),
+        "{notice}"
+    );
+    // A resolved package root must not leak Windows' verbatim `\\?\` form.
+    assert!(
+        !notice["params"]["message"]
             .as_str()
             .unwrap()
-            .contains("R/sysdata.rda"),
+            .contains(r"\\?\"),
         "{notice}"
     );
 }

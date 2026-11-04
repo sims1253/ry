@@ -52,9 +52,7 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
             } else {
                 ancestor
             };
-            ancestor
-                .canonicalize()
-                .unwrap_or_else(|_| ancestor.to_path_buf())
+            dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf())
         })
 }
 
@@ -581,7 +579,8 @@ pub fn resolve_workspace_context(
                     degraded.insert((path.clone(), *reason));
                 }
             }
-            let sysdata = root.join("R/sysdata.rda");
+            // Per component, so Windows notices name `R\sysdata.rda`.
+            let sysdata = root.join("R").join("sysdata.rda");
             // This file is optional. The inventory's single open decides
             // absence; a separate existence probe would race that open.
             if let Some(inventory) = serialized_inventory(&sysdata, max_serialized_bytes) {
@@ -724,7 +723,7 @@ fn package_relative_path(path: &Path, root: &Path) -> Option<PathBuf> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let path = parent.canonicalize().ok()?.join(path.file_name()?);
+    let path = dunce::canonicalize(parent).ok()?.join(path.file_name()?);
     path.strip_prefix(root).ok().map(Path::to_path_buf)
 }
 
@@ -791,7 +790,7 @@ fn visit_r_sources(
             continue;
         }
         visit(file);
-        if let Ok(identity) = Path::new(&file.path).canonicalize() {
+        if let Ok(identity) = dunce::canonicalize(&file.path) {
             supplied.insert(identity);
         }
     }
@@ -799,7 +798,7 @@ fn visit_r_sources(
         return;
     };
     for path in paths {
-        let Ok(identity) = path.canonicalize() else {
+        let Ok(identity) = dunce::canonicalize(&path) else {
             continue;
         };
         if supplied.contains(&identity) {
@@ -1757,7 +1756,7 @@ mod package_grouping_tests {
             format!("Package: {name}\nVersion: 0.0.1\n"),
         )
         .unwrap();
-        root.canonicalize().unwrap()
+        dunce::canonicalize(root).unwrap()
     }
 
     /// Files group by nearest `DESCRIPTION` ancestor: each package's

@@ -146,7 +146,16 @@ fn cached_inventory(path: &Path, cap: u64, file: File) -> SerializedInventory {
     }
 }
 
+/// Stack reserved for one parse. The parser and the tag walker recurse to a
+/// fixed depth cap, which a 2 MiB worker holds but Windows' 1 MiB main
+/// thread does not in debug builds.
+const PARSE_STACK: usize = 4 * 1024 * 1024;
+
 fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
+    ry_core::stack::with_at_least(PARSE_STACK, || parse_serialized(file, cap))
+}
+
+fn parse_serialized(file: File, cap: u64) -> SerializedInventory {
     let bytes = match read_serialized(file, cap) {
         Ok(bytes) => bytes,
         Err(failure) => return unavailable(failure),
@@ -956,6 +965,31 @@ mod tests {
         let repaired = serialized_inventory(&path, cap).unwrap();
         assert_eq!(repaired.failure, None);
         assert!(repaired.bindings.is_empty());
+    }
+
+    /// Windows runs `ry check` on a 1 MiB main thread. The depth-capped
+    /// parse of a deeply nested stream must fail cleanly there, not
+    /// overflow the stack.
+    #[test]
+    fn deep_nesting_degrades_on_a_one_mebibyte_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sysdata.rda");
+        std::fs::write(
+            &path,
+            include_bytes!("../../../testdata/serialized/nested-deep.rda"),
+        )
+        .unwrap();
+        let inventory = std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(move || serialized_inventory(&path, 1 << 20))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            inventory.failure,
+            Some(InventoryFailure::ParserResourceLimit)
+        );
     }
 
     #[test]

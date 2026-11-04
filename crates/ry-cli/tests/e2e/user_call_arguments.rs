@@ -79,7 +79,10 @@ fn project_calls_are_checked_against_unambiguous_definitions() {
             let path = diagnostic["path"].as_str().unwrap();
             format!(
                 "{}:{} {} {}",
-                path.rsplit('/').next().unwrap(),
+                std::path::Path::new(path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy(),
                 diagnostic["line"],
                 diagnostic["code"].as_str().unwrap(),
                 diagnostic["message"].as_str().unwrap(),

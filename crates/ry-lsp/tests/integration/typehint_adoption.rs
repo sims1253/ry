@@ -10,7 +10,8 @@ use serde_json::json;
 const ADOPT: &str = "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n";
 
 /// Two native filenames that share the display path `R/bad\u{fffd}.R`.
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 fn colliding_paths(fixture: &FixtureProject) -> [std::path::PathBuf; 2] {
     use std::os::unix::ffi::OsStringExt;
     [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()].map(|name| {
@@ -104,7 +105,8 @@ async fn annotation_only_editor_edits_retract_and_restore_mismatch() {
     join_session(session, server).await;
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn native_filename_and_unicode_collision_never_adopt_the_wrong_contract() {
     use std::os::unix::ffi::OsStringExt;
@@ -230,7 +232,8 @@ async fn native_filename_and_unicode_collision_never_adopt_the_wrong_contract() 
     join_session(session, server).await;
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn change_transition_to_collision_keeps_the_edit_with_its_original_uri() {
     use std::time::Duration;
@@ -374,7 +377,8 @@ async fn change_waiting_on_a_close_cannot_recreate_the_closed_document() {
     join_session(session, server).await;
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn same_version_collision_rejects_a_parse_from_the_previous_uri() {
     use std::time::Duration;
@@ -467,7 +471,8 @@ async fn sole_genuine_unicode_replacement_filename_adopts_normally() {
     join_session(session, server).await;
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn two_native_uris_keep_distinct_publication_and_survivor_ownership() {
     use std::time::Duration;
@@ -599,7 +604,8 @@ async fn two_native_uris_keep_distinct_publication_and_survivor_ownership() {
     }
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn ineligible_collision_clears_all_actual_open_uris() {
     use std::os::unix::ffi::OsStringExt;
@@ -650,7 +656,8 @@ async fn ineligible_collision_clears_all_actual_open_uris() {
     join_session(session, server).await;
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn mixed_content_collision_reports_only_the_uri_with_a_clause() {
     use std::time::Duration;
@@ -757,7 +764,8 @@ async fn mixed_content_collision_reports_only_the_uri_with_a_clause() {
     }
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn colliding_buffers_apply_size_cap_to_each_original_source() {
     use std::time::Duration;
@@ -875,7 +883,8 @@ async fn colliding_buffers_apply_size_cap_to_each_original_source() {
     }
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn colliding_buffers_keep_independent_suppression_and_version() {
     use std::time::Duration;
@@ -940,7 +949,8 @@ async fn colliding_buffers_keep_independent_suppression_and_version() {
     join_session(session, server).await;
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn aborted_collision_edits_keep_active_uri_and_valid_prefix_still_commits() {
     use std::time::Duration;
@@ -1019,7 +1029,8 @@ async fn aborted_collision_edits_keep_active_uri_and_valid_prefix_still_commits(
     join_session(session, server).await;
 }
 
-#[cfg(unix)]
+// APFS rejects non-UTF-8 filenames (EILSEQ), so the fixture cannot exist on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[tokio::test]
 async fn colliding_sources_cannot_offer_other_buffers_quickfix() {
     use std::time::Duration;

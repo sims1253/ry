@@ -4455,44 +4455,26 @@ impl Checker {
                                 format!("cannot apply `!` to `{}`", t.mode),
                             );
                         }
-                        // `!` on raw is bitwise and stays raw; a union with
-                        // a raw member takes each member's result and class.
-                        // Other unions stay one logical of the union's
-                        // length, exported as unknown when a member is
-                        // classed.
-                        let negated = |operand: &RType| {
-                            let mode = if operand.mode == Mode::Raw {
-                                Mode::Raw
-                            } else {
-                                Mode::Logical
-                            };
-                            let mut result = RType::new(mode, operand.length);
-                            if let Some(class) =
-                                self.unary_fallback_class(*op, operand, mode, scope)
-                            {
-                                result.class = class;
-                            }
-                            result
-                        };
-                        match (&t.mode, &t.members) {
-                            (Mode::Union, Some(members))
-                                if members.iter().any(|member| member.mode == Mode::Raw) =>
-                            {
-                                members
-                                    .iter()
-                                    .map(negated)
-                                    .reduce(RType::join)
-                                    .expect("the guard found a raw member")
-                            }
-                            (Mode::Union, Some(members)) => {
-                                let mut result = negated(&t);
-                                if !members.iter().all(|member| member.class.is_classless()) {
-                                    result.class = ClassVector::storage_proxy();
-                                }
-                                result
-                            }
-                            _ => negated(&t),
+                        // `!` on raw is bitwise and stays raw. An operand
+                        // that may be raw or logical has no single mode.
+                        if t.mode == Mode::Union
+                            && t.members
+                                .iter()
+                                .flat_map(|members| members.iter())
+                                .any(|member| member.mode == Mode::Raw)
+                        {
+                            return RType::unknown();
                         }
+                        let mode = if t.mode == Mode::Raw {
+                            Mode::Raw
+                        } else {
+                            Mode::Logical
+                        };
+                        let mut result = RType::new(mode, t.length);
+                        if let Some(class) = self.unary_fallback_class(*op, &t, mode, scope) {
+                            result.class = class;
+                        }
+                        result
                     }
                 }
             }

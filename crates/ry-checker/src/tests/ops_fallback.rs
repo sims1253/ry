@@ -329,32 +329,23 @@ fn methodless_unary_ops_keep_the_class_when_the_storage_mode_stays() {
 }
 
 #[test]
-fn unary_not_takes_each_union_members_result() {
-    // `!` on a raw value is raw, so a raw-or-logical operand may be either.
+fn unary_ops_on_unions_claim_no_class_or_mode_they_cannot_prove() {
+    // `!` on raw is raw, so a raw-or-logical operand has no single mode.
     let (_, scope) = check_with_scope("x <- if (runif(1) > 0.5) as.raw(1) else TRUE\nout <- !x");
-    let result = scope.get("out").unwrap();
-    let mut modes: Vec<_> = result
-        .members
-        .as_ref()
-        .expect("a union result")
-        .iter()
-        .map(|member| format!("{:?}", member.mode))
-        .collect();
-    modes.sort();
-    assert_eq!(modes, ["Logical", "Raw"], "{result:?}");
-
-    // Each member keeps its class when `!` keeps its storage mode, and a
-    // classed union on the single-logical path exports an unknown class.
-    let (_, scope) = check_with_scope(
-        "x <- if (runif(1) > 0.5) as.raw(1) else structure(TRUE, class = 'foo')\nout <- !x",
-    );
-    let members = scope.get("out").unwrap().members.clone().expect("a union");
-    let logical = members.iter().find(|m| m.mode == Mode::Logical).unwrap();
-    assert_eq!(logical.class, ClassVector::single("foo"), "{members:?}");
-    let (_, scope) = check_with_scope(
+    assert_eq!(scope.get("out").unwrap(), &RType::unknown());
+    // A classed member's class may survive either operator, including a
+    // member whose class only a base method decides (`-Sys.time()`).
+    for source in [
         "x <- if (runif(1) > 0.5) NULL else structure(TRUE, class = 'foo')\nout <- !x",
-    );
-    assert!(!scope.get("out").unwrap().class.export_known());
+        "x <- if (runif(1) > 0.5) TRUE else -Sys.time()\nout <- !x",
+        "x <- if (runif(1) > 0.5) structure(1, class = 'foo') else 1L\nout <- -x",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert!(!scope.get("out").unwrap().class.export_known(), "{source}");
+    }
+    // A classless union keeps its known empty class.
+    let (_, scope) = check_with_scope("x <- if (runif(1) > 0.5) TRUE else NA\nout <- !x");
+    assert!(scope.get("out").unwrap().class.export_known());
 }
 
 #[test]

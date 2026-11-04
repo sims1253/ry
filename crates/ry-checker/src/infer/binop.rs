@@ -472,8 +472,19 @@ impl Checker {
             UnaryOpKind::Neg => "-",
             UnaryOpKind::Not => "!",
         };
-        if operand.mode == Mode::Union || result_mode.is_unknown() {
+        if result_mode.is_unknown() {
             return None;
+        }
+        // Union members reach the primitive undispatched, and a classed
+        // member's class may survive, so only a provably classless union
+        // keeps a known class.
+        if operand.mode == Mode::Union {
+            let classed = operand
+                .members
+                .iter()
+                .flat_map(|members| members.iter())
+                .any(|member| member.class.storage_proxy || !member.class.is_classless());
+            return classed.then(ClassVector::storage_proxy);
         }
         Some(if self.ops_method_may_apply(symbol, operand, scope) {
             ClassVector::storage_proxy()

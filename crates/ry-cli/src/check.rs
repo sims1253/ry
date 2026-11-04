@@ -269,7 +269,7 @@ pub(crate) fn run_check(
         config::write_baseline_file(path, &result.diagnostics, state.config_root())?;
         // The run's own baseline write is not an edit to react to.
         if watch {
-            let identity = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            let identity = |p: &Path| config::canonical_path(p).unwrap_or_else(|_| p.to_path_buf());
             let written = identity(path);
             for (watched, stamp) in &mut config_stamps {
                 if identity(watched) == written {
@@ -1204,13 +1204,13 @@ fn source_parent(path: &std::path::Path) -> &std::path::Path {
 fn source_identity(path: &std::path::Path) -> Result<PathBuf> {
     use miette::IntoDiagnostic;
 
-    match dunce::canonicalize(path) {
+    match config::canonical_path(path) {
         Ok(identity) => Ok(identity),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let name = path
                 .file_name()
                 .ok_or_else(|| miette::miette!("--stdin-filename must end in a source filename"))?;
-            let parent = dunce::canonicalize(source_parent(path)).map_err(|error| {
+            let parent = config::canonical_path(source_parent(path)).map_err(|error| {
                 miette::miette!(
                     "cannot resolve parent of --stdin-filename {}: {error}",
                     path.display()

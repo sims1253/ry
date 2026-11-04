@@ -555,11 +555,14 @@ fn native_pipe_rhs_matrix_matches_base_r() {
             "{source}: rejected by R's parser but not flagged"
         );
         // Every violation must carry the exact R-verified message shape
-        // and stay inside the source bounds.
+        // and stay inside the source bounds. The trailing `1` in
+        // `` 1 |> `while`(x) 1 `` is a second expression on the same
+        // line, which R rejects too once it gets past the pipe.
         for violation in &file.syntax_violations {
             assert!(
                 violation.message
                     == "syntax error: the pipe operator requires a function call as RHS"
+                    || violation.message == "syntax error: unexpected numeric constant"
                     || (violation.message.starts_with("syntax error: function '")
                         && violation
                             .message
@@ -689,25 +692,267 @@ fn nul_byte_outside_a_comment_stays_a_parse_error() {
     }
 }
 
-/// The placeholder-discipline forms R 4.6 rejects at parse time
-/// (`f(_)`, nested or repeated `_`, `_` in the call's function part)
-/// are deliberately NOT flagged yet: those rules are R 4.2+ semantics
-/// and need their own precision case. This test pins the current
-/// behavior so widening it later is a conscious decision.
+/// The placeholder-discipline forms R 4.6 rejects at parse time, each
+/// with R 4.6.1's message (`Rscript --vanilla -e 'parse(text = ...)'`).
 #[test]
-fn native_pipe_placeholder_discipline_is_currently_unflagged() {
+fn native_pipe_placeholder_discipline_matches_base_r() {
+    let named = "syntax error: pipe placeholder can only be used as a named argument";
+    let invalid = "syntax error: invalid use of pipe placeholder";
+    let once = "syntax error: pipe placeholder may only appear once";
+    let head = "syntax error: pipe placeholder cannot be used in the RHS function";
+    for (source, message) in [
+        ("1 |> f(_)", named),
+        ("1 |> f(y, _)", named),
+        ("1 |> f(g(_))", invalid),
+        ("1 |> f(x = _ + 1)", invalid),
+        ("1 |> f(y = _$a)", invalid),
+        ("1 |> f(y, x = _, z = _)", once),
+        ("1 |> f(x = _, _)", once),
+        ("1 |> _[[1]](x)", head),
+        ("1 |> _$f()", head),
+        ("1 |> `+`(_, 1)", named),
+        ("1 |> `[[`(a, _)", named),
+        ("1 |> `$`(_, a)(1)", head),
+        ("1 |> f(y = `[[`(_, 1))", invalid),
+        ("_", invalid),
+        ("x <- _", invalid),
+        ("f(x = _)", invalid),
+        ("_ |> f()", invalid),
+        ("x %>% f(_)", invalid),
+        ("~ _", invalid),
+    ] {
+        let file = parse(source);
+        let messages: Vec<_> = file
+            .syntax_violations
+            .iter()
+            .map(|v| v.message.as_str())
+            .collect();
+        assert_eq!(messages, [message], "{source}");
+        assert!(file.syntax_violations[0].misparsed, "{source}");
+    }
+    // A bare `_` RHS (`x |> _`, `x |> (_)`) is reported by the pipe-shape
+    // check, and the misread `_` still marks it misparsed.
+    for source in ["x |> _", "x |> (_)"] {
+        let file = parse(source);
+        let [violation] = file.syntax_violations.as_slice() else {
+            panic!("{source}: {:?}", file.syntax_violations);
+        };
+        assert!(violation.misparsed, "{source}");
+    }
+    // Accepted by R 4.6.1: one named `_` per pipe call, and `_`-rooted
+    // extraction chains as the whole RHS.
     for source in [
-        "1 |> f(_)",
-        "1 |> f(y, _)",
-        "1 |> f(g(_))",
-        "1 |> f(x = _ + 1)",
-        "1 |> f(y, x = _, z = _)",
-        "1 |> _[[1]](x)",
+        "x |> f(y = _)",
+        "x |> base::f(y = _)",
+        "x |> (f)(y = _)",
+        "x |> f(1)(y = _)",
+        "x |> f(y = _, ...)",
+        "x |> f(y = _) |> g(z = _)",
+        "x |> f(y = x |> g(z = _))",
+        "x |> _$a$b",
+        "x |> _[[1]]$b",
+        "x |> f(`_`)",
+        "`_` <- 1",
+        "x$`_`",
+        // R fills in `_` before its special-head check.
+        "x |> `+`(e1 = _, e2 = 1)",
+        "x |> `[`(x = _, 1)",
+        "x |> return(x = _)",
+        "x |> \"+\"(e1 = _, 1)",
+        // A call spelling an extractor is R's AST for `_[...]`, `_$a`
+        // (moranajp ships `` x |> `[[`(_, "en") ``).
+        "x |> `[[`(_, \"en\")",
+        "x |> `[`(_, 1)",
+        "x |> \"$\"(_, a)",
+        "x |> `[[`(x = _, 1)$a",
+        "x |> `[[`(`$`(_, a), 1)",
+        "x |> `[`(_, 1)[2]",
+        "x |> `[[`(_, 1)$a",
     ] {
         let file = parse(source);
         assert!(
+            file.syntax_violations.is_empty(),
+            "{source}: {:?}",
+            file.syntax_violations
+        );
+    }
+}
+
+/// Syntax tree-sitter accepts but R 4.6.1's `parse()` rejects (#841),
+/// each with the message ry reports. Every source was checked with
+/// `Rscript --vanilla -e 'parse(text = ...)'`, as were the accepted
+/// neighbours below, which must stay clean.
+#[test]
+fn r_parse_rejections_match_base_r() {
+    let deep =
+        |open: &str, close: &str, n: usize| format!("x <- {}1{}", open.repeat(n), close.repeat(n));
+    let overflow =
+        "syntax error: contextstack overflow: R's parser allows at most 49 nested brackets";
+    let rejected: Vec<(String, &str, bool)> = vec![
+        (
+            "function(x, x) 1".into(),
+            "syntax error: repeated formal argument 'x'",
+            false,
+        ),
+        (
+            "\\(x, y, x) 1".into(),
+            "syntax error: repeated formal argument 'x'",
+            false,
+        ),
+        (
+            "function(x, `x`) 1".into(),
+            "syntax error: repeated formal argument 'x'",
+            false,
+        ),
+        (
+            "function(..., ...) 1".into(),
+            "syntax error: repeated formal argument '...'",
+            false,
+        ),
+        (
+            "fjkdsfa 2".into(),
+            "syntax error: unexpected numeric constant",
+            true,
+        ),
+        ("a b".into(), "syntax error: unexpected symbol", true),
+        (
+            "a \"s\"".into(),
+            "syntax error: unexpected string constant",
+            true,
+        ),
+        ("a NULL".into(), "syntax error: unexpected 'NULL'", true),
+        (
+            "a function() 1".into(),
+            "syntax error: unexpected 'function'",
+            true,
+        ),
+        ("{ a b }".into(), "syntax error: unexpected symbol", true),
+        (
+            "b <- call() {\n  d\n}".into(),
+            "syntax error: unexpected '{'",
+            true,
+        ),
+        (
+            "if (TRUE) 1\nelse 2".into(),
+            "syntax error: unexpected 'else'",
+            true,
+        ),
+        (
+            "f <- function() if (TRUE) 1\nelse 2".into(),
+            "syntax error: unexpected 'else'",
+            true,
+        ),
+        (
+            "x <- '\\q'".into(),
+            "syntax error: '\\q' is an unrecognized escape in character string",
+            false,
+        ),
+        (
+            "x <- \"\\.\"".into(),
+            "syntax error: '\\.' is an unrecognized escape in character string",
+            false,
+        ),
+        (
+            "f(\"\\d\" = 1)".into(),
+            "syntax error: '\\d' is an unrecognized escape in character string",
+            false,
+        ),
+        (
+            "x <- \"a\\0b\"".into(),
+            "syntax error: nul character not allowed",
+            false,
+        ),
+        (
+            "x <- \"a\\000\"".into(),
+            "syntax error: nul character not allowed",
+            false,
+        ),
+        (
+            "x <- \"a\\x00\"".into(),
+            "syntax error: nul character not allowed",
+            false,
+        ),
+        (
+            "x <- \"a\\u{0}\"".into(),
+            "syntax error: nul character not allowed",
+            false,
+        ),
+        (
+            "x <- \"a\\U00000000\"".into(),
+            "syntax error: nul character not allowed",
+            false,
+        ),
+        (
+            "x <- 1e".into(),
+            "syntax error: unexpected input: exponent of `1e` has no digits",
+            false,
+        ),
+        (
+            "x <- 1E-".into(),
+            "syntax error: unexpected input: exponent of `1E-` has no digits",
+            false,
+        ),
+        (
+            "x <- 1eL".into(),
+            "syntax error: unexpected input: exponent of `1eL` has no digits",
+            false,
+        ),
+        (deep("(", ")", 50), overflow, false),
+        (deep("{", "}", 50), overflow, false),
+        // 50 nested calls (`f(f(...))`) already exceed ry's own CST
+        // depth limit, which refuses the file with an RY000 of its own.
+        (format!("f({}", deep("(", ")", 49)) + ")", overflow, false),
+        (deep("x[[", "]]", 25), overflow, false),
+        // Counts that hover at the limit (`{ if (x)` opens and closes `(`)
+        // report the overflow once, as R stops at its first.
+        (
+            format!("x <- {}1{}", "{ if (x) ".repeat(57), " }".repeat(57)),
+            overflow,
+            false,
+        ),
+    ];
+    for (source, message, misparsed) in &rejected {
+        let file = parse(source);
+        assert!(
+            file.parse_errors.is_empty(),
+            "{source}: {:?}",
+            file.parse_errors
+        );
+        let found: Vec<_> = file
+            .syntax_violations
+            .iter()
+            .map(|v| (v.message.as_str(), v.misparsed))
+            .collect();
+        assert_eq!(found, [(*message, *misparsed)], "{source}");
+    }
+    let accepted: Vec<String> = vec![
+        "function(x, y) 1".into(),
+        "f <- function(a) function(a) a".into(),
+        "function(x, ..., y) 1".into(),
+        "a; b".into(),
+        "a\nb".into(),
+        "a # c\nb".into(),
+        "{ a; b }".into(),
+        "a ~b".into(),
+        "{ if (TRUE) 1\nelse 2 }".into(),
+        "(if (TRUE) 1\nelse 2)".into(),
+        "f(if (TRUE) 1\nelse 2)".into(),
+        "x <- `else`".into(),
+        "x <- \"\\n\\r\\t\\b\\a\\f\\v\\\\\\'\\\"\\`\\ \"".into(),
+        "x <- \"a\\\nb\"".into(),
+        "x <- c(\"\\1\\12\\101\\x41\", \"\\u00e9\\u{e9}\\U0001F600\")".into(),
+        "x <- r\"(\\q \\0)\"".into(),
+        "x <- c(1.e5, .5e3, 1e+5, 1E-5, 1e5L, 1e3i, 0x1p3, 0x1.8, 0X1P-3, 1., 1.L)".into(),
+        deep("(", ")", 49),
+        deep("x[[", "]]", 24),
+        format!("{}1{}", "(1) + ".repeat(60), ""),
+    ];
+    for source in &accepted {
+        let file = parse(source);
+        assert!(
             file.parse_errors.is_empty() && file.syntax_violations.is_empty(),
-            "{source}: expected no diagnostics under the current scope, got {:?}",
+            "{source}: accepted by R but flagged: {:?} / {:?}",
+            file.parse_errors,
             file.syntax_violations
         );
     }

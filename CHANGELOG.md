@@ -7,8 +7,9 @@ All notable changes to ry are documented in this file.
 ### Fixed
 
 - `for (v in f)` over a factor types `v` as a character string, as R
-  does. A value whose class is unknown no longer claims an element
-  mode, and a `Date` still yields plain doubles (#861).
+  does. An integer whose class is unknown no longer claims an element
+  mode, since it may be a factor, and a `Date` still yields plain
+  doubles (#861).
 - A positional `[[<-` or `[<-` write on a list no longer keeps the old
   length in `dump-facts`. `l[[i]] <- v` keeps the old length as a lower
   bound, and a NULL value, which deletes, widens it (#863).

@@ -261,10 +261,6 @@ enum TypeshedCmd {
 }
 
 fn main() -> Result<ExitCode> {
-    // DELIBERATELY BROKEN (smoke-hook proof, reverted next commit).
-    if std::env::args().nth(1).as_deref() == Some("check") {
-        return Ok(ExitCode::SUCCESS);
-    }
     // `ArgMatches` is kept so check's `flag_set` can tell a user-passed
     // flag from its clap default.
     let mut matches = Cli::command().get_matches();

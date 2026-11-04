@@ -17,6 +17,10 @@ paths <- readLines(args[[1]], encoding = "UTF-8", warn = FALSE)
 paths <- paths[nzchar(paths)]
 
 verdict <- function(path) {
+  # An unreadable file is a collection error, not a parser verdict.
+  if (file.access(path, 4L) != 0L) {
+    stop("cannot read corpus file: ", path, call. = FALSE)
+  }
   message <- tryCatch(
     {
       suppressWarnings(parse(file = path, keep.source = FALSE, encoding = "UTF-8"))

@@ -467,7 +467,7 @@ if ! $local_only; then
       git -C "$source_dir" checkout -q --detach FETCH_HEAD
     fi
     parse_sources+=("$name=$source_dir")
-  done < <(grep '^# parse-source:'$'\t' "$packages_file" || true)
+  done < <(grep '^# parse-source:[[:space:]]' "$packages_file" || true)
   parse_mode=update
   $check && parse_mode=check
   python3 "$ecosystem_dir/parse_differential.py" "$parse_mode" \

@@ -872,7 +872,12 @@ impl Checker {
     /// values (see [`seq_call_mode`]); one the checker cannot prove is
     /// `integer | double`.
     pub(crate) fn infer_seq(&self, lookup_name: &str, args: &[Arg], arg_types: &[RType]) -> RType {
-        let bindings = match_arguments(&SEQ_FORMALS, args);
+        // `seq.default`'s formals; `seq.int` takes the same ones. The
+        // `SEQ_*` indices below point into this list.
+        let bindings = match_arguments(
+            &["from", "to", "by", "length.out", "along.with", "..."],
+            args,
+        );
         // An actual that `...` absorbs (a forwarded `...`, an extra
         // positional) can stand for any formal.
         if args.len() != arg_types.len() || bindings.param_for_arg.iter().any(Option::is_none) {
@@ -1143,8 +1148,7 @@ fn rep_count(value: Option<Option<i64>>) -> Option<usize> {
     }
 }
 
-/// `seq.default`'s formals; `seq.int` takes the same ones.
-const SEQ_FORMALS: [&str; 6] = ["from", "to", "by", "length.out", "along.with", "..."];
+/// Indices of `seq.default`'s formals, as matched in [`Checker::infer_seq`].
 const SEQ_FROM: usize = 0;
 const SEQ_TO: usize = 1;
 const SEQ_BY: usize = 2;

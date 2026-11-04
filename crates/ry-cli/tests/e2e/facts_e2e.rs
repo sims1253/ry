@@ -264,6 +264,7 @@ fn loop_elements_list_writes_and_dots_lists_export_r_lengths_and_modes() {
 factor_loop <- function() { g <- factor(c(\"a\", \"b\")); for (v in g) NULL; v }
 date_loop <- function() { g <- Sys.Date(); for (v in g) NULL; v }
 unknown_loop <- function(g) { for (v in g) NULL; v }
+dynamic_factor_loop <- function(k) { g <- structure(c(1, 2), class = k, levels = c(\"a\", \"b\")); for (v in g) NULL; v }
 grow <- function() { l <- list(); for (i in 1:3) l[[i]] <- i; l }
 drop2 <- function() { l <- list(1, 2, 3, 4); l[[2]] <- NULL; l }
 drop1 <- function() { l <- list(1, 2); l[2] <- NULL; l }
@@ -287,6 +288,8 @@ lead <- function(a, ...) { rest <- list(a, ...); rest }
     assert_eq!(v["mode"], "double", "{v}");
     assert_eq!(v["length"], json!({"kind": "known", "value": 1}), "{v}");
     let v = ty("unknown_loop", "v");
+    assert_eq!(v["mode"], "opaque", "{v}");
+    let v = ty("dynamic_factor_loop", "v");
     assert_eq!(v["mode"], "opaque", "{v}");
 
     assert_eq!(ty("grow", "l")["length"], json!({"kind": "unknown"}));

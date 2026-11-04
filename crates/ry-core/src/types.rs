@@ -1065,8 +1065,9 @@ impl RType {
     /// vector such as a `Date` yields the bare elements in R. A factor is
     /// the exception: `for` reads it through `asCharacterFactor`, so each
     /// element is a level string. R refuses class `"factor"` on anything
-    /// but integer storage, so only an integer whose class is unknown, or
-    /// only guarded, may be a factor and claims no element mode (#861).
+    /// but integer storage, and `structure()` converts a double to integer
+    /// for it, so only an integer or double whose class is unknown, or only
+    /// guarded, may be a factor and claims no element mode (#861).
     ///
     /// For a `Mode::Union`, the element type is the union of each member's
     /// element type. Distributing -- rather than passing
@@ -1093,7 +1094,7 @@ impl RType {
             }
             // A class on the union itself applies to every member.
             _ if self.class.contains("factor") => RType::scalar(Mode::Character),
-            _ if (!self.class.known || self.class.guarded) && self.may_be_integer() => {
+            _ if (!self.class.known || self.class.guarded) && self.may_be_factor_storage() => {
                 RType::unknown()
             }
             Mode::Union => match self.members.as_ref() {
@@ -1120,15 +1121,15 @@ impl RType {
         }
     }
 
-    /// Whether the storage mode may be integer, the only storage a
-    /// factor can have.
-    fn may_be_integer(&self) -> bool {
+    /// Whether this may be, or `structure()` may convert it to, the
+    /// integer storage every factor has.
+    fn may_be_factor_storage(&self) -> bool {
         match self.mode {
-            Mode::Integer => true,
+            Mode::Integer | Mode::Double => true,
             Mode::Union => self
                 .members
                 .as_ref()
-                .is_none_or(|members| members.iter().any(RType::may_be_integer)),
+                .is_none_or(|members| members.iter().any(RType::may_be_factor_storage)),
             _ => false,
         }
     }
@@ -1717,13 +1718,16 @@ mod tests {
     #[test]
     fn element_of_unknown_class_claims_no_mode() {
         // An unknown or merely guarded class on integer storage may still
-        // inherit "factor".
+        // inherit "factor"; `structure(c(1, 2), class = k)` makes a double
+        // an integer factor when `k` is "factor".
         let unknown =
             RType::new(Mode::Integer, Length::Known(2)).with_class(ClassVector::unknown());
         assert!(unknown.element().mode.is_unknown());
         let guarded =
             RType::new(Mode::Integer, Length::Known(2)).with_class(ClassVector::guard("foo"));
         assert!(guarded.element().mode.is_unknown());
+        let double = RType::new(Mode::Double, Length::Known(2)).with_class(ClassVector::unknown());
+        assert!(double.element().mode.is_unknown());
         let union = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double));
         assert!(
             union
@@ -1738,11 +1742,11 @@ mod tests {
     fn element_of_unknown_class_on_other_storage_keeps_its_mode() {
         // R refuses class "factor" on anything but integer storage, so
         // `for (v in structure(c("a", "b"), class = k))` binds strings.
-        for mode in [Mode::Character, Mode::Double, Mode::Logical] {
+        for mode in [Mode::Character, Mode::Logical, Mode::Complex] {
             let value = RType::new(mode, Length::Known(2)).with_class(ClassVector::unknown());
             assert_eq!(value.element().mode, mode);
         }
-        let union = RType::scalar(Mode::Character).join(RType::scalar(Mode::Double));
+        let union = RType::scalar(Mode::Character).join(RType::scalar(Mode::Logical));
         let element = union.with_class(ClassVector::unknown()).element();
         assert_eq!(element.mode, Mode::Union);
     }

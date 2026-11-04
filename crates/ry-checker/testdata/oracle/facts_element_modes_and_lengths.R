@@ -15,6 +15,10 @@ stopifnot(identical(
   loop_last(structure(1:2, class = c("tagged", "factor"), levels = c("a", "b"))),
   "b"
 ))
+# `structure()` converts double storage to integer for a factor class,
+# even one only known at run time.
+cls <- "factor"
+stopifnot(identical(loop_last(structure(c(1, 2), class = cls, levels = c("a", "b"))), "b"))
 l <- list(); for (i in 1:3) l[[i]] <- i
 stopifnot(length(l) == 3L)
 l <- list(1, 2, 3, 4); l[[2]] <- NULL

@@ -910,6 +910,23 @@ paths = ["inst/shiny/**"]
         assert!(!paths.matches(&root.join("../outside/R/a.R")));
     }
 
+    /// Windows spells a resolved path over MAX_PATH (260 characters) with
+    /// its verbatim `\\?\` prefix; a short root has none. The deep source
+    /// must still match its root's scope (#880).
+    #[test]
+    fn scoped_paths_match_sources_deeper_than_max_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let deep = root.join("R").join("d".repeat(120)).join("e".repeat(120));
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("a.R"), "x <- 1L\n").unwrap();
+        assert!(deep.join("a.R").as_os_str().len() > 260);
+
+        let in_r = ScopedPaths::new(root, &["R/**".into()]).unwrap();
+        assert!(in_r.matches(&deep.join("a.R")));
+        assert!(in_r.matches(&deep.join("unsaved.R")));
+    }
+
     #[cfg(unix)]
     #[test]
     fn scoped_paths_resolve_symlink_parent_before_dotdot() {

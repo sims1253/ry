@@ -1802,4 +1802,24 @@ mod package_grouping_tests {
         assert_eq!(groups[&Some(pkg_a)], vec![0]);
         assert_eq!(groups[&Some(pkg_b)], vec![1]);
     }
+
+    /// Windows spells a resolved path over MAX_PATH (260 characters) with
+    /// its verbatim `\\?\` prefix; a short root has none. The deep source
+    /// must still be relative to its package (#880).
+    #[test]
+    fn sources_deeper_than_max_path_stay_package_relative() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = package_dir(dir.path(), "pkg");
+        let relative = Path::new("tests")
+            .join("testthat")
+            .join("d".repeat(120))
+            .join("e".repeat(120))
+            .join("test-a.R");
+        let file = root.join(&relative);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "x <- 1L\n").unwrap();
+        assert!(file.as_os_str().len() > 260);
+        assert_eq!(enclosing_package_root(&file), Some(root.clone()));
+        assert_eq!(package_relative_path(&file, &root), Some(relative));
+    }
 }

@@ -1832,6 +1832,11 @@ pub struct Checker {
     block_walks: usize,
     // Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
+    // Closure-nesting depth of the literal whose body `walk_literal_returns`
+    // is walking: 0 outside any signature walk. A literal met there is one
+    // level deeper, so `MAX_CLOSURE_DEPTH` bounds nested signature and
+    // callback-return inference (#893).
+    closure_depth: usize,
     // Packages attached via `library(pkg)` / `require(pkg)`, plus any
     // declared in `ry.toml`'s `packages` key (threaded in via
     // `set_loaded`), each with the packages it attaches in turn. The dplyr
@@ -1908,11 +1913,6 @@ pub struct Checker {
     capture_references: bool,
     reference_capture: Option<Box<reference_facts::ReferenceCapture>>,
     scope_records: Vec<ScopeRecord>,
-    // Closure-nesting depth of the literal whose body `walk_literal_returns`
-    // is walking: 0 outside any signature walk. A literal met there is one
-    // level deeper, so `MAX_CLOSURE_DEPTH` bounds nested signature and
-    // callback-return inference (#893).
-    closure_depth: usize,
     // Assignment-site types for editor hints, captured only on request.
     assignment_types: Option<HashMap<Span, RType>>,
     // Armed vacuous-all guards (RY110), installed by the pass-3 walk at
@@ -2137,6 +2137,7 @@ impl Checker {
             #[cfg(test)]
             block_walks: 0,
             inferring: Vec::new(),
+            closure_depth: 0,
             loaded: Arc::new(HashSet::new()),
             bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
@@ -2164,7 +2165,6 @@ impl Checker {
             capture_references: false,
             reference_capture: None,
             scope_records: Vec::new(),
-            closure_depth: 0,
             assignment_types: None,
             vacuous_guards: Vec::new(),
             vacuous_helpers: FxMap::default(),

@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.32",
+  "version": "0.0.35",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -1047,7 +1047,6 @@
       "difftime",
       "dim.data.frame",
       "dim<-",
-      "dimnames",
       "dimnames.data.frame",
       "dimnames<-",
       "dimnames<-.data.frame",
@@ -2695,7 +2694,7 @@
       "return": {
         "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "alias": {
@@ -2890,12 +2889,9 @@
         "x"
       ],
       "return": {
-        "mode": "integer",
+        "mode": "opaque",
         "length": "arg0",
-        "na": false,
-        "class": [
-          "factor"
-        ]
+        "na": true
       }
     },
     "as.integer": {
@@ -2980,7 +2976,7 @@
       "return": {
         "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "as.vector": {
@@ -3073,7 +3069,7 @@
         "FUN"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "arg0",
         "na": true
       }
@@ -3095,7 +3091,7 @@
       "return": {
         "mode": "character",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "body": {
@@ -3184,7 +3180,7 @@
       "return": {
         "mode": "double",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "character": {
@@ -3283,9 +3279,13 @@
         "x"
       ],
       "return": {
-        "mode": "character",
+        "mode": "union",
         "length": "unknown",
-        "na": false
+        "members": [
+          "character",
+          "null"
+        ],
+        "na": true
       }
     },
     "complete.cases": {
@@ -3447,8 +3447,12 @@
         "x"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "union",
         "length": "arg0",
+        "members": [
+          "double",
+          "complex"
+        ],
         "na": true
       }
     },
@@ -3705,9 +3709,27 @@
         "x"
       ],
       "return": {
-        "mode": "integer",
+        "mode": "union",
         "length": "unknown",
+        "members": [
+          "integer",
+          "null"
+        ],
         "na": false
+      }
+    },
+    "dimnames": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "union",
+        "length": "unknown",
+        "members": [
+          "list",
+          "null"
+        ],
+        "na": true
       }
     },
     "dirname": {
@@ -3717,7 +3739,7 @@
       "return": {
         "mode": "character",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "dist": {
@@ -3727,7 +3749,10 @@
       "return": {
         "mode": "double",
         "length": "unknown",
-        "na": false
+        "na": true,
+        "class": [
+          "dist"
+        ]
       }
     },
     "dlnorm": {
@@ -4033,9 +4058,9 @@
         "x"
       ],
       "return": {
-        "mode": "integer",
+        "mode": "opaque",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "fft": {
@@ -4045,7 +4070,7 @@
       "return": {
         "mode": "complex",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "file.exists": {
@@ -4106,7 +4131,7 @@
       "return": {
         "mode": "double",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "force": {
@@ -4181,7 +4206,7 @@
       "return": {
         "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "gamma": {
@@ -4508,7 +4533,10 @@
       "return": {
         "mode": "integer",
         "length": "unknown",
-        "na": false
+        "na": true,
+        "class": [
+          "factor"
+        ]
       }
     },
     "intersect": {
@@ -5276,8 +5304,12 @@
         "..."
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "union",
         "length": "1",
+        "members": [
+          "double",
+          "complex"
+        ],
         "na": true
       }
     },
@@ -5401,7 +5433,7 @@
       "return": {
         "mode": "complex",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "na.omit": {
@@ -5427,9 +5459,13 @@
         "x"
       ],
       "return": {
-        "mode": "character",
+        "mode": "union",
         "length": "unknown",
-        "na": false
+        "members": [
+          "character",
+          "null"
+        ],
+        "na": true
       }
     },
     "nchar": {
@@ -5462,8 +5498,8 @@
         "x"
       ],
       "return": {
-        "mode": "integer",
-        "length": "1",
+        "mode": "opaque",
+        "length": "unknown",
         "na": false
       }
     },
@@ -5539,8 +5575,8 @@
         "x"
       ],
       "return": {
-        "mode": "integer",
-        "length": "1",
+        "mode": "opaque",
+        "length": "unknown",
         "na": false
       }
     },
@@ -5648,7 +5684,11 @@
       "return": {
         "mode": "integer",
         "length": "arg0",
-        "na": false
+        "na": true,
+        "class": [
+          "ordered",
+          "factor"
+        ]
       }
     },
     "pairwise.t.test": {
@@ -6031,8 +6071,11 @@
       "params": [],
       "return": {
         "mode": "double",
-        "length": "3",
-        "na": false
+        "length": "5",
+        "na": true,
+        "class": [
+          "proc_time"
+        ]
       }
     },
     "prod": {
@@ -6040,8 +6083,12 @@
         "..."
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "union",
         "length": "1",
+        "members": [
+          "double",
+          "complex"
+        ],
         "na": true
       }
     },
@@ -6052,7 +6099,7 @@
       "return": {
         "mode": "double",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "prop.test": {
@@ -6685,9 +6732,13 @@
         "..."
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "union",
         "length": "arg0",
-        "na": false
+        "members": [
+          "double",
+          "complex"
+        ],
+        "na": true
       }
     },
     "rowMeans": {
@@ -6719,9 +6770,13 @@
         "x"
       ],
       "return": {
-        "mode": "character",
+        "mode": "union",
         "length": "unknown",
-        "na": false
+        "members": [
+          "character",
+          "null"
+        ],
+        "na": true
       }
     },
     "rowsum": {
@@ -6777,7 +6832,7 @@
         }
       ],
       "return": {
-        "mode": "arg0",
+        "mode": "opaque",
         "length": "unknown",
         "na": true
       }
@@ -6868,8 +6923,12 @@
         "by"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "union",
         "length": "unknown",
+        "members": [
+          "integer",
+          "double"
+        ],
         "na": false
       }
     },
@@ -6880,8 +6939,12 @@
         "by"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "union",
         "length": "unknown",
+        "members": [
+          "integer",
+          "double"
+        ],
         "na": false
       }
     },
@@ -6975,7 +7038,7 @@
         "x"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "double",
         "length": "arg0",
         "na": true
       }
@@ -7516,7 +7579,10 @@
       "return": {
         "mode": "integer",
         "length": "unknown",
-        "na": false
+        "na": false,
+        "class": [
+          "table"
+        ]
       }
     },
     "tabulate": {
@@ -7721,7 +7787,7 @@
       "return": {
         "mode": "double",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "try": {
@@ -7750,9 +7816,9 @@
         "frequency"
       ],
       "return": {
-        "mode": "double",
-        "length": "arg0",
-        "na": false
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
       }
     },
     "ts.intersect": {
@@ -7762,7 +7828,7 @@
       "return": {
         "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "ts.plot": {
@@ -7782,7 +7848,7 @@
       "return": {
         "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "typeof": {

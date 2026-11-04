@@ -324,9 +324,19 @@ fn pipe_underscore_placeholder_extraction() {
     let col = scope.get("col").expect("col should be bound");
     assert_eq!(col.mode, Mode::Double, "mtcars |> _$mpg must infer double");
     assert_eq!(col.length, Length::Known(32), "mpg has 32 rows");
+    // base's mean() returns the double/complex union (r-typeshed #124):
+    // R gives complex for complex input, so the stub keeps both members.
     let m = scope.get("m").expect("m should be bound");
-    assert_eq!(m.mode, Mode::Double, "mean() of a double column is double");
-    assert_eq!(m.length, Length::One, "mean() returns a scalar");
+    let members = m.members.as_ref().expect("mean() returns a union");
+    assert_eq!(
+        members.iter().map(|t| t.mode).collect::<Vec<_>>(),
+        [Mode::Double, Mode::Complex],
+        "mean() of a double column is double or complex"
+    );
+    assert!(
+        members.iter().all(|t| t.length == Length::One),
+        "mean() returns a scalar"
+    );
     let also = scope.get("also").expect("also should be bound");
     assert_eq!(also.mode, Mode::Double, "mtcars |> _[[\"mpg\"]] is double");
     assert_eq!(

@@ -3333,6 +3333,14 @@ impl Checker {
             scope.insert(name.clone(), resized);
             return true;
         }
+        if let Some((name, kept)) = self.audited_base_setter(accessor, args, scope) {
+            let had_list_origin = scope.has_list_origin(&name);
+            scope.insert(name.clone(), kept);
+            if had_list_origin {
+                scope.mark_list_origin(name);
+            }
+            return true;
+        }
         if !matches!(
             accessor.as_str(),
             "names"
@@ -3361,6 +3369,132 @@ impl Checker {
         true
     }
 
+    /// The type a base setter whose effect GNU R 4.6.1 proves leaves on its
+    /// target, or `None` when the write may dispatch, the setter may be
+    /// masked, or the effect is not provable (the target then widens):
+    ///
+    /// - `comment<-` and `attr<-` with an ordinary attribute name are not
+    ///   generic and keep the whole value, data frames and lists included.
+    /// - `environment<-` keeps a value that is not a function. A function
+    ///   keeps its mode, but what it returns may change.
+    /// - `levels<-`, `names<-`, `dim<-` and `dimnames<-` are internal
+    ///   generics, which dispatch only on a class attribute
+    ///   (`levels<-.factor`, `dimnames<-.data.frame`). A provably classless
+    ///   value keeps its mode, length and class. `names<-`, `dim<-` and
+    ///   `dimnames<-` replace or drop the names a list schema records.
+    /// - `is.na<-` dispatches with `UseMethod`, implicit classes included.
+    ///   With no project method, a classless vector or list keeps its mode
+    ///   and may grow (`is.na(x) <- 5` pads to length 5).
+    ///
+    /// `storage.mode<-` and `mode<-` change the mode, and `units<-` works
+    /// only through `units<-.difftime`, so they stay unaudited.
+    fn audited_base_setter(
+        &self,
+        accessor: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Option<(String, RType)> {
+        let (target, rest) = args.split_first()?;
+        let Expr::Ident { name, .. } = &target.value else {
+            return None;
+        };
+        if target.name.as_deref().is_some_and(|name| name != "x") {
+            return None;
+        }
+        let base = scope.get(name)?;
+        if *base == RType::unknown()
+            || !self.base_setter_is_unmasked(&format!("{accessor}<-"), scope)
+        {
+            return None;
+        }
+        fn classless(ty: &RType) -> bool {
+            !ty.class.storage_proxy
+                && ty.class.is_classless()
+                && ty
+                    .members
+                    .iter()
+                    .flat_map(|members| members.iter())
+                    .all(classless)
+        }
+        let kept = match (accessor, rest) {
+            ("comment", []) => base.clone(),
+            ("attr", [which])
+                if which.name.as_deref().is_none_or(|name| name == "which")
+                    // Attributes that change what ry tracks or what R
+                    // dispatches on take the unaudited path.
+                    && matches!(&which.value, Expr::String(attribute, _)
+                        if !matches!(
+                            attribute.as_str(),
+                            "names" | "dim" | "dimnames" | "class" | "tsp" | "row.names" | "levels"
+                        )) =>
+            {
+                base.clone()
+            }
+            ("environment", []) if !base.mode.is_unknown() && base.mode != Mode::Function => {
+                base.clone()
+            }
+            ("levels", []) if classless(base) => base.clone(),
+            ("names" | "dim" | "dimnames", []) if classless(base) => RType {
+                columns: None,
+                ..base.clone()
+            },
+            ("is.na", [])
+                if classless(base)
+                    && matches!(
+                        base.mode,
+                        Mode::Logical
+                            | Mode::Integer
+                            | Mode::Double
+                            | Mode::Complex
+                            | Mode::Character
+                            | Mode::List
+                    )
+                    && !self.implicit_class_method_may_apply("is.na<-", base, scope) =>
+            {
+                RType::new(base.mode, Length::lower_bound(base.length.min_possible()))
+            }
+            _ => return None,
+        };
+        Some((name.clone(), kept))
+    }
+
+    /// Whether `UseMethod(generic)` may find a method other than base's
+    /// default for a classless value: a project method for its implicit
+    /// class (`is.na<-.character`, `is.na<-.numeric`, `is.na<-.matrix`) or
+    /// a project `is.na<-.default`.
+    fn implicit_class_method_may_apply(&self, generic: &str, base: &RType, scope: &Scope) -> bool {
+        let implicit: &[&str] = match base.mode {
+            Mode::Logical => &["logical"],
+            Mode::Integer => &["integer", "numeric"],
+            Mode::Double => &["double", "numeric"],
+            Mode::Complex => &["complex"],
+            Mode::Character => &["character"],
+            Mode::List => &["list"],
+            _ => return true,
+        };
+        // A value with `dim` also dispatches on "matrix" and "array"; ry does
+        // not track `dim`, so those count for every value.
+        let groups: [&[&str]; 3] = [implicit, &["matrix", "array"], &["default"]];
+        groups.into_iter().any(|classes| {
+            let receiver =
+                RType::new(base.mode, base.length).with_class(ClassVector::from_slice(classes));
+            self.s3_method_may_apply(generic, &receiver, scope)
+        }) || self.project_defines_method(|name| name == generic)
+    }
+
+    /// Whether `setter` is base R's: no data mask, project base stub, or
+    /// binding of the name may replace it.
+    fn base_setter_is_unmasked(&self, setter: &str, scope: &Scope) -> bool {
+        !scope.data_mask_unknown
+            && !self.user_stubs.contains_key("base")
+            && self.resolves_to_base(setter, scope)
+            && !self.literal_bindings_may_be_shadowed(
+                [setter, format!("`{setter}`").as_str()],
+                &HashSet::new(),
+                scope,
+            )
+    }
+
     /// Base `length<-` on a classless atomic vector or list keeps its
     /// storage mode and truncates or pads (with `NA` or `NULL`) to the new
     /// length, dropping `dim`. A classed value may dispatch to a method.
@@ -3376,14 +3510,7 @@ impl Checker {
                     | Mode::Raw
                     | Mode::List
             )
-            || scope.data_mask_unknown
-            || self.user_stubs.contains_key("base")
-            || !self.resolves_to_base("length<-", scope)
-            || self.literal_bindings_may_be_shadowed(
-                ["length<-", "`length<-`"],
-                &HashSet::new(),
-                scope,
-            )
+            || !self.base_setter_is_unmasked("length<-", scope)
         {
             return None;
         }

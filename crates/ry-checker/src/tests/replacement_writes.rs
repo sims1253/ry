@@ -495,3 +495,111 @@ fn positional_list_write_keeps_a_lower_bound() {
         assert_eq!(scope.get("l").unwrap().length, Length::Unknown, "{source}");
     }
 }
+
+/// Base setters that GNU R 4.6.1 proves keep the target's shape no longer
+/// cost the diagnostics R confirms after them: `"a" + 1` errors, `x[1]` of
+/// a list is never `1`, and `df$zz` is not a column.
+#[test]
+fn audited_base_setters_keep_the_diagnostics_r_confirms() {
+    for (source, code) in [
+        ("x <- \"a\"; is.na(x) <- 1; x + 1", "RY040"),
+        (
+            "x <- list(a = 1); comment(x) <- \"k\"; identical(x[1], 1)",
+            "RY101",
+        ),
+        (
+            "df <- data.frame(a = 1); comment(df) <- \"c\"; df$zz",
+            "RY060",
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == code),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+/// What each audited setter keeps, as GNU R 4.6.1 reports it. `names<-`,
+/// `dim<-` and `dimnames<-` drop the list schema whose names they replace,
+/// and `is.na<-` may pad the vector.
+#[test]
+fn audited_base_setters_keep_what_r_keeps() {
+    for (source, mode, length, class) in [
+        (
+            "y <- data.frame(a = 1:2); comment(y) <- \"c\"",
+            Mode::List,
+            Length::Known(1),
+            ClassVector::single("data.frame"),
+        ),
+        (
+            "y <- c(1, 2); attr(y, \"units\") <- \"cm\"",
+            Mode::Double,
+            Length::Known(2),
+            ClassVector::empty(),
+        ),
+        (
+            "y <- 1:3; levels(y) <- c(\"a\", \"b\")",
+            Mode::Integer,
+            Length::Known(3),
+            ClassVector::empty(),
+        ),
+        (
+            "y <- 1:4; dim(y) <- c(2L, 2L); dimnames(y) <- list(c(\"a\", \"b\"), NULL)",
+            Mode::Integer,
+            Length::Known(4),
+            ClassVector::empty(),
+        ),
+        (
+            "y <- c(TRUE, FALSE); environment(y) <- globalenv()",
+            Mode::Logical,
+            Length::Known(2),
+            ClassVector::empty(),
+        ),
+        (
+            "y <- c(1.5, 2); is.na(y) <- 5",
+            Mode::Double,
+            Length::AtLeast(2),
+            ClassVector::empty(),
+        ),
+    ] {
+        let (diagnostics, scope) = check_with_scope(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        let y = scope.get("y").unwrap();
+        assert_eq!(
+            (y.mode, y.length, &y.class),
+            (mode, length, &class),
+            "{source}"
+        );
+    }
+    let (_, scope) = check_with_scope("y <- list(a = 1, b = \"x\"); names(y) <- c(\"p\", \"q\")");
+    let y = scope.get("y").unwrap();
+    assert_eq!(
+        (y.mode, y.length, y.columns.is_none()),
+        (Mode::List, Length::Known(2), true)
+    );
+}
+
+/// Where a method may apply, the setter is masked, or R changes the mode,
+/// the target still widens: `levels<-.factor`, `is.na<-.factor`, a project
+/// `is.na<-` method (which dispatches on implicit classes too), a data
+/// frame's possible `names<-` method, a masked `comment<-`, a function's
+/// new environment, and `storage.mode<-`.
+#[test]
+fn setters_that_may_dispatch_or_change_the_mode_still_widen() {
+    for source in [
+        "y <- factor(\"a\"); levels(y) <- \"b\"",
+        "y <- factor(\"a\"); is.na(y) <- 1",
+        "`is.na<-.character` <- function(x, value) 1\ny <- \"a\"; is.na(y) <- 1",
+        "`is.na<-.matrix` <- function(x, value) 1\ny <- \"a\"; is.na(y) <- 1",
+        "`is.na<-.default` <- function(x, value) 1\ny <- \"a\"; is.na(y) <- 1",
+        "y <- data.frame(a = 1); names(y) <- \"zz\"",
+        "`comment<-` <- function(x, value) 1\ny <- \"a\"; comment(y) <- \"k\"",
+        "y <- function() 1; environment(y) <- new.env()",
+        "y <- \"a\"; storage.mode(y) <- \"integer\"",
+        "y <- 1; attr(y, \"class\") <- \"foo\"",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert_eq!(scope.get("y"), Some(&RType::unknown()), "{source}");
+    }
+}

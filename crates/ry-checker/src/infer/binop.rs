@@ -1135,7 +1135,7 @@ impl Checker {
         })
     }
 
-    fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
+    pub(super) fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
         self.fn_table.functions.s4().defines_method(&generic)
             || self.project_defines_s3_method(generic)
     }

@@ -37,8 +37,13 @@ All notable changes to ry are documented in this file.
 - A replacement function ry has not audited, such as `oldClass<-`,
   `attributes<-`, or a project `foo<-`, now widens its target to unknown.
   `dump-facts` no longer exports the type and class from before the
-  write. Base `length<-` on a classless vector keeps the mode and takes
-  the new length (#862).
+  write. Base setters whose effect R proves keep what R keeps: `length<-`
+  on a classless vector keeps the mode and takes the new length,
+  `comment<-` and `attr<-` with an ordinary name keep the whole value,
+  `levels<-`, `names<-`, `dim<-` and `dimnames<-` keep a classless value's
+  mode, length and class, `is.na<-` keeps a classless vector's mode, and
+  `environment<-` keeps a value that is not a function. A setter that may
+  dispatch to a method still widens (#862).
 - `eval(quote(x <- v))`, `evalq(x <- v)`, `rm(x)`, and
   `assign("x", v, envir = environment())` now update `x` in the current
   frame, and `on.exit(x <- v)` widens `x` in the function's scope-exit

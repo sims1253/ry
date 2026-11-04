@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "6675de924cdfd66df98b18ab71741ccd152924018b265f8af7565ae248e48782",
-  "ry_commit": "360d165d85fa449ce556f73823caf0239566e450",
+  "source_sha256": "7dfdd4b3f1007c83fb38ff3e5426223c3e77e7861642dbf7dacb575200b34a20",
+  "ry_commit": "610904c5dc97ddefe244de7d2a5a36df4a8d001f",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -19,7 +19,7 @@
       "repo": "rstudio/shiny",
       "stars": 5673,
       "commit": "ca1800475ac5a1e6037fea1020260a868d8798ee",
-      "diagnostics": 11
+      "diagnostics": 12
     },
     {
       "name": "dplyr",
@@ -2686,6 +2686,15 @@
     },
     {
       "package": "shiny-r",
+      "code": "RY000",
+      "path": "inst/app_template/tests/testthat/test-shinytest2.R",
+      "line": 6,
+      "column": 3,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "shiny-r",
       "code": "RY010",
       "path": "inst/examples/03_reactivity/app.R",
       "line": 38,
@@ -3227,7 +3236,7 @@
   ],
   "classification": {
     "false_positive": 222,
-    "true_positive": 87
+    "true_positive": 88
   },
   "audit_group_counts": {
     "reassign-scope": 2,
@@ -3235,7 +3244,7 @@
     "manual-audit": 136,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 1,
-    "test-fixture": 80,
+    "test-fixture": 81,
     "s3-method-dispatch": 1,
     "delayed-assign": 1,
     "function-shadowing": 0,
@@ -3295,6 +3304,7 @@
     "Undecided tests of an omitted default drop its type in the arm they select (#710): a passing test that reads a defaulted formal but proves nothing about it (a user predicate, a compound inherits(), a names()/colnames() membership) leaves the formal unknown in the arm it selects and on the right of &&/||; the failing arm keeps the default's type. Six reviewed false positives disappear, all RY061 type-narrowing: gt R/utils_render_latex.R:2149:47 and :2149:57 (`width$pt`/`width$lw` under `sum(c(\"pt\", \"lw\") %in% colnames(width)) > 0`, width = \"\\\\linewidth\"), pkgdown R/package.R:18:5 and :18:29 (`pkg$meta` under `is_pkgdown(pkg)`, pkg = \".\"), and torch R/wrapers.R:174:39 and :179:15 (`dims$numel()` / `dims$item()` under `is_torch_tensor(dims)`, dims = 2). No identity is added and every true positive remains.",
     "A `$`/`[[` miss on a partly known list is unknown (#689): a `$` name missing from a list whose names ry only partly knows (`list(...)`, an `lapply()` result, fields written to an opaque value or environment) is no longer NULL, and a `[[` miss on such a schema no longer takes the recorded fields' common type. Seven reviewed false positives disappear, all type-narrowing: httr R/callback.R:100:5 (RY070, `callback_env[[name]]` typed as the seeded `callback_env$request <- NULL`), testthat R/parallel-taskq.R:205:13 (RY001, `private$tasks$idle[i]` after `$<-` writes to other fields of the opaque `private$tasks`), and torch tests/testthat/test-ignite.R:196:16, :248:16, :251:16, :265:16 and :266:16 (RY061, `o$param_groups[[1]]$...` where `$<-` writes had recorded one field of the opaque optimizer). One reviewed true positive is dropped, as approved by the maintainer: sparklyr R/config.R:375:9 (RY001, upstream-package), `additional_configs$method %in% ...` with `additional_configs <- list(...)`. ry claimed `$method` is NULL only because it treated the fields of `list(...)` as known; the package's own caller (R/connection.R:264) always passes `method = method`, and only a direct call to the exported spark_config_packages() with rapids and no `method` reaches the empty condition. No identity is added; the tidyverse ledger keeps its identities and loses one unowned testthat report line.",
     "A project-defined `%<-%` destructures (#706): a project's own `%<-%`/`%->%`, like rlang's R/standalone-zeallot.R copy, now binds its `c(...)` pattern names to unknown as zeallot's does. One reviewed false positive disappears: rlang R/cnd-abort.R:548:7 RY001 (type-narrowing), `if (found_restart)` after `c(tmp_node, tmp_loc, found_restart) %<-% advance_restart(node, loc)` read the `found_restart <- NULL` placeholder. No identity is added and every true positive remains.",
-    "A mode test's rejecting arm gives a classless local an unknown value (#710): when ry typed a binding as exactly the mode family a predicate tests (an integer under the `else` of `is.numeric(x)` or under `!is.numeric(x)`), R never enters that arm, so code there no longer reports on the recorded type; only defaulted parameters degraded before, and a binding with a known class keeps its type. One reviewed false positive disappears, RY061 type-narrowing: tensorflow R/generics.R:805:34 (`shape$shape$rank` in the `else` of `is.numeric(shape)`, where the omitted `shape = NULL` default was rebound to an integer in an earlier guard). No identity is added and every true positive remains."
+    "A mode test's rejecting arm gives a classless local an unknown value (#710): when ry typed a binding as exactly the mode family a predicate tests (an integer under the `else` of `is.numeric(x)` or under `!is.numeric(x)`), R never enters that arm, so code there no longer reports on the recorded type; only defaulted parameters degraded before, and a binding with a known class keeps its type. One reviewed false positive disappears, RY061 type-narrowing: tensorflow R/generics.R:805:34 (`shape$shape$rank` in the `else` of `is.numeric(shape)`, where the omitted `shape = NULL` default was rebound to an integer in an earlier guard). No identity is added and every true positive remains.",
+    "Reporting syntax GNU R rejects (#841) adds one shiny-r RY000 at inst/app_template/tests/testthat/test-shinytest2.R:6:3. The file is a whisker template: `}){{` after `test_that()` is two adjacent expressions, and R 4.6.1's `parse()` stops at the same 6:3 with \"unexpected '{'\". It is a true positive in a template fixture; no other identity changes."
   ]
 }

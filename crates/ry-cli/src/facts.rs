@@ -56,7 +56,7 @@ fn utf8_path(path: &Path) -> Result<String> {
 }
 
 fn file_identity(path: &Path) -> Result<String> {
-    let path = dunce::canonicalize(path).into_diagnostic()?;
+    let path = ry_config::canonical_path(path).into_diagnostic()?;
     path.to_str()
         .map(str::to_owned)
         .ok_or_else(|| miette::miette!("dump-facts requires UTF-8 file paths: {}", path.display()))

@@ -160,7 +160,10 @@ fn repeated_runs_and_reversed_file_arguments_produce_identical_json() {
     for path in paths {
         assert!(Path::new(path).is_absolute());
         // ry spells resolved paths without the Windows `\\?\` prefix.
-        assert_eq!(dunce::canonicalize(path).unwrap(), Path::new(path));
+        assert_eq!(
+            ry_config::canonical_path(Path::new(path)).unwrap(),
+            Path::new(path)
+        );
     }
 }
 

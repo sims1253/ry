@@ -49,14 +49,18 @@ pub struct SourceFile {
     /// comment bytes: `parse()` in R accepts them (#376).
     pub special_operators: Vec<Span>,
     /// Syntax that tree-sitter's more permissive grammar accepts but
-    /// base R's parser rejects at parse time. The first (and currently
-    /// only) family is the native-pipe (`|>`) right-hand side: R only
-    /// rewrites a call whose function is not syntactically special
-    /// (`x |> f(y)`, `x |> pkg::f(y)`), or an extraction chain rooted
-    /// at the `_` placeholder (R 4.3+: `x |> _$a`, `x |> _[[i]]`).
-    /// Forms like `x |> z[.]` or `x |> { ... }` parse here but error in
-    /// R. Like [`SourceFile::parse_errors`], the checker surfaces these
-    /// as `RY000`; unlike parse errors the region lowers normally, so
+    /// base R's parser rejects at parse time. One family is the
+    /// native-pipe (`|>`) right-hand side: R only rewrites a call whose
+    /// function is not syntactically special (`x |> f(y)`,
+    /// `x |> pkg::f(y)`), or an extraction chain rooted at the `_`
+    /// placeholder (R 4.3+: `x |> _$a`, `x |> _[[i]]`). Forms like
+    /// `x |> z[.]` or `x |> { ... }` parse here but error in R. The
+    /// others (#841) are repeated formals, expressions not separated by
+    /// a newline or `;`, a dangling `else`, a misplaced `_` placeholder,
+    /// unrecognized or NUL string escapes, an exponent without digits,
+    /// and nesting past R's 50-slot context stack. Like
+    /// [`SourceFile::parse_errors`], the checker surfaces these as
+    /// `RY000`; unlike parse errors the region lowers normally, so
     /// the two lists are kept separate and consumers counting broken
     /// regions (facts, heuristics) are unaffected.
     pub syntax_violations: Vec<SyntaxViolation>,
@@ -121,6 +125,12 @@ pub struct Comment {
 pub struct SyntaxViolation {
     pub span: Span,
     pub message: String,
+    /// The error-free tree still misreads the region: tree-sitter takes
+    /// `fjkdsfa 2` as two expressions and a dangling `else` or a stray
+    /// `_` placeholder as a symbol, where R stops parsing. Semantic
+    /// findings over such a tree are artifacts, so the checker
+    /// suppresses them as for a recovered tree.
+    pub misparsed: bool,
 }
 
 #[derive(Debug)]

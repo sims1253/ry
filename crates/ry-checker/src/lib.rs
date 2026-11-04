@@ -2339,7 +2339,9 @@ impl Checker {
         // R's parser rejects it before any syntax consideration.
         let encoding_flagged = self.emit_encoding_diagnostics(file);
         self.emit_parse_errors(file);
-        if !encoding_flagged && file.parse_errors.is_empty() {
+        let misparsed =
+            !file.parse_errors.is_empty() || file.syntax_violations.iter().any(|v| v.misparsed);
+        if !encoding_flagged && !misparsed {
             self.declaration_findings
                 .extend(self.declarations.reports_for(&file.path));
         }
@@ -2355,7 +2357,10 @@ impl Checker {
         // A file flagged for non-UTF-8 source or a leading BOM is
         // suppressed the same way (#376, #474): its tree is a faithful
         // parse of a lossy Latin-1 transcoding (or of text R's parser
-        // refuses at 1:1), and R rejects the whole file regardless.
+        // refuses at 1:1), and R rejects the whole file regardless. So is
+        // an error-free tree that misreads a region R stops at (#841:
+        // `fjkdsfa 2` as two expressions, a dangling `else` or a stray
+        // `_` placeholder as a symbol).
         let semantic_start = self.diagnostics.len();
         let mut scope = self.top_level_scope();
         if self.capture_references {
@@ -2370,7 +2375,7 @@ impl Checker {
         self.superassigned_captures.push(superassigned);
         self.walk_block(&file.stmts, &mut scope, None);
         self.superassigned_captures.pop();
-        if encoding_flagged || !file.parse_errors.is_empty() {
+        if encoding_flagged || misparsed {
             self.diagnostics.truncate(semantic_start);
             // Declarations are semantic claims too. A repaired AST cannot
             // establish their attachment or a call/return mismatch.

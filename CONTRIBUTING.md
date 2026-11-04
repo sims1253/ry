@@ -22,6 +22,7 @@ does):
 
 ```sh
 cargo test -p ry-checker --test oracle -- --include-ignored
+cargo test -p ry-cli --test e2e facts_oracle -- --include-ignored
 ```
 
 Each oracle fixture runs in a fresh `Rscript --vanilla` process. Its exit
@@ -54,6 +55,18 @@ extension activation, package sizes, and the historical dashboard.
   premise stated by that diagnostic with an error, warning, `quote()` shape,
   or explicit assertion. A `known-gap` fixture cannot count as a claim. Adding
   a rule without a registered claim fixture fails the default oracle test.
+- An oracle fixture can also check `ry dump-facts` against R. Add one or
+  more `# oracle-facts: name ...` lines naming top-level bindings. The file
+  must run without error, so tag it `# oracle: must-pass`. The facts oracle
+  exports the file with `ry dump-facts`, then runs it in `Rscript --vanilla`
+  with a read-only probe appended. It fails when R contradicts a concrete
+  claim: `mode` against `typeof()` (a union allows its members' modes), a
+  known, `nonempty`, or `at_least` `length` against `length()`, and a known
+  `class` against `oldClass()`. A declared binding that ry exports with no
+  mode, length, or class claim also fails. The probe sees only the global
+  environment, so to check a function's result, assign it at top level.
+  Use base R only. Do not commit a fixture for a fact that ry gets wrong;
+  add it with the fix.
 - Vendored packages live in `testdata/vendor/<pkg>/` with their
   LICENSE. Snapshots are updated with
   `INSTA_UPDATE=always cargo test -p ry-checker --test vendor_snapshot`

@@ -60,7 +60,9 @@ impl UvrFixture {
     }
 
     fn source(&self) -> PathBuf {
-        self.project.join("R/use.R")
+        // Joined per component: Windows keeps a literal `/` in `join("R/use.R")`,
+        // which would not match the path ry reports.
+        self.project.join("R").join("use.R")
     }
 
     fn command(&self) -> Command {

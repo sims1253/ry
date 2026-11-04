@@ -6,6 +6,16 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Report RY000 for syntax GNU R's `parse()` rejects but tree-sitter
+  accepts: repeated formals (`function(x, x)`), two expressions on one
+  line (`fjkdsfa 2`), a top-level dangling `else`, a `_` placeholder
+  outside a named argument of a `|>` call, unknown or NUL string escapes
+  (`'\q'`, `"\0"`), an exponent without digits (`1e`), and more than 49
+  nested brackets. Two expressions on one line, a dangling `else`, and a
+  misplaced `_` no longer also report RY010 on the misread tree (#841).
+- Stop reporting RY000 for a native-pipe call to a special function that
+  passes the `_` placeholder, such as `` x |> `+`(e1 = _, e2 = 1) ``,
+  which R accepts.
 - Arithmetic with no `Ops` method keeps the class of the longer operand,
   as R's primitive does: the left class wins at equal lengths, and empty
   results drop it. `structure(1, class = "foo") * 2` no longer reports

@@ -52,7 +52,7 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
             } else {
                 ancestor
             };
-            dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf())
+            ry_config::canonical_path(ancestor).unwrap_or_else(|_| ancestor.to_path_buf())
         })
 }
 
@@ -723,7 +723,9 @@ fn package_relative_path(path: &Path, root: &Path) -> Option<PathBuf> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let path = dunce::canonicalize(parent).ok()?.join(path.file_name()?);
+    let path = ry_config::canonical_path(parent)
+        .ok()?
+        .join(path.file_name()?);
     path.strip_prefix(root).ok().map(Path::to_path_buf)
 }
 
@@ -790,7 +792,7 @@ fn visit_r_sources(
             continue;
         }
         visit(file);
-        if let Ok(identity) = dunce::canonicalize(&file.path) {
+        if let Ok(identity) = ry_config::canonical_path(path) {
             supplied.insert(identity);
         }
     }
@@ -798,7 +800,7 @@ fn visit_r_sources(
         return;
     };
     for path in paths {
-        let Ok(identity) = dunce::canonicalize(&path) else {
+        let Ok(identity) = ry_config::canonical_path(&path) else {
             continue;
         };
         if supplied.contains(&identity) {
@@ -1756,7 +1758,7 @@ mod package_grouping_tests {
             format!("Package: {name}\nVersion: 0.0.1\n"),
         )
         .unwrap();
-        dunce::canonicalize(root).unwrap()
+        ry_config::canonical_path(&root).unwrap()
     }
 
     /// Files group by nearest `DESCRIPTION` ancestor: each package's

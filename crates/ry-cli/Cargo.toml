@@ -34,7 +34,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "io-std"] }
 # Parallel file parsing with a parser reused on each rayon thread.
 rayon = { workspace = true }
 sha2 = { workspace = true }
-dunce = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 # Restores the default SIGPIPE action for batch commands.

@@ -275,6 +275,44 @@ mod native_display_tests {
     }
 }
 
+/// `std::fs::canonicalize` with one spelling per path. On Windows std
+/// returns the verbatim `\\?\C:\...` form, which leaks into messages.
+/// `dunce` drops the prefix when the plain form names the same file, but
+/// also keeps it on any path over MAX_PATH (260 characters), so a short
+/// root and its deep descendant got different spellings and stopped
+/// prefix-matching (#880). Length is not needed for the plain form to name
+/// the same file: std adds the prefix back itself when opening a long path.
+pub fn canonical_path(path: &Path) -> std::io::Result<PathBuf> {
+    let resolved = std::fs::canonicalize(path)?;
+    Ok(plain_disk_path(&resolved).unwrap_or(resolved))
+}
+
+/// `\\?\C:\a\b` as `C:\a\b` when each name means the same in plain
+/// form. Only Windows parses the prefix, so elsewhere this is `None`.
+fn plain_disk_path(path: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    match components.next() {
+        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::VerbatimDisk(_)) => {}
+        _ => return None,
+    }
+    // dunce's name rules (reserved DOS names, trailing dots, ...), applied
+    // to one name at a time so its length limit never applies.
+    let plain_names = components.all(|component| match component {
+        Component::RootDir => true,
+        Component::Normal(name) => {
+            let probe = Path::new(r"\\?\C:\").join(name);
+            dunce::simplified(&probe) != probe
+        }
+        _ => false,
+    });
+    if !plain_names {
+        return None;
+    }
+    path.to_str()?.strip_prefix(r"\\?\").map(PathBuf::from)
+}
+
 /// Resolve the longest existing prefix with filesystem semantics. This
 /// preserves the meaning of `symlink/..` and of final symlink files while
 /// still matching unsaved files and virtual descendants under an existing
@@ -284,7 +322,7 @@ pub fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
     let absolute = std::path::absolute(path).ok()?;
     let mut suffix = Vec::new();
     for ancestor in absolute.ancestors() {
-        match dunce::canonicalize(ancestor) {
+        match canonical_path(ancestor) {
             Ok(mut resolved) => {
                 for component in suffix.into_iter().rev() {
                     match component {
@@ -925,6 +963,50 @@ paths = ["inst/shiny/**"]
         let in_r = ScopedPaths::new(root, &["R/**".into()]).unwrap();
         assert!(in_r.matches(&deep.join("a.R")));
         assert!(in_r.matches(&deep.join("unsaved.R")));
+    }
+
+    #[test]
+    fn canonical_paths_deeper_than_max_path_drop_the_verbatim_prefix_and_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let deep = temp.path().join("d".repeat(120)).join("e".repeat(120));
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("a.R"), "x <- 1L\n").unwrap();
+        let resolved = canonical_path(&deep.join("a.R")).unwrap();
+        assert!(resolved.as_os_str().len() > 260);
+        assert!(
+            !resolved.to_string_lossy().starts_with(r"\\?\"),
+            "{resolved:?}"
+        );
+        assert_eq!(fs::read_to_string(&resolved).unwrap(), "x <- 1L\n");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn plain_disk_paths_ignore_length_but_keep_names_win32_would_change() {
+        let long = format!(r"C:\{}\{}\a.R", "d".repeat(150), "e".repeat(150));
+        assert_eq!(
+            super::plain_disk_path(Path::new(&format!(r"\\?\{long}"))),
+            Some(PathBuf::from(long))
+        );
+        for verbatim in [
+            r"\\?\C:\pkg\CON\a.R",
+            r"\\?\C:\pkg\dir.\a.R",
+            r"\\?\C:\pkg\dir \a.R",
+            r"\\?\UNC\server\share\a.R",
+            r"C:\pkg\a.R",
+        ] {
+            assert_eq!(
+                super::plain_disk_path(Path::new(verbatim)),
+                None,
+                "{verbatim}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn plain_disk_paths_keep_unix_backslashes() {
+        assert_eq!(super::plain_disk_path(Path::new(r"\\?\C:\a.R")), None);
     }
 
     #[cfg(unix)]

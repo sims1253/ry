@@ -4,6 +4,12 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, a source whose resolved path is over 260 characters again
+  matches the scoped `paths` of its config and stays in its package's
+  context, rather than being skipped as if it were outside them (#880).
+
 ## [0.12.0] - 2026-11-01
 
 This release adds 17 rules (RY112 to RY128) and checks calls to the

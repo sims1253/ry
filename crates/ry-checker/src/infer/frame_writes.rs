@@ -16,47 +16,43 @@ impl Checker {
     /// Apply the visible frame writes of a call to `scope`, after the call
     /// itself has been inferred.
     pub(crate) fn apply_visible_frame_writes(&self, func: &Expr, args: &[Arg], scope: &mut Scope) {
-        enum Verb {
-            Eval,
-            Evalq,
-            Rm,
-        }
         let Some(name) = callee_name(func) else {
             return;
         };
         let semantic = scope.function_alias(&name).unwrap_or(&name);
-        let verb = match bare_name(semantic_argument_name(semantic)) {
-            "eval" => Verb::Eval,
-            "evalq" => Verb::Evalq,
-            "rm" | "remove" => Verb::Rm,
-            _ => return,
-        };
+        let verb = bare_name(semantic_argument_name(semantic));
+        if matches!(verb, "rm" | "remove") {
+            self.widen_removed_bindings(args, scope);
+            return;
+        }
+        if !matches!(verb, "eval" | "evalq") {
+            return;
+        }
         let matched = match_arguments(&["expr", "envir", "enclos"], args);
         let envir = matched.arg_for_param(1).map(|index| &args[index].value);
-        let expression = matched.arg_for_param(0).map(|index| &args[index].value);
-        match verb {
-            Verb::Eval => {
-                if let Some(Expr::Call {
+        let mut expression = matched.arg_for_param(0).map(|index| &args[index].value);
+        if verb == "eval" {
+            // Only a literal `quote(E)` shows which names `eval()` binds.
+            expression = match expression {
+                Some(Expr::Call {
                     func: quote,
                     args: quoted,
                     ..
-                }) = expression
-                    && matches!(quote.as_ref(), Expr::Ident { name, .. }
-                        if bare_name(semantic_argument_name(name)) == "quote")
-                    && let [quoted] = quoted.as_slice()
-                    && self.targets_this_frame(envir, scope)
+                }) if matches!(quote.as_ref(), Expr::Ident { name, .. }
+                    if bare_name(semantic_argument_name(name)) == "quote") =>
                 {
-                    widen_writes(&quoted.value, scope);
+                    match quoted.as_slice() {
+                        [quoted] => Some(&quoted.value),
+                        _ => None,
+                    }
                 }
-            }
-            Verb::Evalq => {
-                if let Some(expression) = expression
-                    && self.targets_this_frame(envir, scope)
-                {
-                    widen_writes(expression, scope);
-                }
-            }
-            Verb::Rm => self.widen_removed_bindings(args, scope),
+                _ => None,
+            };
+        }
+        if let Some(expression) = expression
+            && self.targets_this_frame(envir, scope)
+        {
+            widen_writes(expression, scope);
         }
     }
 

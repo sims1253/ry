@@ -6,6 +6,12 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Unary `-` and `!` keep the class R's primitive keeps:
+  `-structure(1, class = "foo")` and `!structure(TRUE, class = "foo")`
+  are still a `foo`, as is the empty-input case. `-TRUE` and `!1` coerce
+  and drop the class. `dump-facts` reports the class as unknown where a
+  base `Ops` method decides it (`-Sys.Date()`, `!factor("a")`), and
+  `!` on a raw vector is raw (#890).
 - Report RY000 for syntax GNU R's `parse()` rejects but tree-sitter
   accepts: repeated formals (`function(x, x)`), two expressions on one
   line (`fjkdsfa 2`), a top-level dangling `else`, a `_` placeholder

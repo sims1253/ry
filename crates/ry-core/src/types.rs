@@ -1040,14 +1040,25 @@ impl RType {
     /// `MAX_UNION_MEMBERS`, collapsing to `RType::unknown()` beyond the
     /// cap).
     ///
-    /// Unknown is absorbing: joining anything with unknown yields unknown.
+    /// Unknown is absorbing: joining anything with unknown yields unknown,
+    /// keeping only a length above one that both sides prove.
     /// Known environment and language values join like any other mode.
     ///
     /// The S3 class vector, column schema, and function signature are
     /// preserved only when both sides agree exactly; otherwise dropped.
     pub fn join(self, other: RType) -> RType {
         if self.mode.is_unknown() || other.mode.is_unknown() {
-            return RType::unknown();
+            // A length above one that both sides prove survives the
+            // unknown mode (issue #838). Weaker lengths stay unknown.
+            let length = self.length.join(other.length);
+            return RType {
+                length: if length.proven_above_one() {
+                    length
+                } else {
+                    Length::Unknown
+                },
+                ..RType::unknown()
+            };
         }
         if self == other {
             return self;

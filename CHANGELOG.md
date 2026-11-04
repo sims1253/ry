@@ -4,6 +4,14 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- A `length(x) > 1L` bound now survives a `return()` exit
+  (`if (length(x) <= 1L) return(NULL)`), a false `||` before an early
+  exit (`if (length(x) <= 1L || is.null(y)) stop()`), and a join with a
+  value of unknown mode, so RY001 and RY002 report `if (x)` after those
+  guards, where R errors (#838).
+
 ## [0.12.0] - 2026-11-01
 
 This release adds 17 rules (RY112 to RY128) and checks calls to the

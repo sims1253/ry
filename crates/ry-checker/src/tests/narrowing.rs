@@ -513,3 +513,57 @@ fn length_lower_bound_propagates_through_construction_and_joins() {
         );
     }
 }
+
+#[test]
+fn length_lower_bound_survives_return_disjunction_and_opaque_join() {
+    // Issue #838: a `return()` exit, a false `||` before an early exit,
+    // and a join with an opaque bounded value all keep "at least 2".
+    for source in [
+        "f <- function(x) { if (length(x) <= 1L) return(NULL); if (x) 1L }",
+        "f <- function(x) { if (!(length(x) > 1L)) return(invisible()); while (x) break }",
+        "f <- function(x, y) { if (length(x) <= 1L || is.null(y)) stop('short'); if (x) 1L }",
+        "f <- function(x, y) { if (is.null(y) || length(x) <= 1L) stop('short'); if (x) 1L }",
+        "f <- function(x, flag) { if (length(x) > 1L) { y <- if (flag) x else c(TRUE, FALSE); if (y) 1L } }",
+        "f <- function(x, flag) { if (length(x) > 1L) { y <- if (flag) c('a', 'b', 'c') else x; switch(y, a = 1L) } }",
+    ] {
+        let diagnostics = check(source);
+        assert_eq!(
+            diagnostics.iter().filter(|d| d.code == "RY001").count(),
+            1,
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn length_lower_bound_exit_controls_stay_silent() {
+    for source in [
+        // The exit runs when the vector is long, or the arm continues.
+        "f <- function(x) { if (length(x) > 1L) return(NULL); if (x) 1L }",
+        "f <- function(x) { if (length(x) <= 1L) x <- TRUE; if (x) 1L }",
+        "f <- function(x) { if (length(x) <= 1L) return(NULL) else x <- x[1]; if (x) 1L }",
+        "f <- function(x) { if (length(x) <= 1L) lapply(1, function(i) return(i)); if (x) 1L }",
+        // A project `return` is an ordinary call that continues.
+        "f <- function(x) { return <- function(v) v; if (length(x) <= 1L) return(NULL); if (x) 1L }",
+        // A defaulted parameter keeps its omitted-call type.
+        "f <- function(x = NULL) { if (length(x) <= 1L) return(NULL); if (x) 1L }",
+        // The bound is used up, rebound, or about another value.
+        "f <- function(x) { if (length(x) <= 1L) return(NULL); if (x[[1]]) 1L }",
+        "f <- function(x) { if (length(x) <= 1L) return(NULL); x <- x[1]; if (x) 1L }",
+        "f <- function(x, k) { if (length(x) <= k) return(NULL); if (x) 1L }",
+        // A false `&&` proves neither side; a true `||` proves nothing.
+        "f <- function(x, y) { if (length(x) <= 1L && is.null(y)) stop('short'); if (x) 1L }",
+        "f <- function(x, y) { if (length(x) > 1L || is.null(y)) stop('long'); if (x) 1L }",
+        "f <- function(x) { if (length(x) <= 1L || { x <- TRUE; FALSE }) stop('short'); if (x) 1L }",
+        // A join with a scalar, an unbounded, or an unguarded value.
+        "f <- function(x, flag) { if (length(x) > 1L) { y <- if (flag) x else TRUE; if (y) 1L } }",
+        "f <- function(x, z, flag) { if (length(x) > 1L) { y <- if (flag) x else z; if (y) 1L } }",
+        "f <- function(x, flag) { y <- if (flag) x else c(TRUE, FALSE); if (y) 1L }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

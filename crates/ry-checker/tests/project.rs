@@ -2278,8 +2278,9 @@ fn deepest_admitted_calls_and_subsets_are_checked_on_a_small_stack() {
                     .flat_map(|(_, diagnostics)| diagnostics)
                     .map(|diagnostic| diagnostic.code)
                     .collect();
+                // Past 49 brackets R rejects these too, which RY000 reports
+                // without stopping the checker (#841); stack use is the point.
                 assert!(codes.contains(&"RY010"), "{source}: {codes:?}");
-                assert!(!codes.contains(&"RY000"), "{source}: {codes:?}");
             }
         })
         .unwrap()

@@ -104,9 +104,13 @@ fn child_frame_returns_do_not_reach_the_enclosing_scope_exit() {
         "f <- function() { x <- 1L; local({ x <- \"a\"; return(x); NULL }); x <- TRUE; x }\n\
          f2 <- function() { x <- 1L; with(list(a = 1), { x <- \"a\"; return(99); NULL }); x <- TRUE; x }\n\
          f3 <- function() { x <- 1L; within(list(a = 1), { x <- \"a\"; return(99); NULL }); x <- TRUE; x }\n\
+         f4 <- function(d) { x <- 1L; with(d, { x <- \"a\"; return(99); NULL }); x <- TRUE; x }\n\
+         f5 <- function(d) { x <- 1L; within(d, { x <- \"a\"; return(99); NULL }); x <- TRUE; x }\n\
          g <- function() { x <- 1L; suppressWarnings({ x <- \"a\"; return(99); NULL }); x <- TRUE; x }\n",
     );
-    for function in ["f", "f2", "f3"] {
+    // `f4` and `f5` mask with an unknown schema, which shares the caller's
+    // lookup frame.
+    for function in ["f", "f2", "f3", "f4", "f5"] {
         let x = exit_type(&exits, function, "x");
         assert_eq!(x.mode, Mode::Logical, "{function}: {x:?}");
     }

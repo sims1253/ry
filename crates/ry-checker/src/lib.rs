@@ -833,6 +833,24 @@ pub struct Scope {
     pub(crate) unreachable: bool,
 }
 
+/// The frame a `return()` leaves. A data mask without a column schema shares
+/// its caller's lookup frame, so the mask is part of the identity: every mask
+/// gets its own `DataMaskFrame`, while a function body defined inside one
+/// inherits it.
+#[derive(Clone)]
+pub(crate) struct ExitFrame(Option<Arc<FunctionLookupFrame>>, Option<Arc<DataMaskFrame>>);
+
+impl ExitFrame {
+    pub(crate) fn of(scope: &Scope) -> Self {
+        Self(scope.outward_functions.clone(), scope.data_mask.clone())
+    }
+
+    pub(crate) fn same(&self, scope: &Scope) -> bool {
+        self.0.as_ref().map(Arc::as_ptr) == scope.outward_functions.as_ref().map(Arc::as_ptr)
+            && self.1.as_ref().map(Arc::as_ptr) == scope.data_mask.as_ref().map(Arc::as_ptr)
+    }
+}
+
 impl Scope {
     /// Start a function, deferred expression, or speculative walk without
     /// inheriting transfers from the caller's active loop.
@@ -1908,7 +1926,9 @@ pub struct Checker {
     // the body's execution frame and the joined states of the paths that
     // left it through `return()`. Only scope recording reads them, so
     // diagnostics cannot move.
-    scope_exit_paths: Vec<(Option<Arc<FunctionLookupFrame>>, Option<Box<Scope>>)>,
+    /// Per function body being recorded: the frame it runs in (lookup frame
+    /// and data mask) and the join of its `return()` states.
+    scope_exit_paths: Vec<(ExitFrame, Option<Box<Scope>>)>,
     // Assignment-site types for editor hints, captured only on request.
     assignment_types: Option<HashMap<Span, RType>>,
     // Armed vacuous-all guards (RY110), installed by the pass-3 walk at
@@ -2440,8 +2460,7 @@ impl Checker {
     /// be walked in `body`. Pair with [`Self::end_exit_paths`].
     pub(crate) fn begin_exit_paths(&mut self, body: &Scope) {
         if self.capture_scopes {
-            self.scope_exit_paths
-                .push((body.outward_functions.clone(), None));
+            self.scope_exit_paths.push((ExitFrame::of(body), None));
         }
     }
 

@@ -64,7 +64,7 @@ impl Checker {
             return;
         }
         if let Some((frame, paths)) = self.scope_exit_paths.last_mut()
-            && frame.as_ref().map(Arc::as_ptr) == scope.outward_functions.as_ref().map(Arc::as_ptr)
+            && frame.same(scope)
         {
             join_path(paths, scope);
         }

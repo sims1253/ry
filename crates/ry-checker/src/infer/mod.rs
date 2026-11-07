@@ -19,6 +19,7 @@ pub(crate) mod construct;
 mod contract;
 pub(crate) mod custom_operator;
 pub(crate) mod dynamic_closure;
+mod frame_writes;
 pub(crate) mod ifelse;
 pub(crate) mod index;
 pub(crate) mod loops;
@@ -1432,6 +1433,16 @@ impl Checker {
             self.load_hook_frames.pop();
         }
         self.check_declaration_return(span, function_name, declaration.as_ref());
+        if self.capture_scopes && !self.discarding {
+            // `on.exit()` code runs after the last statement, so its writes
+            // belong to the scope-exit snapshot only (#867). The fall-through
+            // state's unknown absorbs the `return()` paths' types in the join.
+            for name in crate::collect::on_exit_frame_writes(body).names {
+                if fn_scope.get(&name).is_some() {
+                    fn_scope.insert(name, RType::unknown());
+                }
+            }
+        }
         self.record_scope(function_name, span, params, &fn_scope, returned);
         self.superassigned_captures.pop();
         self.enclosing_formals.pop();
@@ -3142,7 +3153,7 @@ impl Checker {
         }
 
         if self.assign_class_attribute(target, class_write, scope)
-            || self.assign_replacement_target(target, scope)
+            || self.assign_replacement_target(target, &vt, scope)
         {
             return false;
         }
@@ -3241,13 +3252,13 @@ impl Checker {
                 for argument in args {
                     self.infer(&argument.value, scope);
                 }
-                // An unmodeled replacement (`oldClass<-`, `attributes<-`, a
-                // project `f<-`) may attach a class, so a known environment
-                // or language binding cannot keep its classless proof.
+                // An unaudited replacement (`oldClass<-`, `attributes<-`, a
+                // project `f<-`) returns whatever its setter builds, so no
+                // mode, length, or class survives it (#862). Audited setters
+                // return before reaching here. An already unknown binding
+                // keeps its markers, as for `x[i] <- v`.
                 if let Some(Expr::Ident { name, .. }) = args.first().map(|arg| &arg.value)
-                    && scope
-                        .get(name)
-                        .is_some_and(|ty| ty.mode.is_known_non_vector())
+                    && scope.get(name).is_some_and(|ty| *ty != RType::unknown())
                 {
                     scope.insert(name.clone(), RType::unknown());
                 }
@@ -3341,13 +3352,41 @@ impl Checker {
     /// Replacement calls such as `dimnames(x) <- value` mutate `x`; the
     /// accessor expression is not an ordinary read/call that should be
     /// argument-checked. Keep the binding but conservatively forget its shape.
-    pub(crate) fn assign_replacement_target(&mut self, target: &Expr, scope: &mut Scope) -> bool {
+    pub(crate) fn assign_replacement_target(
+        &mut self,
+        target: &Expr,
+        value: &RType,
+        scope: &mut Scope,
+    ) -> bool {
         let Expr::Call { func, args, .. } = target else {
             return false;
         };
         let Expr::Ident { name: accessor, .. } = func.as_ref() else {
             return false;
         };
+        if accessor == "length"
+            && let [
+                Arg {
+                    name: None,
+                    value: Expr::Ident { name, .. },
+                    ..
+                },
+            ] = args.as_slice()
+            && let Some(resized) = scope
+                .get(name)
+                .and_then(|base| self.base_length_replacement(base, value, scope))
+        {
+            scope.insert(name.clone(), resized);
+            return true;
+        }
+        if let Some((name, kept)) = self.audited_base_setter(accessor, args, scope) {
+            let had_list_origin = scope.has_list_origin(&name);
+            scope.insert(name.clone(), kept);
+            if had_list_origin {
+                scope.mark_list_origin(name);
+            }
+            return true;
+        }
         if !matches!(
             accessor.as_str(),
             "names"
@@ -3374,6 +3413,174 @@ impl Checker {
             scope.mark_list_origin(name.clone());
         }
         true
+    }
+
+    /// The type a base setter whose effect GNU R 4.6.1 proves leaves on its
+    /// target, or `None` when the write may dispatch, the setter may be
+    /// masked, or the effect is not provable (the target then widens):
+    ///
+    /// - `comment<-` and `attr<-` with an ordinary attribute name are not
+    ///   generic and keep the whole value, data frames and lists included.
+    /// - `environment<-` keeps a value that is not a function. A function
+    ///   keeps its mode, but what it returns may change.
+    /// - `levels<-`, `names<-`, `dim<-` and `dimnames<-` are internal
+    ///   generics, which dispatch only on a class attribute
+    ///   (`levels<-.factor`, `dimnames<-.data.frame`). A provably classless
+    ///   value keeps its mode, length and class. `names<-`, `dim<-` and
+    ///   `dimnames<-` replace or drop the names a list schema records.
+    /// - `is.na<-` dispatches with `UseMethod`, implicit classes included.
+    ///   With no project method, a classless vector or list keeps its mode
+    ///   and may grow (`is.na(x) <- 5` pads to length 5).
+    ///
+    /// `storage.mode<-` and `mode<-` change the mode, and `units<-` works
+    /// only through `units<-.difftime`, so they stay unaudited.
+    fn audited_base_setter(
+        &self,
+        accessor: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Option<(String, RType)> {
+        let (target, rest) = args.split_first()?;
+        let Expr::Ident { name, .. } = &target.value else {
+            return None;
+        };
+        if target.name.as_deref().is_some_and(|name| name != "x") {
+            return None;
+        }
+        let base = scope.get(name)?;
+        if *base == RType::unknown()
+            || !self.base_setter_is_unmasked(&format!("{accessor}<-"), scope)
+        {
+            return None;
+        }
+        fn classless(ty: &RType) -> bool {
+            !ty.class.storage_proxy
+                && ty.class.is_classless()
+                && ty
+                    .members
+                    .iter()
+                    .flat_map(|members| members.iter())
+                    .all(classless)
+        }
+        let kept = match (accessor, rest) {
+            ("comment", []) => base.clone(),
+            ("attr", [which])
+                if which.name.as_deref().is_none_or(|name| name == "which")
+                    // Attributes that change what ry tracks or what R
+                    // dispatches on take the unaudited path.
+                    && matches!(&which.value, Expr::String(attribute, _)
+                        if !matches!(
+                            attribute.as_str(),
+                            "names" | "dim" | "dimnames" | "class" | "tsp" | "row.names" | "levels"
+                        )) =>
+            {
+                base.clone()
+            }
+            ("environment", []) if !base.mode.is_unknown() && base.mode != Mode::Function => {
+                base.clone()
+            }
+            ("levels", []) if classless(base) => base.clone(),
+            // A union's members would keep their old schemas.
+            ("names" | "dim" | "dimnames", []) if classless(base) && base.members.is_none() => {
+                RType {
+                    columns: None,
+                    ..base.clone()
+                }
+            }
+            ("is.na", [])
+                if classless(base)
+                    && matches!(
+                        base.mode,
+                        Mode::Logical
+                            | Mode::Integer
+                            | Mode::Double
+                            | Mode::Complex
+                            | Mode::Character
+                            | Mode::List
+                    )
+                    && !self.implicit_class_method_may_apply("is.na<-", base, scope) =>
+            {
+                RType::new(base.mode, Length::lower_bound(base.length.min_possible()))
+            }
+            _ => return None,
+        };
+        Some((name.clone(), kept))
+    }
+
+    /// Whether `UseMethod(generic)` may find a method other than base's
+    /// default for a classless value: a project method for its implicit
+    /// class (`is.na<-.character`, `is.na<-.numeric`, `is.na<-.matrix`) or
+    /// a project `is.na<-.default`.
+    fn implicit_class_method_may_apply(&self, generic: &str, base: &RType, scope: &Scope) -> bool {
+        let implicit: &[&str] = match base.mode {
+            Mode::Logical => &["logical"],
+            Mode::Integer => &["integer", "numeric"],
+            Mode::Double => &["double", "numeric"],
+            Mode::Complex => &["complex"],
+            Mode::Character => &["character"],
+            Mode::List => &["list"],
+            _ => return true,
+        };
+        // A value with `dim` also dispatches on "matrix" and "array"; ry does
+        // not track `dim`, so those count for every value.
+        let groups: [&[&str]; 3] = [implicit, &["matrix", "array"], &["default"]];
+        groups.into_iter().any(|classes| {
+            let receiver =
+                RType::new(base.mode, base.length).with_class(ClassVector::from_slice(classes));
+            self.s3_method_may_apply(generic, &receiver, scope)
+        }) || self.project_defines_method(|name| name == generic)
+    }
+
+    /// Whether `setter` is base R's: no data mask, project base stub, or
+    /// binding of the name may replace it.
+    fn base_setter_is_unmasked(&self, setter: &str, scope: &Scope) -> bool {
+        !scope.data_mask_unknown
+            && !self.user_stubs.contains_key("base")
+            && self.resolves_to_base(setter, scope)
+            && !self.literal_bindings_may_be_shadowed(
+                [setter, format!("`{setter}`").as_str()],
+                &HashSet::new(),
+                scope,
+            )
+    }
+
+    /// Base `length<-` on a classless atomic vector or list keeps its
+    /// storage mode and truncates or pads (with `NA` or `NULL`) to the new
+    /// length, dropping `dim`. A classed value may dispatch to a method.
+    fn base_length_replacement(&self, base: &RType, value: &RType, scope: &Scope) -> Option<RType> {
+        // A storage proxy (`Sys.Date() + 1`) hides a class R keeps.
+        if base.class.storage_proxy
+            || !base.class.is_classless()
+            || !matches!(
+                base.mode,
+                Mode::Logical
+                    | Mode::Integer
+                    | Mode::Double
+                    | Mode::Complex
+                    | Mode::Character
+                    | Mode::Raw
+                    | Mode::List
+            )
+            || !self.base_setter_is_unmasked("length<-", scope)
+        {
+            return None;
+        }
+        // R truncates a fractional length; NA or a negative one is an error.
+        let length = match value.value_facts.numeric_bounds {
+            Some((low, high))
+                if low == high
+                    && value.length == Length::One
+                    && matches!(value.mode, Mode::Integer | Mode::Double) =>
+            {
+                let length = f64::from_bits(low);
+                if !(length.is_finite() && length >= 0.0) {
+                    return None;
+                }
+                crate::exact_length(length as usize)
+            }
+            _ => Length::Unknown,
+        };
+        Some(RType::new(base.mode, length))
     }
 
     pub(crate) fn assign_nested_record_path(

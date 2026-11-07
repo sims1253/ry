@@ -70,6 +70,21 @@ All notable changes to ry are documented in this file.
   Before, `x <- 1L; for (i in seq_len(n)) x <- "a"` exported `x` as
   character only and `i` as integer only. A loop proven to run, such as
   `for (i in 1:3)`, keeps the body's types (#860).
+- A replacement function ry has not audited, such as `oldClass<-`,
+  `attributes<-`, or a project `foo<-`, now widens its target to unknown.
+  `dump-facts` no longer exports the type and class from before the
+  write. Base setters whose effect R proves keep what R keeps: `length<-`
+  on a classless vector keeps the mode and takes the new length,
+  `comment<-` and `attr<-` with an ordinary name keep the whole value,
+  `levels<-`, `names<-`, `dim<-` and `dimnames<-` keep a classless value's
+  mode, length and class, `is.na<-` keeps a classless vector's mode, and
+  `environment<-` keeps a value that is not a function. A setter that may
+  dispatch to a method still widens (#862).
+- `eval(quote(x <- v))`, `evalq(x <- v)`, `rm(x)`, and
+  `assign("x", v, envir = environment())` now update `x` in the current
+  frame, and `on.exit(x <- v)` widens `x` in the function's scope-exit
+  snapshot. `rm(x)` exports `x` as unknown rather than removing it, so a
+  later read stays free of RY010 when other code rebinds the name (#867).
 
 ## [0.12.0] - 2026-11-01
 

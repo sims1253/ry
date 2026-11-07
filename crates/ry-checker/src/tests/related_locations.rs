@@ -129,7 +129,6 @@ fn unproven_origins_keep_the_finding_without_a_location() {
         &format!(
             "{helper}length.foo <- function(x) {{\n  do.call(\"<<-\", list(\"helper\", function(x) x))\n  1L\n}}\nuse <- function(x) {{\n  length(x)\n  helper(1)\n}}\n"
         ),
-        &format!("{helper}formals(helper) <- pairlist(x = 1)\nhelper(1)\n"),
         // pullfrog: a short-circuit operand's call reaches the continuation.
         &format!(
             "{helper}flag <- TRUE\nok <- flag && do.call(\"<-\", list(\"helper\", function(x) x))\nhelper(1)\n"
@@ -159,6 +158,15 @@ fn unproven_origins_keep_the_finding_without_a_location() {
             "{tail}: {found:?}"
         );
     }
+}
+
+/// `formals<-` replaces the closure, so the call is no longer checked
+/// against the literal's formals (#862). R: `names(formals(helper))` is `"x"`.
+#[test]
+fn a_replaced_closure_is_not_checked_against_the_literal() {
+    let src =
+        "helper <- function(x, scale) x * scale\nformals(helper) <- pairlist(x = 1)\nhelper(1)\n";
+    assert_eq!(arity(&check(src)), []);
 }
 
 #[test]

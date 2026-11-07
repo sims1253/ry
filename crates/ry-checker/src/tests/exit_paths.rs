@@ -129,3 +129,14 @@ fn returns_of_a_function_defined_in_a_mask_join_its_exit() {
     assert!(admits(&x, Mode::Integer), "{x:?}");
     assert!(admits(&x, Mode::Character), "{x:?}");
 }
+
+/// `on.exit()` code also runs when the function leaves through `return()`,
+/// so its writes reach every exit path (#867 with #859).
+#[test]
+fn on_exit_writes_reach_return_paths_too() {
+    let exits = function_exits(
+        "f <- function(flag) { x <- 1L; on.exit(x <- \"a\"); if (flag) return(x); x }\n",
+    );
+    let x = exit_type(&exits, "f", "x");
+    assert!(admits(&x, Mode::Character), "{x:?}");
+}

@@ -1118,10 +1118,18 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
     let mut stack = vec![(root, 0_usize, 0_usize, 0_usize)];
     while let Some((node, depth, arms, brackets)) = stack.pop() {
         let brackets = brackets
-            + usize::from(matches!(
-                node.kind(),
-                "arguments" | "parameters" | "parenthesized_expression" | "braced_expression"
-            ));
+            + match node.kind() {
+                // R pushes one context entry per `[` of a `[[`.
+                "arguments"
+                    if node
+                        .child_by_field_name("open")
+                        .is_some_and(|open| open.kind() == "[[") =>
+                {
+                    2
+                }
+                "arguments" | "parameters" | "parenthesized_expression" | "braced_expression" => 1,
+                _ => 0,
+            };
         if depth > MAX_SYNTAX_DEPTH {
             let position = node.start_position();
             let (line, col) = (position.row + 1, position.column + 1);
@@ -1998,6 +2006,16 @@ mod tests {
                     // 43 nested closures stay under R's bracket limit.
                     (
                         format!("{}1{}", "f <- function() { ".repeat(43), " }".repeat(43)),
+                        false,
+                    ),
+                    // Each `[[` is two of R's brackets: 25 of them overflow,
+                    // 24 parse (both past the cap through 110 unary minuses).
+                    (
+                        format!("{}{}1{}", "x[[".repeat(25), "-".repeat(110), "]]".repeat(25)),
+                        true,
+                    ),
+                    (
+                        format!("{}{}1{}", "x[[".repeat(24), "-".repeat(110), "]]".repeat(24)),
                         false,
                     ),
                     // Real nesting around a chain still hits the cap.

@@ -51,6 +51,11 @@ All notable changes to ry are documented in this file.
   count of the other arguments as a lower bound (#864).
 ### Fixed
 
+- A `length(x) > 1L` bound now survives a `return()` exit
+  (`if (length(x) <= 1L) return(NULL)`), a false `||` before an early
+  exit (`if (length(x) <= 1L || is.null(y)) stop()`), and a join with a
+  value of unknown mode, so RY001 and RY002 report `if (x)` after those
+  guards, where R errors (#838).
 - `dump-facts` joins the state at each `return()` into a function's scope
   snapshot. Before, `x <- 1L; if (c) return(x); x <- "a"` exported `x` as
   character only (#859).

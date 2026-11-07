@@ -12,7 +12,7 @@ pub(crate) struct LoopExitFrame {
 
 /// Accumulate alternative paths. Allocate a scope snapshot only for the first
 /// transfer; later transfers join their binding types into that snapshot.
-fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
+pub(crate) fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
     let Some(joined) = paths else {
         *paths = Some(Box::new(incoming.clone()));
         return;
@@ -55,6 +55,21 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
 }
 
 impl Checker {
+    /// Facts capture only: `return()` leaves the innermost function body
+    /// being recorded with this state. Discarding re-walks add nothing.
+    /// A `return()` in a block that runs in another frame (`local()`, a
+    /// callback, a data mask) leaves that evaluation, not the body.
+    pub(crate) fn record_return_path(&mut self, scope: &Scope) {
+        if self.discarding || scope.unreachable {
+            return;
+        }
+        if let Some((frame, paths)) = self.scope_exit_paths.last_mut()
+            && frame.same(scope)
+        {
+            join_path(paths, scope);
+        }
+    }
+
     fn unmasked_loop_transfer(&self, name: &str, scope: &Scope) -> bool {
         matches!(name, "break" | "next") && !scope.uncertainty.effects && {
             let escaped = format!("`{name}`");
@@ -140,15 +155,19 @@ impl Checker {
         scope.clear_condition_aliases();
         let frame = self.loop_frames.pop().expect("active loop frame");
         let has_transfer = frame.breaks.is_some() || frame.nexts.is_some();
+        // A finite loop whose entry is not established may run zero times
+        // (`for (i in seq_len(0))`, `while (FALSE)`), so its entry state
+        // is an exit path even without a break or next.
+        let joins_paths = has_transfer || !(always_true || entered);
         let body_unreachable = inner.unreachable;
         // An unmodelled path may mutate bindings or control syntax before
         // leaving the loop. A previously recorded safe break cannot erase it.
         scope.uncertainty |= inner.uncertainty;
         let mut exits = frame.breaks;
-        if has_transfer && inner.uncertainty.effects {
+        if joins_paths && inner.uncertainty.effects {
             join_path(&mut exits, &inner);
         }
-        if has_transfer {
+        if joins_paths {
             // A literal-TRUE loop can leave only through break. Finite loops
             // can also finish after the body or a next; their initial state
             // remains possible unless entry was established.
@@ -161,11 +180,24 @@ impl Checker {
                     join_path(&mut exits, next);
                 }
                 if !entered {
+                    // A name unbound before the loop has no value on the
+                    // zero-iteration path, so reading it there errors
+                    // first. As for an `if` arm that never binds it, that
+                    // path agrees with the other exits' list origin.
+                    let unbound_lists: Vec<String> = exits
+                        .iter()
+                        .flat_map(|exit| exit.list_origin_bindings.iter())
+                        .filter(|name| scope.get(name).is_none())
+                        .cloned()
+                        .collect();
                     join_path(&mut exits, scope);
+                    if let Some(exit) = exits.as_mut() {
+                        exit.list_origin_bindings.extend(unbound_lists);
+                    }
                 }
             }
         }
-        let exits = if has_transfer {
+        let exits = if joins_paths {
             exits.map(|exit| *exit)
         } else {
             Some(inner)

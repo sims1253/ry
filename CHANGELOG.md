@@ -55,6 +55,21 @@ All notable changes to ry are documented in this file.
   bound, and a NULL value, which deletes, widens it (#863).
 - `list(...)` no longer has length 1. It has unknown length, or the
   count of the other arguments as a lower bound (#864).
+### Fixed
+
+- A `length(x) > 1L` bound now survives a `return()` exit
+  (`if (length(x) <= 1L) return(NULL)`), a false `||` before an early
+  exit (`if (length(x) <= 1L || is.null(y)) stop()`), and a join with a
+  value of unknown mode, so RY001 and RY002 report `if (x)` after those
+  guards, where R errors (#838).
+- `dump-facts` joins the state at each `return()` into a function's scope
+  snapshot. Before, `x <- 1L; if (c) return(x); x <- "a"` exported `x` as
+  character only (#859).
+- A loop that may run zero times keeps its entry state as a possible exit,
+  and a `for` variable is unknown after it when the sequence may be empty.
+  Before, `x <- 1L; for (i in seq_len(n)) x <- "a"` exported `x` as
+  character only and `i` as integer only. A loop proven to run, such as
+  `for (i in 1:3)`, keeps the body's types (#860).
 
 ## [0.12.0] - 2026-11-01
 

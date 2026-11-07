@@ -301,9 +301,10 @@ lead <- function(a, ...) { rest <- list(a, ...); rest }
         binding(scope, name)["type"].clone()
     };
 
+    // `factor()` has no known length, so the loop may run zero times and
+    // `v` may still be unbound after it (#860); it must not claim integer.
     let v = ty("factor_loop", "v");
-    assert_eq!(v["mode"], "character", "{v}");
-    assert_eq!(v["length"], json!({"kind": "known", "value": 1}), "{v}");
+    assert_eq!(v["mode"], "opaque", "{v}");
     let v = ty("date_loop", "v");
     assert_eq!(v["mode"], "double", "{v}");
     assert_eq!(v["length"], json!({"kind": "known", "value": 1}), "{v}");

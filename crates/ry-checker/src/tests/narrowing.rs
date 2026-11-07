@@ -523,6 +523,9 @@ fn length_lower_bound_survives_return_disjunction_and_opaque_join() {
         "f <- function(x) { if (!(length(x) > 1L)) return(invisible()); while (x) break }",
         "f <- function(x, y) { if (length(x) <= 1L || is.null(y)) stop('short'); if (x) 1L }",
         "f <- function(x, y) { if (is.null(y) || length(x) <= 1L) stop('short'); if (x) 1L }",
+        // A scalar-length disjunct about another value keeps the bound.
+        "f <- function(x, y) { if (length(x) <= 1L || length(y) != 1L) stop('bad'); if (x) 1L }",
+        "f <- function(x, y, z) { if (length(x) <= 1L || length(y) != 1L || is.null(z)) stop('bad'); if (x) 1L }",
         "f <- function(x, flag) { if (length(x) > 1L) { y <- if (flag) x else c(TRUE, FALSE); if (y) 1L } }",
         "f <- function(x, flag) { if (length(x) > 1L) { y <- if (flag) c('a', 'b', 'c') else x; switch(y, a = 1L) } }",
     ] {
@@ -557,6 +560,8 @@ fn length_lower_bound_exit_controls_stay_silent() {
         "f <- function(x, y) { if (length(x) <= 1L && is.null(y)) stop('short'); if (x) 1L }",
         "f <- function(x, y) { if (length(x) > 1L || is.null(y)) stop('long'); if (x) 1L }",
         "f <- function(x) { if (length(x) <= 1L || { x <- TRUE; FALSE }) stop('short'); if (x) 1L }",
+        // The scalar-length disjunct is about `x` itself.
+        "f <- function(x, y) { if (length(y) <= 1L || length(x) != 1L) stop('bad'); if (x) 1L }",
         // A join with a scalar, an unbounded, or an unguarded value.
         "f <- function(x, flag) { if (length(x) > 1L) { y <- if (flag) x else TRUE; if (y) 1L } }",
         "f <- function(x, z, flag) { if (length(x) > 1L) { y <- if (flag) x else z; if (y) 1L } }",

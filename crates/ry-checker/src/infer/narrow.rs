@@ -270,9 +270,6 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
             rhs,
             ..
         } => {
-            if let Some((var, target)) = scalar_false_path_fact(cond) {
-                return Narrowing::ScalarElse { var, target };
-            }
             // A false disjunction proves every disjunct false, so each
             // `is.null(x)` disjunct makes `x` non-NULL whatever the others
             // test (`if (is.null(x) || x == 1) return(NULL)`, #692): the
@@ -283,11 +280,18 @@ pub(crate) fn extract_builtin_type_narrowing(cond: &Expr) -> Narrowing {
                 .filter(|fact| !fact.mentions_where(&|var| may_assign(rhs, var)))
                 .chain(disjunct_else_facts(extract_builtin_type_narrowing(rhs)))
                 .collect();
+            // A `length(y) != 1L` disjunct holds alongside the others
+            // (`length(x) <= 1L || length(y) != 1L`, #838). It is the base
+            // because it acts only on the else branch.
+            let base = match scalar_false_path_fact(cond) {
+                Some((var, target)) => Narrowing::ScalarElse { var, target },
+                None => Narrowing::None,
+            };
             if on_false.is_empty() {
-                return Narrowing::None;
+                return base;
             }
             Narrowing::Compound {
-                base: Box::new(Narrowing::None),
+                base: Box::new(base),
                 on_true: Vec::new(),
                 on_false,
             }
@@ -415,7 +419,8 @@ fn conjunct_then_facts(conjunct: Narrowing) -> Vec<Narrowing> {
 
 /// The facts a false disjunct contributes to a disjunction: the
 /// non-NULL facts below, or a proven length lower bound
-/// (`length(x) <= 1L || is.null(y)`, issue #838).
+/// (`length(x) <= 1L || is.null(y)`, issue #838). A nested chain's
+/// scalar base is dropped: the outer chain recomputes it over every leaf.
 fn disjunct_else_facts(disjunct: Narrowing) -> Vec<Narrowing> {
     let is_bound = |fact: &Narrowing| matches!(fact, Narrowing::LengthAtLeast { .. });
     match disjunct {
@@ -423,7 +428,7 @@ fn disjunct_else_facts(disjunct: Narrowing) -> Vec<Narrowing> {
             base,
             on_true,
             on_false,
-        } if matches!(*base, Narrowing::None)
+        } if matches!(*base, Narrowing::None | Narrowing::ScalarElse { .. })
             && on_true.is_empty()
             && on_false
                 .iter()

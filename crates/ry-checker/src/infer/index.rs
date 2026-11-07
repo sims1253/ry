@@ -2074,6 +2074,7 @@ mod method_lookup_tests {
             len: 2,
             known: true,
             guarded: false,
+            storage_proxy: false,
         };
         assert!(checker.class_may_have_method("$", &partial, &scope));
         assert!(!checker.class_may_have_method("$", &ClassVector::single("Date"), &scope));

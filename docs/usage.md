@@ -385,14 +385,19 @@ These spellings can cause false diagnostics or prevent useful diagnostics when
 parser recovery loses surrounding code. We accept this upstream limitation
 instead of maintaining a separate grammar patch.
 
-ry rejects source whose tree-sitter syntax tree exceeds 128 nested levels,
-with a parser error that identifies ry’s nesting limit and the source location.
-This protects recursive analysis on ordinary worker-thread stacks; it is not
-an R language limit. The bound measures syntax-tree depth, not line count or
-file size; wide argument lists remain allowed. A left-associative chain of
-binary operators (`1 + 1 + ...`, `x |> f() |> g()`) is flat R code and does
-not count toward the limit however long it is; nesting such as `f(g(h(...)))`
-and `{ { ... } }` still counts.
+ry does not check a file whose syntax tree nests deeper than 128 levels, or
+that has more than 1024 nested `else if` arms. This protects recursive analysis
+on ordinary worker-thread stacks; it is not an R language limit. R's parser
+allows that depth, so ry reports the file as one RY129 warning ("file not
+checked") rather than a syntax error, and it does not fail the run. The bound measures nesting,
+not line count or file size. Argument and parameter lists, flat `else if`
+chains, and left-associative operator chains (`1 + 1 + ...`,
+`x |> f() |> g()`) do not count toward it, so `f(g(h(...)))` and `x[y[i]]`
+cost one level per call, like `((x))`. R's parser itself stops at 49 open
+brackets ("contextstack overflow"), well under the cap. A file nested that deep
+past the cap is invalid R, and ry reports RY000 with R's message. Deeper
+unbracketed nesting, such as hundreds of nested `function()` literals, unary
+operators, or `<-` assignments, gets RY129.
 
 When two operands have different S3 methods, ry follows `chooseOpsMethod()`
 only when both methods and the choosers it consults are top-level `<-` or `=`

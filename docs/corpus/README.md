@@ -14,7 +14,7 @@ batch, such as `manual-audit` or `P2`.
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
 | [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 82 | 37 / 29 / 0 (+16 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 309 | 87 / 222 / 0 | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 310 | 88 / 222 / 0 | hermetic (strict CI gate) |
 
 The `0.7.1` in the tidyverse ledger's filename is historical. The `ry` column
 gives the version that produced its diagnostics. The
@@ -49,6 +49,31 @@ digest or an ignored `.full.txt` report.
 `ry check --output-format json` results. Posit `--check` runs compare the
 processed tier against the committed entries and print a unified diff for any
 message or severity drift. A full non-check run updates all entries.
+
+## Parse differential
+
+[`parse-differential.json`](parse-differential.json) ratchets GNU R's
+`parse()` verdict against ry's RY000 for every `.R`/`.r` file of each
+corpus (#841). This includes test fixtures and `.Rbuildignore`d files,
+which ry checks when they are named explicitly. The default manifest also
+pins base R's own sources (`# parse-source:` in `ecosystem/packages.txt`,
+`src/library` and `tests` of R 4.6.1).
+
+`ecosystem/parse-accept.R` classifies all files in one R process
+(`parse(keep.source = FALSE, encoding = "UTF-8")`, nothing is evaluated).
+`ecosystem/parse_differential.py` runs ry on the same files. A file
+disagrees when exactly one side rejects it. For each processed package,
+the ledger keeps the file count, R's rejections, ry's rejections and every
+disagreeing file. `run.sh --check` fails on any change, so a false RY000
+on valid R and newly accepted R-rejected input both fail. A fixed
+disagreement also fails until the ledger is regenerated with `run.sh`.
+R's message and an optional `note` (for known disagreements) are kept for
+reading and are not compared.
+
+| Corpus | Files | R rejects | ry RY000 | Disagreements |
+| :-- | ---: | ---: | ---: | ---: |
+| tidyverse (with base R sources) | 4197 | 7 | 7 | 0 |
+| posit | 8397 | 18 | 18 | 0 |
 
 ## Reconciliation
 

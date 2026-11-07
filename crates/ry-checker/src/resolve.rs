@@ -732,10 +732,10 @@ impl Checker {
     // Conversely, when any parse error exists, `emit_diagnostics`
     // suppresses the semantic rules' output for the whole file:
     // diagnostics derived from a recovered tree are artifacts of parser
-    // repair, and RY000 already covers the file (issue #380). Pipe
-    // violations never trigger that suppression: they are only
-    // collected from error-free trees, so the file's other diagnostics
-    // remain real.
+    // repair, and RY000 already covers the file (issue #380). Syntax
+    // violations are collected from error-free trees, so the file's other
+    // diagnostics remain real, except for the `misparsed` ones (#841)
+    // where the tree itself misreads the region.
     pub(crate) fn emit_parse_errors(&mut self, file: &SourceFile) {
         for issue in &file.input_issues {
             self.emit(

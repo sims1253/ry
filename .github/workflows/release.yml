@@ -223,6 +223,15 @@ jobs:
     with:
       plan: ${{ needs.plan.outputs.val }}
     secrets: inherit
+
+  custom-smoke-binaries:
+    needs:
+      - plan
+      - build-local-artifacts
+    uses: ./.github/workflows/smoke-binaries.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit
   # Determines if we should publish/announce
   host:
     needs:
@@ -230,8 +239,9 @@ jobs:
       - build-local-artifacts
       - build-global-artifacts
       - custom-binary-checksums
+      - custom-smoke-binaries
     # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.custom-binary-checksums.result == 'skipped' || needs.custom-binary-checksums.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.custom-binary-checksums.result == 'skipped' || needs.custom-binary-checksums.result == 'success') && (needs.custom-smoke-binaries.result == 'skipped' || needs.custom-smoke-binaries.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-latest"

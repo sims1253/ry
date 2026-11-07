@@ -73,5 +73,41 @@ class LedgerPackageCountsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+
+class ParseLedgerCountsTest(unittest.TestCase):
+    def setUp(self):
+        self.ledger = {
+            "schema_version": 1,
+            "corpora": {"demo": {
+                "files": 5, "r_rejected": 2, "ry_rejected": 1, "disagreements": 1,
+                "packages": {
+                    "alpha": {"files": 3, "r_rejected": 2, "ry_rejected": 1},
+                    "beta": {"files": 2, "r_rejected": 0, "ry_rejected": 0},
+                },
+                "disagreement_files": [
+                    {"package": "alpha", "path": "a.R", "r": "reject", "ry": "accept"},
+                ],
+            }},
+        }
+
+    def check(self, ledger):
+        return LedgerPackageCountsTest.check(self, ledger)
+
+    def test_consistent_counts_pass(self):
+        result = self.check(self.ledger)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_stale_total_fails(self):
+        ledger = copy.deepcopy(self.ledger)
+        ledger["corpora"]["demo"]["files"] = 6
+        self.assertIn("demo.files", self.check(ledger).stdout)
+
+    def test_dropped_disagreement_fails(self):
+        ledger = copy.deepcopy(self.ledger)
+        ledger["corpora"]["demo"]["disagreement_files"] = []
+        ledger["corpora"]["demo"]["disagreements"] = 0
+        self.assertIn("do not match its disagreements", self.check(ledger).stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

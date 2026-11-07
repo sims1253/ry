@@ -1404,7 +1404,7 @@ impl Checker {
             self.load_hook_frames.push(self.enclosing_formals.len());
         }
         self.check_discarded_branch_results(body);
-        self.begin_exit_paths();
+        self.begin_exit_paths(&fn_scope);
         self.walk_block(body, &mut fn_scope, None);
         let returned = self.end_exit_paths();
         if is_load_hook {

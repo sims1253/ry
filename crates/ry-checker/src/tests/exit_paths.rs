@@ -93,3 +93,23 @@ fn loops_proven_to_run_keep_precise_exit_types() {
     let i = exit_type(&exits, "k", "i");
     assert_eq!(i.mode, Mode::Integer, "{i:?}");
 }
+
+// R 4.6.2: a `return()` inside `local()`, `with()` or `within()` leaves
+// that evaluation, not `f`, so each `f*` below exits with `x` logical.
+// One forced as a promise in the caller (`suppressWarnings()`) does leave
+// the function: `g()` returns 99 with `x` character.
+#[test]
+fn child_frame_returns_do_not_reach_the_enclosing_scope_exit() {
+    let exits = function_exits(
+        "f <- function() { x <- 1L; local({ x <- \"a\"; return(x); NULL }); x <- TRUE; x }\n\
+         f2 <- function() { x <- 1L; with(list(a = 1), { x <- \"a\"; return(99); NULL }); x <- TRUE; x }\n\
+         f3 <- function() { x <- 1L; within(list(a = 1), { x <- \"a\"; return(99); NULL }); x <- TRUE; x }\n\
+         g <- function() { x <- 1L; suppressWarnings({ x <- \"a\"; return(99); NULL }); x <- TRUE; x }\n",
+    );
+    for function in ["f", "f2", "f3"] {
+        let x = exit_type(&exits, function, "x");
+        assert_eq!(x.mode, Mode::Logical, "{function}: {x:?}");
+    }
+    let x = exit_type(&exits, "g", "x");
+    assert!(admits(&x, Mode::Character), "g: {x:?}");
+}

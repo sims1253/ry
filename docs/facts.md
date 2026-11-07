@@ -52,8 +52,9 @@ first input anchors `ry.toml` discovery, as it does for `dump-types`.
 Every exported scope and binding has `snapshot_kind: "scope_exit"`. Types
 describe the states in which the recorded scope can be left. For a function,
 that is the end of its body joined with the state at each `return()` the
-checker models; a `return()` inside a nested function or callback leaves
-that function instead. There is no `--position` option. Schema 1 has no
+checker models; a `return()` inside a nested function or callback, or in
+a block another frame evaluates (`local()`, `with()`), leaves that
+evaluation instead. There is no `--position` option. Schema 1 has no
 type-at-reference or resolved-symbol contract. Add `--references` for the
 bounded reference facts in schema 2.
 

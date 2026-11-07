@@ -57,11 +57,15 @@ pub(crate) fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
 impl Checker {
     /// Facts capture only: `return()` leaves the innermost function body
     /// being recorded with this state. Discarding re-walks add nothing.
+    /// A `return()` in a block that runs in another frame (`local()`, a
+    /// callback, a data mask) leaves that evaluation, not the body.
     pub(crate) fn record_return_path(&mut self, scope: &Scope) {
         if self.discarding || scope.unreachable {
             return;
         }
-        if let Some(paths) = self.scope_exit_paths.last_mut() {
+        if let Some((frame, paths)) = self.scope_exit_paths.last_mut()
+            && frame.as_ref().map(Arc::as_ptr) == scope.outward_functions.as_ref().map(Arc::as_ptr)
+        {
             join_path(paths, scope);
         }
     }

@@ -605,3 +605,22 @@ fn setters_that_may_dispatch_or_change_the_mode_still_widen() {
         assert_eq!(scope.get("y"), Some(&RType::unknown()), "{source}");
     }
 }
+
+/// `rm()` alongside a computed `list =` still removes its positional names,
+/// a backticked name is the binding's own, and `names<-` on a union cannot
+/// clear only some members' schemas, so each target widens.
+#[test]
+fn rm_list_backticks_and_union_names_writes_widen() {
+    let stale = [
+        ("x <- 1L; rm(x, list = character())", "x"),
+        ("x <- 1L; rm(`x`)", "x"),
+        (
+            "y <- if (runif(1) > 0.5) list(old = 1) else NULL; names(y) <- NULL",
+            "y",
+        ),
+    ]
+    .into_iter()
+    .filter(|(source, name)| check_with_scope(source).1.get(name) != Some(&RType::unknown()))
+    .collect::<Vec<_>>();
+    assert!(stale.is_empty(), "kept a stale type: {stale:?}");
+}

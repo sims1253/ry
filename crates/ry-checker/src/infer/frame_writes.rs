@@ -78,15 +78,19 @@ impl Checker {
         let mut names = Vec::new();
         for argument in args {
             match (argument.name.as_deref(), &argument.value) {
-                (None, Expr::Ident { name, .. } | Expr::String(name, _)) => names.push(name),
+                (None, Expr::Ident { name, .. }) => names.push(semantic_argument_name(name)),
+                (None, Expr::String(name, _)) => names.push(name.as_str()),
                 (Some("envir"), envir) if self.targets_this_frame(Some(envir), scope) => {}
                 (Some("inherits"), Expr::Logical(false, _)) => {}
+                // A computed `list =` removes names ry cannot see, but the
+                // positional ones go too.
+                (Some("list"), _) => {}
                 _ => return,
             }
         }
         for name in names {
             if scope.get(name).is_some() && !scope.is_parameter(name) {
-                scope.insert(name.clone(), RType::unknown());
+                scope.insert(name.to_owned(), RType::unknown());
             }
         }
     }

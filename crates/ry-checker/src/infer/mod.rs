@@ -3434,10 +3434,13 @@ impl Checker {
                 base.clone()
             }
             ("levels", []) if classless(base) => base.clone(),
-            ("names" | "dim" | "dimnames", []) if classless(base) => RType {
-                columns: None,
-                ..base.clone()
-            },
+            // A union's members would keep their old schemas.
+            ("names" | "dim" | "dimnames", []) if classless(base) && base.members.is_none() => {
+                RType {
+                    columns: None,
+                    ..base.clone()
+                }
+            }
             ("is.na", [])
                 if classless(base)
                     && matches!(

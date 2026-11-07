@@ -67,19 +67,26 @@ pub fn adopted_records(files: &[Arc<SourceFile>], config: &ry_config::Config) ->
     result
 }
 
-/// The file-level RY000 for a file ry could not read or parse at all
-/// (#743), at the parser's position in the rejected text when it has one.
+/// The file-level finding for a file ry could not read or parse at all
+/// (#743), at the parser's position in the rejected text when it has one:
+/// RY000, or RY129 for source nested deeper than ry analyzes (#887).
 /// Renderers convert the byte offsets against that text, as for any finding.
 pub fn parse_failure(path: &str, error: &ry_workspace::SourceError) -> Diagnostic {
-    let (span, message) = match error {
+    let (span, message, code) = match error {
         ry_workspace::SourceError::Read(error) => (
             ry_core::Span::new(0, 1, 0, 0),
             format!("cannot read file: {error}; file not checked"),
+            "RY000",
         ),
-        ry_workspace::SourceError::Parse {
-            error: ry_core::ParseError::TreeSitter { line, col, message },
-            text,
-        } => {
+        ry_workspace::SourceError::Parse { error, text } => {
+            let (line, col, message, code) = match error {
+                ry_core::ParseError::TreeSitter { line, col, message } => {
+                    (line, col, message, "RY000")
+                }
+                ry_core::ParseError::NestingLimit { line, col, message } => {
+                    (line, col, message, crate::rules::NESTING_LIMIT)
+                }
+            };
             let (line, col) = (line.saturating_sub(1), col.saturating_sub(1));
             let line_start: usize = text.split_inclusive('\n').take(line).map(str::len).sum();
             let mut start = (line_start + col).min(text.len());
@@ -89,10 +96,16 @@ pub fn parse_failure(path: &str, error: &ry_workspace::SourceError) -> Diagnosti
             (
                 ry_core::Span::new(start, start, line, col),
                 format!("{message}; file not checked"),
+                code,
             )
         }
     };
-    Diagnostic::new(Severity::Error, span, path, "RY000", message)
+    let severity = if code == crate::rules::NESTING_LIMIT {
+        Severity::Warning
+    } else {
+        Severity::Error
+    };
+    Diagnostic::new(severity, span, path, code, message)
 }
 
 /// RY117 for a display path whose native source identity is ambiguous.

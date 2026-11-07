@@ -21,6 +21,12 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Stop reporting RY000 for calls and subsets nested 43 to 49 deep, which
+  GNU R parses. Argument and parameter lists no longer count toward ry's
+  syntax nesting limit. Past the limit, a file within R's 49-bracket limit
+  gets the new RY129 warning ("file not checked") instead of RY000 and no
+  longer fails the run. Nesting past R's own limit reports RY000 with R's
+  "contextstack overflow" (#887).
 - Report RY000 for syntax GNU R's `parse()` rejects but tree-sitter
   accepts: repeated formals (`function(x, x)`), two expressions on one
   line (`fjkdsfa 2`), a top-level dangling `else`, a `_` placeholder

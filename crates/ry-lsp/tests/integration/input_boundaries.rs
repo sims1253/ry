@@ -202,10 +202,10 @@ async fn environment_paths_are_anchored_globs_in_both_frontends() {
     join_session(session, server).await;
 }
 
-/// An open buffer ry cannot parse at all (here one call nested past the
-/// syntax nesting limit of 128) publishes the one RY000 `ry check` reports
-/// for it, at the same position, in place of its earlier findings. The
-/// RY000 clears once the buffer parses again (#785).
+/// An open buffer ry cannot parse at all (here one call nested past R's
+/// limit of 49 brackets and ry's of 128 levels) publishes the one RY000
+/// `ry check` reports for it, at the same position, in place of its earlier
+/// findings. The RY000 clears once the buffer parses again (#785).
 #[tokio::test]
 async fn unparseable_open_buffer_publishes_the_cli_ry000_until_it_parses() {
     let nested = format!("{}1{}\n", "f(".repeat(512), ")".repeat(512));

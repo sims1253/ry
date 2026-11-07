@@ -16,6 +16,14 @@ pub enum ParseError {
         col: usize,
         message: String,
     },
+    /// Source nested deeper than ry analyzes, at a depth R's parser allows,
+    /// so this is not a syntax error (#887).
+    #[error("not analyzed at {line}:{col}: {message}")]
+    NestingLimit {
+        line: usize,
+        col: usize,
+        message: String,
+    },
 }
 
 pub struct RParser {
@@ -1105,14 +1113,43 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
     let mut out = Vec::new();
     let mut special = Vec::new();
     let mut bodies = Vec::new();
-    let mut stack = vec![(root, 0_usize, 0_usize)];
-    while let Some((node, depth, arms)) = stack.pop() {
+    // Each entry carries the open brackets on its path: a lower bound on
+    // R's context-stack depth there, since R pushes one entry per bracket.
+    let mut stack = vec![(root, 0_usize, 0_usize, 0_usize)];
+    while let Some((node, depth, arms, brackets)) = stack.pop() {
+        let brackets = brackets
+            + match node.kind() {
+                // R pushes one context entry per `[` of a `[[`.
+                "arguments"
+                    if node
+                        .child_by_field_name("open")
+                        .is_some_and(|open| open.kind() == "[[") =>
+                {
+                    2
+                }
+                "arguments" | "parameters" | "parenthesized_expression" | "braced_expression" => 1,
+                _ => 0,
+            };
         if depth > MAX_SYNTAX_DEPTH {
             let position = node.start_position();
-            return Err(ParseError::TreeSitter {
-                line: position.row + 1,
-                col: position.column + 1,
-                message: format!("source exceeds ry's syntax nesting limit of {MAX_SYNTAX_DEPTH}"),
+            let (line, col) = (position.row + 1, position.column + 1);
+            // Past R's own bracket limit the file is invalid R too, which
+            // RY000 reports in R's words. Otherwise R parses it, and ry only
+            // declines to analyze it.
+            return Err(if brackets >= R_CONTEXT_STACK_SIZE {
+                ParseError::TreeSitter {
+                    line,
+                    col,
+                    message: context_stack_overflow(),
+                }
+            } else {
+                ParseError::NestingLimit {
+                    line,
+                    col,
+                    message: format!(
+                        "source exceeds ry's syntax nesting limit of {MAX_SYNTAX_DEPTH}"
+                    ),
+                }
             });
         }
         if node.kind() == "comment" {
@@ -1153,15 +1190,23 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
             .filter(|lhs| lhs.kind() == "binary_operator");
         let mut child_cursor = node.walk();
         for child in node.children(&mut child_cursor) {
-            if Some(child) == chain_lhs {
-                stack.push((child, depth, arms));
+            // Argument and parameter lists are loops in lowering, not
+            // recursion levels, so `f(g(x))` and `x[y[i]]` cost one level
+            // per call, as `((x))` does. R stops bracket nesting at 49
+            // (`contextstack overflow`), well under the cap (#887).
+            if matches!(
+                child.kind(),
+                "arguments" | "argument" | "parameters" | "parameter"
+            ) || Some(child) == chain_lhs
+            {
+                stack.push((child, depth, arms, brackets));
             } else if Some(child) != else_if {
-                stack.push((child, depth + 1, arms));
+                stack.push((child, depth + 1, arms, brackets));
             } else if arms < MAX_ELSE_IF_ARMS {
-                stack.push((child, depth, arms + 1));
+                stack.push((child, depth, arms + 1, brackets));
             } else {
                 let position = child.start_position();
-                return Err(ParseError::TreeSitter {
+                return Err(ParseError::NestingLimit {
                     line: position.row + 1,
                     col: position.column + 1,
                     message: format!(
@@ -1390,13 +1435,7 @@ fn collect_syntax_violations(
                     && brackets >= R_CONTEXT_STACK_SIZE
                 {
                     overflow_reported = true;
-                    out.push(violation(
-                        node,
-                        format!(
-                            "syntax error: contextstack overflow: R's parser allows at most {} nested brackets",
-                            R_CONTEXT_STACK_SIZE - 1
-                        ),
-                    ));
+                    out.push(violation(node, context_stack_overflow()));
                 }
             }
             _ => {}
@@ -1480,6 +1519,13 @@ fn exponent_without_digits(literal: &str) -> bool {
 
 /// R's `CONTEXTSTACK_SIZE` (gram.y); one slot holds the stack's base.
 const R_CONTEXT_STACK_SIZE: usize = 50;
+
+fn context_stack_overflow() -> String {
+    format!(
+        "syntax error: contextstack overflow: R's parser allows at most {} nested brackets",
+        R_CONTEXT_STACK_SIZE - 1
+    )
+}
 
 fn violation(node: Node, message: impl Into<String>) -> crate::ast::SyntaxViolation {
     crate::ast::SyntaxViolation {
@@ -1897,6 +1943,12 @@ mod tests {
                     format!("{}1", "-".repeat(96)),
                     format!("{}1", "1+".repeat(96)),
                     format!("{}1{}", "f(".repeat(40), ")".repeat(40)),
+                    // Argument lists do not count, so calls and subsets nest
+                    // past R's 49 brackets (#887).
+                    format!("{}1{}", "f(".repeat(120), ")".repeat(120)),
+                    format!("x{}{}", "[x".repeat(120), "]".repeat(120)),
+                    format!("x <- {}1{}", "list(a = ".repeat(120), ")".repeat(120)),
+                    format!("{}1) 1", "function(a = ".repeat(120)) + &") 1".repeat(119),
                     format!("{}1{}", "{".repeat(96), "}".repeat(96)),
                     format!("{}1", "if (TRUE) ".repeat(40)),
                     format!("{}1", "function() ".repeat(40)),
@@ -1939,30 +1991,60 @@ mod tests {
                     drop(copy);
                     drop(file);
                 }
-                for source in [
-                    format!("{}1", "-".repeat(512)),
-                    format!("{}1{}", "f(".repeat(512), ")".repeat(512)),
-                    format!("{}1{}", "{".repeat(512), "}".repeat(512)),
-                    format!("{}1", "if (TRUE) ".repeat(512)),
-                    format!("{}1", "function() ".repeat(512)),
+                // Past the cap, more than 49 open brackets is invalid R too
+                // (`contextstack overflow`); anything else is valid R that ry
+                // does not analyze (#887).
+                let overflow = "syntax error: contextstack overflow: R's parser allows at most 49 nested brackets";
+                let limit = "source exceeds ry's syntax nesting limit of 128";
+                for (source, invalid_r) in [
+                    (format!("{}1", "-".repeat(512)), false),
+                    (format!("{}1{}", "f(".repeat(512), ")".repeat(512)), true),
+                    (format!("{}1{}", "{".repeat(512), "}".repeat(512)), true),
+                    (format!("{}1", "if (TRUE) ".repeat(512)), false),
+                    (format!("{}1", "function() ".repeat(512)), false),
+                    (format!("{}1", "a <- ".repeat(512)), false),
+                    // 43 nested closures stay under R's bracket limit.
+                    (
+                        format!("{}1{}", "f <- function() { ".repeat(43), " }".repeat(43)),
+                        false,
+                    ),
+                    // Each `[[` is two of R's brackets: 25 of them overflow,
+                    // 24 parse (both past the cap through 110 unary minuses).
+                    (
+                        format!("{}{}1{}", "x[[".repeat(25), "-".repeat(110), "]]".repeat(25)),
+                        true,
+                    ),
+                    (
+                        format!("{}{}1{}", "x[[".repeat(24), "-".repeat(110), "]]".repeat(24)),
+                        false,
+                    ),
                     // Real nesting around a chain still hits the cap.
-                    format!("{}1{}", "(".repeat(200), ")".repeat(200)),
-                    format!(
-                        "{}{}1{}",
-                        "f(".repeat(200),
-                        "1+".repeat(100),
-                        ")".repeat(200)
+                    (format!("{}1{}", "(".repeat(200), ")".repeat(200)), true),
+                    (
+                        format!(
+                            "{}{}1{}",
+                            "f(".repeat(200),
+                            "1+".repeat(100),
+                            ")".repeat(200)
+                        ),
+                        true,
                     ),
                 ] {
                     let source = format!("# before\n{source}");
                     let error = parser.parse("deep.R", &source).unwrap_err();
-                    match error {
+                    let (line, col, message, syntax_error) = match error {
                         super::ParseError::TreeSitter { line, col, message } => {
-                            assert_eq!(line, 2);
-                            assert!(col > 0 && col <= source.len());
-                            assert_eq!(message, "source exceeds ry's syntax nesting limit of 128");
+                            (line, col, message, true)
                         }
-                    }
+                        super::ParseError::NestingLimit { line, col, message } => {
+                            (line, col, message, false)
+                        }
+                    };
+                    assert_eq!(line, 2, "{source}");
+                    assert!(col > 0 && col <= source.len(), "{source}");
+                    assert_eq!(syntax_error, invalid_r, "{source}");
+                    let expected = if invalid_r { overflow } else { limit };
+                    assert_eq!(message, expected, "{source}");
                     let recovered = parser
                         .parse("next.R", "# retained\nx <- 1 # trailing")
                         .unwrap();
@@ -1971,7 +2053,9 @@ mod tests {
                     assert_eq!(recovered.comments.len(), 2);
                 }
                 let error = parser.parse("chain.R", &else_if_chain(1026)).unwrap_err();
-                let super::ParseError::TreeSitter { col, message, .. } = error;
+                let super::ParseError::NestingLimit { col, message, .. } = error else {
+                    panic!("{error}");
+                };
                 // The error points at the 1025th `else if` arm.
                 assert_eq!(col, else_if_chain(1025).len() + " else ".len() + 1);
                 assert_eq!(
@@ -1982,7 +2066,9 @@ mod tests {
                 let error = parser
                     .parse("chains.R", &nested_else_if_chains(20, 999))
                     .unwrap_err();
-                let super::ParseError::TreeSitter { message, .. } = error;
+                let super::ParseError::NestingLimit { message, .. } = error else {
+                    panic!("{error}");
+                };
                 assert_eq!(
                     message,
                     "source exceeds ry's limit of 1024 nested `else if` arms"

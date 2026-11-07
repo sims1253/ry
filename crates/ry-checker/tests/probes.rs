@@ -66,6 +66,12 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("RY117", "requires an invalid adopted declaration record"),
     ("RY120", "requires a source-mapped malformed report input"),
     ("RY121", "requires a dynamic report execution option"),
+    // A file past the nesting limit never reaches the checker; the CLI and
+    // LSP emit its RY129 from the parse failure (ry-cli parse_failures.rs).
+    (
+        "RY129",
+        "emitted for a file the parser declines, not the checker",
+    ),
 ];
 
 /// The probe matrix. Order follows the rule registry. When you add a rule to

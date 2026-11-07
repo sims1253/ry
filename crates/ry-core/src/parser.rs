@@ -16,6 +16,14 @@ pub enum ParseError {
         col: usize,
         message: String,
     },
+    /// Source nested deeper than ry analyzes, at a depth R's parser allows,
+    /// so this is not a syntax error (#887).
+    #[error("not analyzed at {line}:{col}: {message}")]
+    NestingLimit {
+        line: usize,
+        col: usize,
+        message: String,
+    },
 }
 
 pub struct RParser {
@@ -1105,14 +1113,43 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
     let mut out = Vec::new();
     let mut special = Vec::new();
     let mut bodies = Vec::new();
-    let mut stack = vec![(root, 0_usize, 0_usize)];
-    while let Some((node, depth, arms)) = stack.pop() {
+    // Each entry carries the open brackets on its path: a lower bound on
+    // R's context-stack depth there, since R pushes one entry per bracket.
+    let mut stack = vec![(root, 0_usize, 0_usize, 0_usize)];
+    while let Some((node, depth, arms, brackets)) = stack.pop() {
+        let brackets = brackets
+            + match node.kind() {
+                // R pushes one context entry per `[` of a `[[`.
+                "arguments"
+                    if node
+                        .child_by_field_name("open")
+                        .is_some_and(|open| open.kind() == "[[") =>
+                {
+                    2
+                }
+                "arguments" | "parameters" | "parenthesized_expression" | "braced_expression" => 1,
+                _ => 0,
+            };
         if depth > MAX_SYNTAX_DEPTH {
             let position = node.start_position();
-            return Err(ParseError::TreeSitter {
-                line: position.row + 1,
-                col: position.column + 1,
-                message: format!("source exceeds ry's syntax nesting limit of {MAX_SYNTAX_DEPTH}"),
+            let (line, col) = (position.row + 1, position.column + 1);
+            // Past R's own bracket limit the file is invalid R too, which
+            // RY000 reports in R's words. Otherwise R parses it, and ry only
+            // declines to analyze it.
+            return Err(if brackets >= R_CONTEXT_STACK_SIZE {
+                ParseError::TreeSitter {
+                    line,
+                    col,
+                    message: context_stack_overflow(),
+                }
+            } else {
+                ParseError::NestingLimit {
+                    line,
+                    col,
+                    message: format!(
+                        "source exceeds ry's syntax nesting limit of {MAX_SYNTAX_DEPTH}"
+                    ),
+                }
             });
         }
         if node.kind() == "comment" {
@@ -1153,15 +1190,23 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
             .filter(|lhs| lhs.kind() == "binary_operator");
         let mut child_cursor = node.walk();
         for child in node.children(&mut child_cursor) {
-            if Some(child) == chain_lhs {
-                stack.push((child, depth, arms));
+            // Argument and parameter lists are loops in lowering, not
+            // recursion levels, so `f(g(x))` and `x[y[i]]` cost one level
+            // per call, as `((x))` does. R stops bracket nesting at 49
+            // (`contextstack overflow`), well under the cap (#887).
+            if matches!(
+                child.kind(),
+                "arguments" | "argument" | "parameters" | "parameter"
+            ) || Some(child) == chain_lhs
+            {
+                stack.push((child, depth, arms, brackets));
             } else if Some(child) != else_if {
-                stack.push((child, depth + 1, arms));
+                stack.push((child, depth + 1, arms, brackets));
             } else if arms < MAX_ELSE_IF_ARMS {
-                stack.push((child, depth, arms + 1));
+                stack.push((child, depth, arms + 1, brackets));
             } else {
                 let position = child.start_position();
-                return Err(ParseError::TreeSitter {
+                return Err(ParseError::NestingLimit {
                     line: position.row + 1,
                     col: position.column + 1,
                     message: format!(
@@ -1308,9 +1353,9 @@ const PIPE_NOT_A_CALL_MESSAGE: &str =
 /// and `x |> { ... }` ("The pipe operator requires a function call as
 /// RHS"). tree-sitter's grammar is more permissive and accepts all of
 /// these, so the shapes are validated here and surfaced as RY000 by the
-/// checker. Only demonstrable parse-time rejections are flagged; the
-/// `_` placeholder discipline (unnamed, nested, or repeated `_` inside
-/// the call) is R 4.2+-specific and left to later work.
+/// checker. The same walk flags the other parse-time rejections listed
+/// on [`crate::ast::SourceFile::syntax_violations`] (#841); each message
+/// mirrors R 4.6.1's own.
 fn collect_syntax_violations(
     root: tree_sitter::Node,
     src: &str,
@@ -1321,30 +1366,312 @@ fn collect_syntax_violations(
         return Vec::new();
     }
     let mut out = Vec::new();
-    let mut stack: Vec<tree_sitter::Node> = vec![root];
-    while let Some(node) = stack.pop() {
+    let mut pipe_rhs = Vec::new();
+    let mut placeholders = Vec::new();
+    let mut brackets = 0_usize;
+    // R stops at its first overflow, so report once per outermost bracket.
+    let mut overflow_reported = false;
+    // Pre-order walk in source order, which the bracket count depends on.
+    let mut cursor = root.walk();
+    'walk: loop {
+        let node = cursor.node();
         if node.kind() == "binary_operator"
             && text_opt(node.child_by_field_name("operator"), src).as_deref() == Some("|>")
             && let Some(rhs) = node.child_by_field_name("rhs")
             && let Some(message) = pipe_rhs_violation(rhs, src)
         {
-            let start = rhs.start_byte();
-            let end = rhs.end_byte();
-            let pos = rhs.start_position();
-            out.push(crate::ast::SyntaxViolation {
-                span: Span::new(start, end, pos.row, pos.column),
-                message,
-            });
+            pipe_rhs.push(self_span(rhs));
+            out.push(violation(rhs, message));
         }
-        let mut child_cursor = node.walk();
-        for child in node.children(&mut child_cursor) {
-            stack.push(child);
+        match node.kind() {
+            "function_definition" => repeated_formals(node, src, &mut out),
+            "program" | "braced_expression" => adjacent_expressions(node, src, &mut out),
+            "identifier" => match &src[node.byte_range()] {
+                // tree-sitter lexes a dangling top-level `else` (`if (a) 1`
+                // on one line, `else 2` on the next) as a symbol; R never
+                // accepts an unquoted `else` outside an `if`.
+                "else" => out.push(misparse(node, "syntax error: unexpected 'else'")),
+                "_" => {
+                    // R lexes `_` as the placeholder token, never a symbol.
+                    if let Some(message) = placeholder_violation(node, src) {
+                        placeholders.push(misparse(node, message));
+                    }
+                }
+                _ => {}
+            },
+            "escape_sequence" => {
+                if let Some(message) = escape_violation(&src[node.byte_range()]) {
+                    out.push(violation(node, message));
+                }
+            }
+            "float" | "integer" | "complex" => {
+                let literal = &src[node.byte_range()];
+                if exponent_without_digits(literal) {
+                    out.push(violation(
+                        node,
+                        format!(
+                            "syntax error: unexpected input: exponent of `{literal}` has no digits"
+                        ),
+                    ));
+                }
+            }
+            // R's lexer keeps a fixed 50-slot context stack: every `(`,
+            // `[`, and `{` pushes one entry (`[[` two) and an `if` inside
+            // brackets may push more, so 50 open brackets always overflow
+            // it. Counting brackets alone never exceeds R's real depth.
+            "(" | "[" | "{" | "[[" | ")" | "]" | "}" | "]]" if !node.is_named() => {
+                let before = brackets;
+                brackets = match node.kind() {
+                    "[[" => brackets + 2,
+                    "]]" => brackets.saturating_sub(2),
+                    ")" | "]" | "}" => brackets.saturating_sub(1),
+                    _ => brackets + 1,
+                };
+                if brackets == 0 {
+                    overflow_reported = false;
+                }
+                if !overflow_reported
+                    && before < R_CONTEXT_STACK_SIZE
+                    && brackets >= R_CONTEXT_STACK_SIZE
+                {
+                    overflow_reported = true;
+                    out.push(violation(node, context_stack_overflow()));
+                }
+            }
+            _ => {}
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                break 'walk;
+            }
         }
     }
-    // The walk is a stack (reverse child order); sort so violations
-    // appear in source order like collect_parse_errors does.
+    // A placeholder inside a pipe RHS the shape check already rejected
+    // (`x |> (_)`, `x |> f(y = _)[1]`) is the same R error; the shape
+    // violation inherits the misread `_`.
+    for placeholder in placeholders {
+        let covering = out.iter_mut().find(|v| {
+            pipe_rhs.contains(&v.span)
+                && v.span.start <= placeholder.span.start
+                && placeholder.span.end <= v.span.end
+        });
+        match covering {
+            Some(shape) => shape.misparsed = true,
+            None => out.push(placeholder),
+        }
+    }
     out.sort_by_key(|v| (v.span.start, v.span.end));
     out
+}
+
+/// Whether `node` is the right-hand side of a native pipe `|>`.
+fn is_pipe_rhs(node: Node) -> bool {
+    node.parent().is_some_and(|pipe| {
+        pipe.kind() == "binary_operator"
+            && pipe.child_by_field_name("rhs") == Some(node)
+            && pipe
+                .child_by_field_name("operator")
+                .is_some_and(|op| op.kind() == "|>")
+    })
+}
+
+/// Whether R's lexer rejects the string escape `escape` (`\q`, or one that
+/// encodes a NUL such as `\0`, `\x00`, `\u{0}`). tree-sitter's grammar
+/// accepts a backslash before any character other than a digit, `x`,
+/// `u`, or `U`, and the hex and octal forms already require digits.
+fn escape_violation(escape: &str) -> Option<String> {
+    let body = escape.strip_prefix('\\')?;
+    let first = body.chars().next()?;
+    let digits = match first {
+        // R's escapes, plus a backslash-newline continuation (with or
+        // without a CR before the newline).
+        'n' | 'r' | 't' | 'b' | 'a' | 'f' | 'v' | '\\' | '\'' | '"' | '`' | ' ' | '\n' | '\r' => {
+            return None;
+        }
+        '0'..='7' => u32::from_str_radix(body, 8).ok()?,
+        'x' | 'u' | 'U' => u32::from_str_radix(body[1..].trim_matches(['{', '}']), 16).ok()?,
+        _ => {
+            return Some(format!(
+                "syntax error: '\\{first}' is an unrecognized escape in character string"
+            ));
+        }
+    };
+    (digits == 0).then(|| "syntax error: nul character not allowed".to_string())
+}
+
+/// Whether a decimal numeric literal ends its exponent without digits
+/// (`1e`, `1e+`, `1eL`), which tree-sitter accepts and R's lexer rejects
+/// as "unexpected input". Hex literals already require exponent digits.
+fn exponent_without_digits(literal: &str) -> bool {
+    if literal.starts_with("0x") || literal.starts_with("0X") {
+        return false;
+    }
+    let Some(at) = literal.find(['e', 'E']) else {
+        return false;
+    };
+    let rest = &literal[at + 1..];
+    let rest = rest.strip_prefix(['+', '-']).unwrap_or(rest);
+    !rest.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// R's `CONTEXTSTACK_SIZE` (gram.y); one slot holds the stack's base.
+const R_CONTEXT_STACK_SIZE: usize = 50;
+
+fn context_stack_overflow() -> String {
+    format!(
+        "syntax error: contextstack overflow: R's parser allows at most {} nested brackets",
+        R_CONTEXT_STACK_SIZE - 1
+    )
+}
+
+fn violation(node: Node, message: impl Into<String>) -> crate::ast::SyntaxViolation {
+    crate::ast::SyntaxViolation {
+        span: self_span(node),
+        message: message.into(),
+        misparsed: false,
+    }
+}
+
+fn misparse(node: Node, message: impl Into<String>) -> crate::ast::SyntaxViolation {
+    crate::ast::SyntaxViolation {
+        misparsed: true,
+        ..violation(node, message)
+    }
+}
+
+/// R rejects a function whose formals repeat a name (`function(x, x)`,
+/// `\(x, `x`)`, `function(..., ...)`): "repeated formal argument 'x'".
+fn repeated_formals(function: Node, src: &str, out: &mut Vec<crate::ast::SyntaxViolation>) {
+    let Some(parameters) = function.child_by_field_name("parameters") else {
+        return;
+    };
+    let mut seen = Vec::new();
+    let mut cursor = parameters.walk();
+    for parameter in parameters.named_children(&mut cursor) {
+        let Some(name) = parameter.child_by_field_name("name") else {
+            continue;
+        };
+        let Some(raw) = text(name, src) else {
+            continue;
+        };
+        let formal = raw
+            .strip_prefix('`')
+            .and_then(|r| r.strip_suffix('`'))
+            .unwrap_or(&raw)
+            .to_string();
+        if seen.contains(&formal) {
+            out.push(violation(
+                name,
+                format!("syntax error: repeated formal argument '{formal}'"),
+            ));
+        } else {
+            seen.push(formal);
+        }
+    }
+}
+
+/// R separates the expressions of a file or `{` block with a newline or
+/// `;`. tree-sitter accepts `fjkdsfa 2` as two expressions, so flag each
+/// expression that starts on the line its predecessor ended on with
+/// nothing but blanks between them, naming the token R stops at.
+fn adjacent_expressions(parent: Node, src: &str, out: &mut Vec<crate::ast::SyntaxViolation>) {
+    let mut cursor = parent.walk();
+    let mut prev: Option<Node> = None;
+    for child in parent.named_children(&mut cursor) {
+        if child.kind() == "comment" {
+            continue;
+        }
+        if let Some(before) = prev
+            && !src[before.end_byte()..child.start_byte()].contains(['\n', '\r', ';'])
+            && !is_bare_else(before, src)
+            && !is_bare_else(child, src)
+        {
+            out.push(misparse(
+                child,
+                format!("syntax error: unexpected {}", unexpected_token(child, src)),
+            ));
+        }
+        prev = Some(child);
+    }
+}
+
+fn is_bare_else(node: Node, src: &str) -> bool {
+    node.kind() == "identifier" && text(node, src).as_deref() == Some("else")
+}
+
+/// R's name for the first token of `node` in an "unexpected ..." error.
+fn unexpected_token(node: Node, src: &str) -> String {
+    let mut node = node;
+    loop {
+        match node.kind() {
+            "identifier" | "dots" | "dot_dot_i" => return "symbol".to_string(),
+            "float" | "integer" | "complex" | "true" | "false" | "inf" | "nan" | "na" => {
+                return "numeric constant".to_string();
+            }
+            "string" => return "string constant".to_string(),
+            _ => {}
+        }
+        match node.child(0) {
+            Some(first) => node = first,
+            None => return format!("'{}'", src[node.byte_range()].replace('\\', "\\\\")),
+        }
+    }
+}
+
+/// Where base R accepts the native-pipe placeholder `_`: as the value of
+/// a named argument of the call on a `|>` right-hand side (once per
+/// call), or as the root of an extraction chain that is the whole RHS
+/// (`x |> _$a`, `` x |> `[[`(_, 1) ``, R 4.3+). R rejects every other `_` at parse time; the
+/// messages mirror R 4.6.1's.
+fn placeholder_violation(node: Node, src: &str) -> Option<&'static str> {
+    let mut top = node;
+    while let Some(up) = extraction_parent(top, src) {
+        top = up;
+    }
+    if top != node {
+        if is_pipe_rhs(top) {
+            return None;
+        }
+        if let Some(call) = top.parent()
+            && call.kind() == "call"
+            && call.child_by_field_name("function") == Some(top)
+            && is_pipe_rhs(call)
+        {
+            return Some("syntax error: pipe placeholder cannot be used in the RHS function");
+        }
+    }
+    let parent = node.parent()?;
+    if top == node
+        && parent.kind() == "argument"
+        && parent.child_by_field_name("value") == Some(node)
+    {
+        let arguments = parent.parent()?;
+        let in_pipe_call = arguments.parent().is_some_and(|call| {
+            call.kind() == "call"
+                && call.child_by_field_name("arguments") == Some(arguments)
+                && is_pipe_rhs(call)
+        });
+        if !in_pipe_call {
+            return Some("syntax error: invalid use of pipe placeholder");
+        }
+        // R checks the count before the argument name.
+        let mut cursor = arguments.walk();
+        let earlier = arguments
+            .named_children(&mut cursor)
+            .take_while(|arg| *arg != parent)
+            .any(|arg| is_placeholder_argument(arg, src));
+        if earlier {
+            return Some("syntax error: pipe placeholder may only appear once");
+        }
+        return parent
+            .child_by_field_name("name")
+            .is_none()
+            .then_some("syntax error: pipe placeholder can only be used as a named argument");
+    }
+    Some("syntax error: invalid use of pipe placeholder")
 }
 
 /// Whether the native-pipe RHS `rhs` violates base R's rewrite
@@ -1388,12 +1715,16 @@ fn pipe_rhs_violation(rhs: Node, src: &str) -> Option<String> {
         // is fine, including namespace-qualified names, parenthesized
         // expressions, and calls/extractions (`x |> z[[1]](y)`).
         "call" => {
-            let func = rhs.child_by_field_name("function")?;
-            let name = match func.kind() {
-                "identifier" => text_opt(Some(func), src)?.trim_matches('`').to_string(),
-                "string" => unquote_r_string(&text_opt(Some(func), src)?),
-                _ => return None,
-            };
+            // R substitutes the `_` placeholder before it checks the head,
+            // so `` x |> `+`(e1 = _, e2 = 1) `` and `` x |> `[[`(_, "en") ``
+            // (R's own AST for `_[["en"]]`) are valid R; moranajp ships
+            // both. The placeholder checks cover a misplaced `_`.
+            if extraction_root_identifier(rhs, src).as_deref() == Some("_")
+                || call_has_placeholder_argument(rhs, src)
+            {
+                return None;
+            }
+            let name = call_head_name(rhs, src)?;
             PIPE_UNSUPPORTED_HEADS
                 .contains(&name.as_str())
                 .then(|| unsupported_pipe_head_message(&name))
@@ -1444,6 +1775,23 @@ fn pipe_rhs_violation(rhs: Node, src: &str) -> Option<String> {
     }
 }
 
+/// Whether one of `call`'s arguments is a bare `_`.
+fn call_has_placeholder_argument(call: Node, src: &str) -> bool {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return false;
+    };
+    let mut cursor = arguments.walk();
+    arguments
+        .named_children(&mut cursor)
+        .any(|arg| is_placeholder_argument(arg, src))
+}
+
+/// Whether the `argument` node `arg` passes a bare `_` as its value.
+fn is_placeholder_argument(arg: Node, src: &str) -> bool {
+    arg.child_by_field_name("value")
+        .is_some_and(|value| value.kind() == "identifier" && &src[value.byte_range()] == "_")
+}
+
 /// The R-parity message for a rejected pipe-RHS call head.
 fn unsupported_pipe_head_message(name: &str) -> String {
     format!("syntax error: function '{name}' not supported in RHS call of a pipe")
@@ -1452,17 +1800,70 @@ fn unsupported_pipe_head_message(name: &str) -> String {
 /// Walk an extraction chain down to its root operand and return the
 /// root's raw identifier text when that root is an identifier:
 /// `subset`/`subset2` chain via their `function` field,
-/// `extract_operator` via `lhs` (`_$a$b` is `extract(extract(_, a), b)`).
+/// `extract_operator` via `lhs` (`_$a$b` is `extract(extract(_, a), b)`),
+/// and a call spelling an extractor (`` `[[`(_, 1) ``) via its first
+/// argument.
 fn extraction_root_identifier(node: Node, src: &str) -> Option<String> {
     let mut node = node;
     loop {
         node = match node.kind() {
             "extract_operator" => node.child_by_field_name("lhs")?,
             "subset" | "subset2" => node.child_by_field_name("function")?,
+            "call" if is_extractor_call(node, src) => first_argument_value(node)?,
             "identifier" => return text(node, src),
             _ => return None,
         };
     }
+}
+
+/// The extraction node whose object is `node`, if any: the inverse step
+/// of [`extraction_root_identifier`].
+fn extraction_parent<'t>(node: Node<'t>, src: &str) -> Option<Node<'t>> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        "extract_operator" => (parent.child_by_field_name("lhs") == Some(node)).then_some(parent),
+        "subset" | "subset2" => {
+            (parent.child_by_field_name("function") == Some(node)).then_some(parent)
+        }
+        "argument" => {
+            let call = parent.parent()?.parent()?;
+            (call.kind() == "call"
+                && is_extractor_call(call, src)
+                && first_argument_value(call) == Some(node))
+            .then_some(call)
+        }
+        _ => None,
+    }
+}
+
+/// The name a call's head spells: an identifier, backquoted or not, or a
+/// string, which R's parser turns into a symbol.
+fn call_head_name(call: Node, src: &str) -> Option<String> {
+    let func = call.child_by_field_name("function")?;
+    match func.kind() {
+        "identifier" => Some(text(func, src)?.trim_matches('`').to_string()),
+        "string" => Some(unquote_r_string(&text(func, src)?)),
+        _ => None,
+    }
+}
+
+/// Whether `node` is a call spelling an extractor (`` `[`(x, 1) ``,
+/// `"$"(x, a)`), which R's AST does not tell apart from `x[1]` or `x$a`.
+fn is_extractor_call(node: Node, src: &str) -> bool {
+    node.kind() == "call"
+        && call_head_name(node, src)
+            .is_some_and(|name| matches!(name.as_str(), "[" | "[[" | "$" | "@"))
+}
+
+/// The value of a call's first argument, named or not, as R's pipe
+/// rewrite reads it for an extractor call.
+fn first_argument_value(call: Node) -> Option<Node> {
+    let arguments = call.child_by_field_name("arguments")?;
+    let mut cursor = arguments.walk();
+    let first = arguments
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "argument")?;
+    first.child_by_field_name("value")
 }
 
 /// `text` for an optional node, mapping `None` to `None`.
@@ -1542,6 +1943,12 @@ mod tests {
                     format!("{}1", "-".repeat(96)),
                     format!("{}1", "1+".repeat(96)),
                     format!("{}1{}", "f(".repeat(40), ")".repeat(40)),
+                    // Argument lists do not count, so calls and subsets nest
+                    // past R's 49 brackets (#887).
+                    format!("{}1{}", "f(".repeat(120), ")".repeat(120)),
+                    format!("x{}{}", "[x".repeat(120), "]".repeat(120)),
+                    format!("x <- {}1{}", "list(a = ".repeat(120), ")".repeat(120)),
+                    format!("{}1) 1", "function(a = ".repeat(120)) + &") 1".repeat(119),
                     format!("{}1{}", "{".repeat(96), "}".repeat(96)),
                     format!("{}1", "if (TRUE) ".repeat(40)),
                     format!("{}1", "function() ".repeat(40)),
@@ -1584,30 +1991,60 @@ mod tests {
                     drop(copy);
                     drop(file);
                 }
-                for source in [
-                    format!("{}1", "-".repeat(512)),
-                    format!("{}1{}", "f(".repeat(512), ")".repeat(512)),
-                    format!("{}1{}", "{".repeat(512), "}".repeat(512)),
-                    format!("{}1", "if (TRUE) ".repeat(512)),
-                    format!("{}1", "function() ".repeat(512)),
+                // Past the cap, more than 49 open brackets is invalid R too
+                // (`contextstack overflow`); anything else is valid R that ry
+                // does not analyze (#887).
+                let overflow = "syntax error: contextstack overflow: R's parser allows at most 49 nested brackets";
+                let limit = "source exceeds ry's syntax nesting limit of 128";
+                for (source, invalid_r) in [
+                    (format!("{}1", "-".repeat(512)), false),
+                    (format!("{}1{}", "f(".repeat(512), ")".repeat(512)), true),
+                    (format!("{}1{}", "{".repeat(512), "}".repeat(512)), true),
+                    (format!("{}1", "if (TRUE) ".repeat(512)), false),
+                    (format!("{}1", "function() ".repeat(512)), false),
+                    (format!("{}1", "a <- ".repeat(512)), false),
+                    // 43 nested closures stay under R's bracket limit.
+                    (
+                        format!("{}1{}", "f <- function() { ".repeat(43), " }".repeat(43)),
+                        false,
+                    ),
+                    // Each `[[` is two of R's brackets: 25 of them overflow,
+                    // 24 parse (both past the cap through 110 unary minuses).
+                    (
+                        format!("{}{}1{}", "x[[".repeat(25), "-".repeat(110), "]]".repeat(25)),
+                        true,
+                    ),
+                    (
+                        format!("{}{}1{}", "x[[".repeat(24), "-".repeat(110), "]]".repeat(24)),
+                        false,
+                    ),
                     // Real nesting around a chain still hits the cap.
-                    format!("{}1{}", "(".repeat(200), ")".repeat(200)),
-                    format!(
-                        "{}{}1{}",
-                        "f(".repeat(200),
-                        "1+".repeat(100),
-                        ")".repeat(200)
+                    (format!("{}1{}", "(".repeat(200), ")".repeat(200)), true),
+                    (
+                        format!(
+                            "{}{}1{}",
+                            "f(".repeat(200),
+                            "1+".repeat(100),
+                            ")".repeat(200)
+                        ),
+                        true,
                     ),
                 ] {
                     let source = format!("# before\n{source}");
                     let error = parser.parse("deep.R", &source).unwrap_err();
-                    match error {
+                    let (line, col, message, syntax_error) = match error {
                         super::ParseError::TreeSitter { line, col, message } => {
-                            assert_eq!(line, 2);
-                            assert!(col > 0 && col <= source.len());
-                            assert_eq!(message, "source exceeds ry's syntax nesting limit of 128");
+                            (line, col, message, true)
                         }
-                    }
+                        super::ParseError::NestingLimit { line, col, message } => {
+                            (line, col, message, false)
+                        }
+                    };
+                    assert_eq!(line, 2, "{source}");
+                    assert!(col > 0 && col <= source.len(), "{source}");
+                    assert_eq!(syntax_error, invalid_r, "{source}");
+                    let expected = if invalid_r { overflow } else { limit };
+                    assert_eq!(message, expected, "{source}");
                     let recovered = parser
                         .parse("next.R", "# retained\nx <- 1 # trailing")
                         .unwrap();
@@ -1616,7 +2053,9 @@ mod tests {
                     assert_eq!(recovered.comments.len(), 2);
                 }
                 let error = parser.parse("chain.R", &else_if_chain(1026)).unwrap_err();
-                let super::ParseError::TreeSitter { col, message, .. } = error;
+                let super::ParseError::NestingLimit { col, message, .. } = error else {
+                    panic!("{error}");
+                };
                 // The error points at the 1025th `else if` arm.
                 assert_eq!(col, else_if_chain(1025).len() + " else ".len() + 1);
                 assert_eq!(
@@ -1627,7 +2066,9 @@ mod tests {
                 let error = parser
                     .parse("chains.R", &nested_else_if_chains(20, 999))
                     .unwrap_err();
-                let super::ParseError::TreeSitter { message, .. } = error;
+                let super::ParseError::NestingLimit { message, .. } = error else {
+                    panic!("{error}");
+                };
                 assert_eq!(
                     message,
                     "source exceeds ry's limit of 1024 nested `else if` arms"

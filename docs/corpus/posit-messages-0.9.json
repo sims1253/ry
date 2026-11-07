@@ -2367,6 +2367,15 @@
       "severity": "error",
       "message": "syntax error: unparseable region (recovered tree may be unreliable)"
     },
+    "shiny-r::RY000::inst/app_template/tests/testthat/test-shinytest2.R:6:3": {
+      "package": "shiny-r",
+      "code": "RY000",
+      "path": "inst/app_template/tests/testthat/test-shinytest2.R",
+      "line": 6,
+      "column": 3,
+      "severity": "error",
+      "message": "syntax error: unexpected '{'"
+    },
     "shiny-r::RY010::R/utils.R:334:23": {
       "package": "shiny-r",
       "code": "RY010",

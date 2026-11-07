@@ -56,20 +56,10 @@ impl Checker {
                         "RY051",
                         format!("incompatible S3 methods `{left_method}` and `{right_method}` for `{}`; R uses the primitive operator", op_symbol(op)),
                     );
-                    // Constructors may retain Known(1), so compare numeric
-                    // lengths rather than treating every Known value as plural.
-                    // A nonempty-but-unknown length has no exact count.
-                    let exact_length = |length: Length| length.exact();
-                    let result_class = match (exact_length(lt.length), exact_length(rt.length)) {
-                        (Some(0), _) | (_, Some(0)) => ClassVector::empty(),
-                        (Some(a), Some(b)) if b > a => rt.class.clone(),
-                        (Some(_), Some(_)) => lt.class.clone(),
-                        _ => ClassVector::unknown(),
-                    };
+                    let result_class = primitive_arith_class(&lt, &rt);
                     // Primitive fallback does not call Ops.factor or
-                    // Ops.data.frame. Arithmetic keeps the longer operand class;
-                    // ties choose the left, while empty results and comparison/
-                    // logical primitives drop it.
+                    // Ops.data.frame. Comparison and logical primitives drop
+                    // the class.
                     let mut result = self.infer_primitive_binop(
                         op,
                         lt.with_class(ClassVector::empty()),
@@ -94,14 +84,36 @@ impl Checker {
         if op.is_arithmetic() && (lt.class.contains("factor") || rt.class.contains("factor")) {
             return self.infer_factor_arithmetic(&lt, Some(&rt), span);
         }
-        self.infer_primitive_binop(
+        // No method returned a value. Without an `Ops` method R's primitive
+        // attribute rule decides the class. A modeled base method that falls
+        // through here (`Ops.Date`) is still what R calls, so checks keep the
+        // storage model's classless state and facts export it as unknown.
+        // Union members reach the primitive undispatched (`arith_atomic`).
+        let fallback_class =
+            (op.is_arithmetic() && lt.mode != Mode::Union && rt.mode != Mode::Union).then(|| {
+                let symbol = op_symbol(op);
+                if self.ops_method_may_apply(symbol, &lt, scope)
+                    || self.ops_method_may_apply(symbol, &rt, scope)
+                {
+                    ClassVector::storage_proxy()
+                } else {
+                    primitive_arith_class(&lt, &rt)
+                }
+            });
+        let mut result = self.infer_primitive_binop(
             op,
             lt,
             rt,
             span,
             known_null_is_actionable,
             dispatchable_null,
-        )
+        );
+        if let Some(class) = fallback_class
+            && !result.mode.is_unknown()
+        {
+            result.class = class;
+        }
+        result
     }
 
     /// Whether a `:` endpoint is a numeric or logical literal, possibly
@@ -434,6 +446,50 @@ impl Checker {
             }
         }
         None
+    }
+
+    /// Whether R may call an `Ops` or `symbol` method on `ty` instead of the
+    /// primitive: a storage-proxy result of a modeled base method, or a
+    /// classed value some method may apply to.
+    pub(crate) fn ops_method_may_apply(&self, symbol: &str, ty: &RType, scope: &Scope) -> bool {
+        ty.class.storage_proxy
+            || (!ty.class.is_classless()
+                && (self.s3_method_may_apply(symbol, ty, scope)
+                    || self.s3_method_may_apply("Ops", ty, scope)))
+    }
+
+    /// The class a unary `-` or `!` result exports once no project method
+    /// returned a value (#890): unknown through the storage proxy when an
+    /// `Ops` method may apply (`-Sys.Date()`), else R's primitive rule.
+    pub(crate) fn unary_fallback_class(
+        &self,
+        op: UnaryOpKind,
+        operand: &RType,
+        result_mode: Mode,
+        scope: &Scope,
+    ) -> Option<ClassVector> {
+        let symbol = match op {
+            UnaryOpKind::Neg => "-",
+            UnaryOpKind::Not => "!",
+        };
+        if result_mode.is_unknown() {
+            return None;
+        }
+        // Union members reach the primitive undispatched, and a classed
+        // member's class may survive, so only a provably classless union
+        // keeps a known class.
+        if operand.mode == Mode::Union {
+            // `structure(x, class = )` sets the class on the union itself.
+            let classed = std::iter::once(operand)
+                .chain(operand.members.iter().flat_map(|members| members.iter()))
+                .any(|member| member.class.storage_proxy || !member.class.is_classless());
+            return classed.then(ClassVector::storage_proxy);
+        }
+        Some(if self.ops_method_may_apply(symbol, operand, scope) {
+            ClassVector::storage_proxy()
+        } else {
+            primitive_unary_class(operand, result_mode)
+        })
     }
 
     pub(crate) fn try_s3_unary_dispatch(
@@ -1119,7 +1175,7 @@ impl Checker {
         })
     }
 
-    fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
+    pub(super) fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
         self.fn_table.functions.s4().defines_method(&generic)
             || self.project_defines_s3_method(generic)
     }
@@ -1385,6 +1441,38 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
         }));
     }
     Some(result)
+}
+
+/// The class attribute R's arithmetic primitive leaves on its result. R copies
+/// attributes from the longer operand. At equal lengths it copies the right
+/// operand's and then the left's, so a left class wins and a classless left
+/// keeps the right class. An empty result carries none. Constructors may
+/// retain `Known(1)`, so this compares exact counts; a nonempty-but-unknown
+/// length has none.
+fn primitive_arith_class(lt: &RType, rt: &RType) -> ClassVector {
+    if lt.class.is_classless() && rt.class.is_classless() {
+        return ClassVector::empty();
+    }
+    match (lt.length.exact(), rt.length.exact()) {
+        (Some(0), _) | (_, Some(0)) => ClassVector::empty(),
+        (Some(a), Some(b)) if a > b => lt.class.clone(),
+        (Some(a), Some(b)) if b > a => rt.class.clone(),
+        (Some(_), Some(_)) if lt.class.is_classless() => rt.class.clone(),
+        (Some(_), Some(_)) if !lt.class.is_unknown() => lt.class.clone(),
+        _ => ClassVector::unknown(),
+    }
+}
+
+/// The class attribute R's unary `-` and `!` primitives leave on their
+/// result: all of the operand's attributes when the result keeps its storage
+/// mode (`-` on a number, `!` on a logical or raw vector, empty input
+/// included), none after a coercion (`-TRUE` is a classless integer).
+fn primitive_unary_class(operand: &RType, result_mode: Mode) -> ClassVector {
+    if operand.class.is_classless() || result_mode != operand.mode {
+        ClassVector::empty()
+    } else {
+        operand.class.clone()
+    }
 }
 
 /// R evaluates assignments nested anywhere in a condition expression in the

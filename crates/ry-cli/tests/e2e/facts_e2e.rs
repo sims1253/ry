@@ -85,6 +85,26 @@ fn classed_union_retains_union_level_facts() {
 }
 
 #[test]
+fn primitive_ops_fallback_does_not_export_a_known_empty_class() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("ops.R"),
+        "a <- Sys.Date() + 1\nb <- structure(1, class = \"foo\") * 2\nx <- readRDS(\"x.rds\")\nz <- x + 1\nn <- 1 + 2\n",
+    )
+    .unwrap();
+    let output = facts(dir.path(), &["ops.R"]);
+    let top = &output["files"][0]["scopes"][0];
+    let class = |name| &binding(top, name)["type"]["class"];
+    // `+.Date` decides `a`'s class, which the checker does not model.
+    assert_eq!(class("a")["kind"], "unknown");
+    assert_eq!(class("b")["kind"], "known");
+    assert_eq!(class("b")["names"], json!(["foo"]));
+    assert_eq!(class("z")["kind"], "unknown");
+    assert_eq!(class("n")["kind"], "known");
+    assert_eq!(class("n")["names"], json!([]));
+}
+
+#[test]
 fn byte_spans_round_trip_unicode_tabs_and_multiline_functions() {
     let dir = tempfile::tempdir().unwrap();
     let source = "é <- 1L\r\nf <- function(λ) {\r\n\t結果 <- λ\r\n\t結果\r\n}\r\n`空 白` <- 1L\r\n";
@@ -254,6 +274,60 @@ fn unnamed_list_elements_export_schema_keys_without_named_field_claims() {
     assert!(columns["entries"][0].get("name").is_none());
 }
 
+/// The witnesses from #861, #863, and #864, checked against GNU R 4.6.1.
+#[test]
+fn loop_elements_list_writes_and_dots_lists_export_r_lengths_and_modes() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("shapes.R"),
+        "\
+factor_loop <- function() { g <- factor(c(\"a\", \"b\")); for (v in g) NULL; v }
+date_loop <- function() { g <- Sys.Date(); for (v in g) NULL; v }
+unknown_loop <- function(g) { for (v in g) NULL; v }
+dynamic_factor_loop <- function(k) { g <- structure(c(1, 2), class = k, levels = c(\"a\", \"b\")); for (v in g) NULL; v }
+grow <- function() { l <- list(); for (i in 1:3) l[[i]] <- i; l }
+drop2 <- function() { l <- list(1, 2, 3, 4); l[[2]] <- NULL; l }
+drop1 <- function() { l <- list(1, 2); l[2] <- NULL; l }
+keep <- function() { x <- 1:3; x[2] <- 1L; x }
+dots <- function(...) { rest <- list(...); rest }
+lead <- function(a, ...) { rest <- list(a, ...); rest }
+",
+    )
+    .unwrap();
+    let output = facts(dir.path(), &["shapes.R"]);
+    let scopes = output["files"][0]["scopes"].as_array().unwrap();
+    let ty = |scope: &str, name: &str| {
+        let scope = scopes.iter().find(|entry| entry["name"] == scope).unwrap();
+        binding(scope, name)["type"].clone()
+    };
+
+    // `factor()` has no known length, so the loop may run zero times and
+    // `v` may still be unbound after it (#860); it must not claim integer.
+    let v = ty("factor_loop", "v");
+    assert_eq!(v["mode"], "opaque", "{v}");
+    let v = ty("date_loop", "v");
+    assert_eq!(v["mode"], "double", "{v}");
+    assert_eq!(v["length"], json!({"kind": "known", "value": 1}), "{v}");
+    let v = ty("unknown_loop", "v");
+    assert_eq!(v["mode"], "opaque", "{v}");
+    let v = ty("dynamic_factor_loop", "v");
+    assert_eq!(v["mode"], "opaque", "{v}");
+
+    assert_eq!(ty("grow", "l")["length"], json!({"kind": "unknown"}));
+    assert_eq!(
+        ty("drop2", "l")["length"],
+        json!({"kind": "at_least", "value": 3})
+    );
+    assert_eq!(ty("drop1", "l")["length"], json!({"kind": "unknown"}));
+    assert_eq!(
+        ty("keep", "x")["length"],
+        json!({"kind": "known", "value": 3})
+    );
+
+    assert_eq!(ty("dots", "rest")["length"], json!({"kind": "unknown"}));
+    assert_eq!(ty("lead", "rest")["length"], json!({"kind": "nonempty"}));
+}
+
 #[test]
 fn dynamic_assignments_do_not_invent_imported_or_captured_provenance() {
     let dir = tempfile::tempdir().unwrap();
@@ -288,4 +362,39 @@ fn dynamic_assignments_do_not_invent_imported_or_captured_provenance() {
     assert_eq!(y["type"]["mode"], "integer");
     assert_eq!(y["origin"]["callee_alias"]["target"], "median");
     assert_eq!(y["origin"]["callee_alias"]["resolution"], "not_established");
+}
+
+/// #867: writes to the current frame inside `eval(quote())`, `evalq()`,
+/// `assign(envir = environment())`, `rm()`, and `on.exit()`. GNU R 4.6.1
+/// returns `"a"` from `f`, `e`, and `g`, removes `x` in `h`, and leaves it
+/// character when `k` exits. A write into another environment stays out.
+#[test]
+fn visible_frame_writes_reach_the_scope_exit_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("frame.R"),
+        "\
+f <- function() { x <- 1L; eval(quote(x <- \"a\")); x }
+e <- function() { x <- 1L; evalq(x <- \"a\"); x }
+g <- function() { x <- 1L; assign(\"x\", \"a\", envir = environment()); x }
+g2 <- function() { x <- 1L; assign(envir = environment(), x = \"x\", value = \"a\", inherits = FALSE); x }
+h <- function() { x <- 1L; rm(x); 1 }
+h2 <- function() { x <- 1L; rm(x, inherits = FALSE); 1 }
+k <- function() { x <- 1L; on.exit(x <- \"a\"); x }
+other <- function() { x <- 1L; eval(quote(x <- \"a\"), new.env()); x }
+",
+    )
+    .unwrap();
+    let output = facts(dir.path(), &["frame.R"]);
+    let scopes = output["files"][0]["scopes"].as_array().unwrap();
+    let x_mode = |name: &str| {
+        let scope = scopes.iter().find(|scope| scope["name"] == name).unwrap();
+        binding(scope, "x")["type"]["mode"].clone()
+    };
+    for name in ["f", "e", "h", "h2", "k"] {
+        assert_eq!(x_mode(name), "opaque", "{name}");
+    }
+    assert_eq!(x_mode("g"), "character");
+    assert_eq!(x_mode("g2"), "character");
+    assert_eq!(x_mode("other"), "integer");
 }

@@ -653,7 +653,15 @@ impl Checker {
     /// `list(a = 1, "x")` producing names `c("a", "2")`; it is what
     /// powers `df$col` / `df[["col"]]` resolution downstream.
     pub(crate) fn infer_list(&mut self, arg_types: &[RType], args: &[Arg]) -> RType {
-        let length = Length::Known(arg_types.len());
+        // `...` expands to however many arguments the caller supplied,
+        // including none, so only the other arguments are counted (#864).
+        let is_dots = |arg: &Arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "...");
+        let fixed = args.iter().filter(|arg| !is_dots(arg)).count();
+        let length = if args.iter().any(is_dots) {
+            Length::lower_bound(fixed)
+        } else {
+            Length::Known(arg_types.len())
+        };
         let base = RType::new(Mode::List, length);
         let mut schema = build_named_schema(arg_types, args).unwrap_or(ColumnSchema {
             columns: Vec::new(),
@@ -665,10 +673,10 @@ impl Checker {
         // fields at runtime. Preserve fields we can see, but never treat the
         // result as a closed record: absent fields are not known NULL and
         // cannot justify missing-column diagnostics.
-        if args.iter().any(|arg| {
-            matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
-                || matches!(&arg.value, Expr::Unknown(_) | Expr::Missing(_))
-        }) {
+        if args
+            .iter()
+            .any(|arg| is_dots(arg) || matches!(&arg.value, Expr::Unknown(_) | Expr::Missing(_)))
+        {
             schema.complete = false;
         }
         base.with_columns(Arc::new(schema))

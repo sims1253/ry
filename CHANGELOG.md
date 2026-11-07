@@ -4,6 +4,103 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The vendored typeshed moves to r-typeshed c5659cb, whose base stubs now
+  match GNU R: `mean()`, `prod()`, `round()` and `cumprod()` return
+  double or complex, `seq()` integer or double, `names()`, `rownames()`
+  and `colnames()` may be `NULL`, `dim()`, `nrow()` and `ncol()` make no
+  claim, `table()`, `proc.time()`, `ordered()`, `interaction()` and
+  `dist()` declare their classes, and more stubs allow `NA` (#866).
+- The release workflow now starts each release binary on the runner type
+  that built it, and a binary that fails blocks the release: `ry --version`
+  must report the workspace version and `ry check` must report RY040 on a
+  small fixture. The two targets cross-compiled on x64 runners,
+  `aarch64-pc-windows-msvc` and `armv7-unknown-linux-gnueabihf`, are
+  skipped (#856).
+### Added
+
+- A ratcheted parse differential in `ecosystem/run.sh --check`: GNU R's
+  `parse()` and ry's RY000 must agree on every `.R` file of both corpora
+  and base R's sources (12,594 files, no disagreements), so a false
+  RY000 on valid R or newly accepted R-rejected input fails CI (#841).
+
+### Fixed
+
+- Stop reporting RY000 for calls and subsets nested 43 to 49 deep, which
+  GNU R parses. Argument and parameter lists no longer count toward ry's
+  syntax nesting limit. Past the limit, a file within R's 49-bracket limit
+  gets the new RY129 warning ("file not checked") instead of RY000 and no
+  longer fails the run. Nesting past R's own limit reports RY000 with R's
+  "contextstack overflow" (#887).
+- Unary `-` and `!` keep the class R's primitive keeps:
+  `-structure(1, class = "foo")` and `!structure(TRUE, class = "foo")`
+  are still a `foo`, as is the empty-input case. `-TRUE` and `!1` coerce
+  and drop the class. `dump-facts` reports the class as unknown where a
+  base `Ops` method decides it (`-Sys.Date()`, `!factor("a")`), and
+  `!` on a raw vector is raw (#890).
+- Check nested function literals in time linear in their depth. Each
+  level used to multiply the work by 2 to 5, so 20 nested
+  `f <- function() { ... }` levels took 5 s and 12 nested `lapply()`
+  callbacks over 30 s. The existing three-level cap on nested closure
+  signatures now also applies to literals assigned or passed to a call
+  inside another literal (#893).
+- Report RY000 for syntax GNU R's `parse()` rejects but tree-sitter
+  accepts: repeated formals (`function(x, x)`), two expressions on one
+  line (`fjkdsfa 2`), a top-level dangling `else`, a `_` placeholder
+  outside a named argument of a `|>` call, unknown or NUL string escapes
+  (`'\q'`, `"\0"`), an exponent without digits (`1e`), and more than 49
+  nested brackets. Two expressions on one line, a dangling `else`, and a
+  misplaced `_` no longer also report RY010 on the misread tree (#841).
+- Stop reporting RY000 for a native-pipe call to a special function that
+  passes the `_` placeholder, such as `` x |> `+`(e1 = _, e2 = 1) ``,
+  which R accepts.
+- On Windows, a source whose resolved path is over 260 characters again
+  matches the scoped `paths` of its config and stays in its package's
+  context, rather than being skipped as if it were outside them (#880).
+- Arithmetic with no `Ops` method keeps the class of the longer operand,
+  as R's primitive does: the left class wins at equal lengths, and empty
+  results drop it. `structure(1, class = "foo") * 2` no longer reports
+  RY061 for a `$` that dispatches to `$.foo`. `dump-facts` reports the
+  class as unknown when an operand's class is unknown or a base method
+  such as `+.Date` decides it, instead of a known empty class (#865).
+- `for (v in f)` over a factor types `v` as a character string, as R
+  does. An integer or double whose class is unknown no longer claims
+  an element mode, since it may be a factor, and a `Date` still yields
+  plain doubles (#861).
+- A positional `[[<-` or `[<-` write on a list no longer keeps the old
+  length in `dump-facts`. `l[[i]] <- v` keeps the old length as a lower
+  bound, and a NULL value, which deletes, widens it (#863).
+- `list(...)` no longer has length 1. It has unknown length, or the
+  count of the other arguments as a lower bound (#864).
+- A `length(x) > 1L` bound now survives a `return()` exit
+  (`if (length(x) <= 1L) return(NULL)`), a false `||` before an early
+  exit (`if (length(x) <= 1L || is.null(y)) stop()`), and a join with a
+  value of unknown mode, so RY001 and RY002 report `if (x)` after those
+  guards, where R errors (#838).
+- `dump-facts` joins the state at each `return()` into a function's scope
+  snapshot. Before, `x <- 1L; if (c) return(x); x <- "a"` exported `x` as
+  character only (#859).
+- A loop that may run zero times keeps its entry state as a possible exit,
+  and a `for` variable is unknown after it when the sequence may be empty.
+  Before, `x <- 1L; for (i in seq_len(n)) x <- "a"` exported `x` as
+  character only and `i` as integer only. A loop proven to run, such as
+  `for (i in 1:3)`, keeps the body's types (#860).
+- A replacement function ry has not audited, such as `oldClass<-`,
+  `attributes<-`, or a project `foo<-`, now widens its target to unknown.
+  `dump-facts` no longer exports the type and class from before the
+  write. Base setters whose effect R proves keep what R keeps: `length<-`
+  on a classless vector keeps the mode and takes the new length,
+  `comment<-` and `attr<-` with an ordinary name keep the whole value,
+  `levels<-`, `names<-`, `dim<-` and `dimnames<-` keep a classless value's
+  mode, length and class, `is.na<-` keeps a classless vector's mode, and
+  `environment<-` keeps a value that is not a function. A setter that may
+  dispatch to a method still widens (#862).
+- `eval(quote(x <- v))`, `evalq(x <- v)`, `rm(x)`, and
+  `assign("x", v, envir = environment())` now update `x` in the current
+  frame, and `on.exit(x <- v)` widens `x` in the function's scope-exit
+  snapshot. `rm(x)` exports `x` as unknown rather than removing it, so a
+  later read stays free of RY010 when other code rebinds the name (#867).
 ### Fixed
 
 - `sum(c(TRUE, FALSE))`, `sum(1:3)`, `abs(TRUE)`, `max(TRUE)` and

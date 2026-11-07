@@ -52,7 +52,7 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
             } else {
                 ancestor
             };
-            dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf())
+            ry_config::canonical_path(ancestor).unwrap_or_else(|_| ancestor.to_path_buf())
         })
 }
 
@@ -723,7 +723,9 @@ fn package_relative_path(path: &Path, root: &Path) -> Option<PathBuf> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let path = dunce::canonicalize(parent).ok()?.join(path.file_name()?);
+    let path = ry_config::canonical_path(parent)
+        .ok()?
+        .join(path.file_name()?);
     path.strip_prefix(root).ok().map(Path::to_path_buf)
 }
 
@@ -790,7 +792,7 @@ fn visit_r_sources(
             continue;
         }
         visit(file);
-        if let Ok(identity) = dunce::canonicalize(&file.path) {
+        if let Ok(identity) = ry_config::canonical_path(path) {
             supplied.insert(identity);
         }
     }
@@ -798,7 +800,7 @@ fn visit_r_sources(
         return;
     };
     for path in paths {
-        let Ok(identity) = dunce::canonicalize(&path) else {
+        let Ok(identity) = ry_config::canonical_path(&path) else {
             continue;
         };
         if supplied.contains(&identity) {
@@ -1756,7 +1758,7 @@ mod package_grouping_tests {
             format!("Package: {name}\nVersion: 0.0.1\n"),
         )
         .unwrap();
-        dunce::canonicalize(root).unwrap()
+        ry_config::canonical_path(&root).unwrap()
     }
 
     /// Files group by nearest `DESCRIPTION` ancestor: each package's
@@ -1801,5 +1803,25 @@ mod package_grouping_tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[&Some(pkg_a)], vec![0]);
         assert_eq!(groups[&Some(pkg_b)], vec![1]);
+    }
+
+    /// Windows spells a resolved path over MAX_PATH (260 characters) with
+    /// its verbatim `\\?\` prefix; a short root has none. The deep source
+    /// must still be relative to its package (#880).
+    #[test]
+    fn sources_deeper_than_max_path_stay_package_relative() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = package_dir(dir.path(), "pkg");
+        let relative = Path::new("tests")
+            .join("testthat")
+            .join("d".repeat(120))
+            .join("e".repeat(120))
+            .join("test-a.R");
+        let file = root.join(&relative);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "x <- 1L\n").unwrap();
+        assert!(file.as_os_str().len() > 260);
+        assert_eq!(enclosing_package_root(&file), Some(root.clone()));
+        assert_eq!(package_relative_path(&file, &root), Some(relative));
     }
 }

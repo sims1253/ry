@@ -16,6 +16,8 @@ pub struct Rule {
 pub const INVALID_IGNORE: &str = "RY112";
 /// Opt-in audit for selective ignores that matched nothing.
 pub const UNUSED_IGNORE: &str = "RY113";
+/// Source nested deeper than ry analyzes; the file is not checked.
+pub const NESTING_LIMIT: &str = "RY129";
 
 /// Rules omitted from normal output unless explicitly selected with a
 /// severity override. Keep this policy in the registry so every checker
@@ -36,7 +38,7 @@ pub const RULES: &[Rule] = &[
         code: "RY000",
         name: "syntax-error",
         default_severity: Severity::Error,
-        summary: "Unparseable input, or input R's parser rejects: a region tree-sitter could not recover, a file ry cannot read or parse at all (such as one past ry's syntax nesting limits), source bytes that are not valid UTF-8, a leading UTF-8 byte order mark, or syntax base R rejects at parse time (such as an invalid native-pipe right-hand side). A file with any RY000 reports only its RY000s, because diagnostics derived from the repaired or transcoded tree are unreliable.",
+        summary: "Unparseable input, or input R's parser rejects: a region tree-sitter could not recover, a file ry cannot read or parse at all (such as one nested past R's 49-bracket limit), source bytes that are not valid UTF-8, a leading UTF-8 byte order mark, or syntax base R rejects at parse time (such as an invalid native-pipe right-hand side). A file with any RY000 reports only its RY000s, because diagnostics derived from the repaired or transcoded tree are unreliable.",
     },
     Rule {
         code: "RY001",
@@ -381,6 +383,12 @@ pub const RULES: &[Rule] = &[
         name: "invalid-diag-dimension",
         default_severity: Severity::Error,
         summary: "A proven base `diag()` whose matrix dimension is proven invalid: a negative or `NA` `nrow`/`ncol`, or, with neither supplied, a length-one numeric `x` proven negative or `NA`, which `diag` reads as the dimension rather than a diagonal entry, so R errors (\"invalid 'nrow' value\"). Silent for vector `x` (diagonal entries), non-negative scalars, entries mode (a scalar `x` with any second argument supplied), classed `x` that may dispatch to a `diag` method, and computed values ry cannot prove.",
+    },
+    Rule {
+        code: "RY129",
+        name: "nesting-limit",
+        default_severity: Severity::Warning,
+        summary: "Source nested deeper than ry analyzes: more than 128 syntax levels, or more than 1024 nested `else if` arms. R's parser allows that depth, so this is not a syntax error, but the file is not checked. Argument and parameter lists, flat `else if` arms, and left-associative operator chains do not count toward the depth. Nesting past R's own limit of 49 brackets is RY000.",
     },
 ];
 

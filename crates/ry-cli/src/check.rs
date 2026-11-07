@@ -269,7 +269,7 @@ pub(crate) fn run_check(
         config::write_baseline_file(path, &result.diagnostics, state.config_root())?;
         // The run's own baseline write is not an edit to react to.
         if watch {
-            let identity = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            let identity = |p: &Path| config::canonical_path(p).unwrap_or_else(|_| p.to_path_buf());
             let written = identity(path);
             for (watched, stamp) in &mut config_stamps {
                 if identity(watched) == written {
@@ -800,13 +800,19 @@ pub(crate) struct CheckContext<'a> {
 /// file on stderr and keep going. Failed files drop out of the pass and
 /// count as parse errors, which fail the run's exit code. Each one also
 /// comes back as a file-level RY000, at the parser's position when it has
-/// one, so machine-readable output names the file too (#743).
+/// one, so machine-readable output names the file too (#743). Source
+/// nested past ry's limit at a depth R allows comes back as an RY129
+/// warning instead and is not a parse error (#887).
 fn report_check_parse_failure(
     path: &std::path::Path,
     error: &pipeline::ParseError,
 ) -> ry_checker::Diagnostic {
     match error {
         pipeline::ParseError::Read(error) => eprintln!("ry: {}: {}", path.display(), error),
+        pipeline::ParseError::Parse {
+            error: error @ ry_core::ParseError::NestingLimit { .. },
+            ..
+        } => eprintln!("ry: {}: {}", path.display(), error),
         pipeline::ParseError::Parse { error, .. } => {
             eprintln!("ry: {}: parse error: {}", path.display(), error)
         }
@@ -848,8 +854,13 @@ fn run_check_once(
         pipeline::FailureAction::Skip
     })
     .expect("check's parse-failure policy never aborts");
-    parse_errors += paths.len() - all_parsed.len();
-    for (path, diagnostic, text) in failures.into_inner().expect("parse-failure list lock") {
+    let failures = failures.into_inner().expect("parse-failure list lock");
+    let not_analyzed = failures
+        .iter()
+        .filter(|(_, diagnostic, _)| diagnostic.code == ry_checker::rules::NESTING_LIMIT)
+        .count();
+    parse_errors += paths.len() - all_parsed.len() - not_analyzed;
+    for (path, diagnostic, text) in failures {
         if let Some(text) = text {
             srcs.insert(diagnostic.path.clone(), text);
         }
@@ -1193,13 +1204,13 @@ fn source_parent(path: &std::path::Path) -> &std::path::Path {
 fn source_identity(path: &std::path::Path) -> Result<PathBuf> {
     use miette::IntoDiagnostic;
 
-    match dunce::canonicalize(path) {
+    match config::canonical_path(path) {
         Ok(identity) => Ok(identity),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let name = path
                 .file_name()
                 .ok_or_else(|| miette::miette!("--stdin-filename must end in a source filename"))?;
-            let parent = dunce::canonicalize(source_parent(path)).map_err(|error| {
+            let parent = config::canonical_path(source_parent(path)).map_err(|error| {
                 miette::miette!(
                     "cannot resolve parent of --stdin-filename {}: {error}",
                     path.display()

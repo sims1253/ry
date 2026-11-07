@@ -2223,13 +2223,64 @@ fn long_else_if_chain_is_checked_on_a_small_stack() {
             for source in sources {
                 let mut project = Project::new();
                 project.add_file("chain.R".to_string(), parse("chain.R", &source));
+                // Some sources nest deeper than R's 50-slot context stack,
+                // which R rejects and ry reports as RY000 (#841). This test
+                // is about the checker's own stack, so compare only the
+                // semantic findings.
+                let codes: Vec<_> = project
+                    .check()
+                    .into_iter()
+                    .flat_map(|(_, diagnostics)| diagnostics)
+                    .map(|diagnostic| diagnostic.code)
+                    .filter(|code| *code != "RY000")
+                    .collect();
+                assert_eq!(codes, ["RY010"]);
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// #887: argument and parameter lists do not count toward the nesting
+/// limit, so calls and subsets nest about three times deeper than before.
+/// The deepest forms the limit admits are still checked, in a debug build,
+/// on a 1 MiB stack (the Windows main thread, #871).
+#[test]
+fn deepest_admitted_calls_and_subsets_are_checked_on_a_small_stack() {
+    let nest =
+        |open: &str, close: &str, n: usize| format!("{}1{}", open.repeat(n), close.repeat(n));
+    let sources = [
+        nest("f(", ")", 120),
+        nest("f(a = ", ")", 120),
+        nest("x[", "]", 120),
+        nest("x[[", "]]", 120),
+        nest("x$a$b(", ")", 120),
+        nest("base::identity(", ")", 120),
+        nest("list(a = ", ")", 120),
+        nest("function(a = ", ") 1", 120),
+        format!("g <- function(x) {{ y <- {}; y }}", nest("f(x, ", ")", 110)),
+        format!("g <- function(x) {{ y <- {}; y }}", nest("(", ")", 110)),
+    ];
+    std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(move || {
+            for source in sources {
+                // An RY010 here shows the whole file was checked.
+                let source = format!("{source}\nlater <- function() undefined_later\n");
+                let file = parse("deep.R", &source);
+                assert!(file.parse_errors.is_empty(), "{source}");
+                let mut project = Project::new();
+                project.add_file("deep.R".to_string(), file);
                 let codes: Vec<_> = project
                     .check()
                     .into_iter()
                     .flat_map(|(_, diagnostics)| diagnostics)
                     .map(|diagnostic| diagnostic.code)
                     .collect();
-                assert_eq!(codes, ["RY010"]);
+                // Past 49 brackets R rejects these too, which RY000 reports
+                // without stopping the checker (#841); stack use is the point.
+                assert!(codes.contains(&"RY010"), "{source}: {codes:?}");
             }
         })
         .unwrap()

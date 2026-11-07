@@ -55,6 +55,7 @@ impl Checker {
             && self.call_proves_no_rebind(func, args, scope);
         let kind = self.base_value_kind(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
+        self.apply_visible_frame_writes(func, args, scope);
         let result = kind.unwrap_or(result);
         scope.uncertainty.unseen_rebinds |= !keeps_bindings;
         self.apply_call_effect(&effect, scope);
@@ -2768,23 +2769,45 @@ impl Checker {
             .cloned()
     }
 
-    /// The default two-argument `assign("name", value)`: rebind in the
-    /// current environment.
+    /// `assign("name", value)` into the current frame: `pos` or `envir`
+    /// omitted or `environment()`, and `inherits` omitted or `FALSE`.
     fn infer_local_assign_call(
         &mut self,
         semantic_name: &str,
         args: &[Arg],
         scope: &mut Scope,
     ) -> Option<RType> {
-        if semantic_name != "assign" || args.len() != 2 {
+        if semantic_name != "assign" {
             return None;
         }
-        let name = match &args[0].value {
+        let matched = match_arguments(
+            &["x", "value", "pos", "envir", "inherits", "immediate"],
+            args,
+        );
+        let argument = |formal: usize| matched.arg_for_param(formal).map(|index| &args[index]);
+        let (Some(target), Some(value)) = (argument(0), argument(1)) else {
+            return None;
+        };
+        // `pos` and `envir` both default to the calling frame; `inherits =
+        // TRUE` may write to an enclosing frame that already binds the name.
+        let environment = match (argument(2), argument(3)) {
+            (None, None) => None,
+            (Some(envir), None) | (None, Some(envir)) => Some(&envir.value),
+            (Some(_), Some(_)) => return None,
+        };
+        if !matched.is_one_to_one()
+            || argument(4)
+                .is_some_and(|inherits| !matches!(inherits.value, Expr::Logical(false, _)))
+            || !self.targets_this_frame(environment, scope)
+        {
+            return None;
+        }
+        let name = match &target.value {
             Expr::String(name, _) => Some(name.clone()),
             _ => None,
         };
-        let _ = self.infer(&args[0].value, scope);
-        let value = self.infer(&args[1].value, scope);
+        let _ = self.infer(&target.value, scope);
+        let value = self.infer(&value.value, scope);
         if let Some(name) = name {
             scope.insert(name, value.clone());
         }

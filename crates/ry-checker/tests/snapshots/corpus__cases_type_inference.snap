@@ -466,12 +466,12 @@ expression: rows
       line: 798
       message: "variable `.` is not bound in this scope"
       severity: warning
-- case: the native underscore is unbound in a magrittr pipe
+- case: "R's parser rejects the native underscore in a magrittr pipe"
   diagnostics:
-    - code: RY010
+    - code: RY000
       line: 802
-      message: "variable `_` is not bound in this scope"
-      severity: warning
+      message: "syntax error: invalid use of pipe placeholder"
+      severity: error
 - case: an unknown column through the magrittr dot is reported
   diagnostics:
     - code: RY060
@@ -928,3 +928,5 @@ expression: rows
       line: 1487
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
+- case: the loop variable after a loop that may not run is quiet
+  diagnostics: []

@@ -2,7 +2,8 @@
 
 use crate::support::{check, write};
 
-/// One call nested past ry's syntax nesting limit of 128.
+/// One call nested past ry's syntax nesting limit of 128, and past R's own
+/// limit of 49 brackets, so R rejects it too.
 fn too_deep() -> Vec<u8> {
     format!("{}1{}\n", "f(".repeat(512), ")".repeat(512)).into_bytes()
 }
@@ -29,7 +30,7 @@ fn unparseable_file_is_one_ry000_in_every_format() {
         diagnostic["message"]
             .as_str()
             .unwrap()
-            .contains("syntax nesting limit of 128"),
+            .contains("contextstack overflow"),
         "{diagnostic}"
     );
 
@@ -118,4 +119,40 @@ fn unreadable_file_is_one_ry000_at_the_start() {
         message.starts_with("cannot read file: ") && message.ends_with("; file not checked"),
         "{diagnostic}"
     );
+}
+
+/// Source nested past ry's limit at a depth R allows is not a syntax error: R's parser accepts
+/// 512 unary minuses. The file is one RY129 warning, the run does not fail,
+/// and the other files are still checked (#887).
+#[test]
+fn valid_r_past_the_nesting_limit_is_one_ry129_warning() {
+    let temp = tempfile::tempdir().unwrap();
+    let deep = format!("x <- {}1\n", "-".repeat(512));
+    write(
+        temp.path(),
+        &[("deep.R", deep.as_bytes()), ("ok.R", b"y <- undefined_y\n")],
+    );
+
+    let json = check()
+        .cwd(temp.path())
+        .args(["--output-format", "json", "deep.R", "ok.R"])
+        .run();
+    assert!(json.success(), "{json:?}");
+    assert_eq!(
+        json.findings(),
+        [["deep.R", "RY129", "warning"], ["ok.R", "RY010", "warning"]]
+    );
+    let message = json.json()[0]["message"].as_str().unwrap().to_owned();
+    assert_eq!(
+        message,
+        "source exceeds ry's syntax nesting limit of 128; file not checked"
+    );
+
+    let human = check().cwd(temp.path()).arg("deep.R").run();
+    assert!(human.success(), "{human:?}");
+    assert!(
+        human.stderr().contains("deep.R: not analyzed at 1:"),
+        "{human:?}"
+    );
+    assert!(!human.stderr().contains("parse error"), "{human:?}");
 }

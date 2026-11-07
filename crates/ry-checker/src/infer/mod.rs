@@ -19,6 +19,7 @@ pub(crate) mod construct;
 mod contract;
 pub(crate) mod custom_operator;
 pub(crate) mod dynamic_closure;
+mod frame_writes;
 pub(crate) mod ifelse;
 pub(crate) mod index;
 pub(crate) mod loops;
@@ -97,9 +98,9 @@ impl ConditionContext {
 ///
 /// * the journal's continuation facts: doing so would flow the
 ///   else-branch narrowing of pre-existing guards into continuations.
-///   The one exception is the exact null-guard refinement
-///   ([`union_guard_continuation_refinement`], issues #362 and #692);
-///   and
+///   The one exception is the exact null-guard and length-bound
+///   refinement ([`union_guard_continuation_refinement`], issues #362,
+///   #692 and #838), which a project `return` binding disables; and
 /// * callee bodies reached through the collected-helper recursion:
 ///   `return` exits the *callee*, and its caller continues past the
 ///   call site.
@@ -144,6 +145,19 @@ impl<'a> BranchGuardView<'a> {
     /// The guard proved the recorded type wrong on this arm's path.
     pub(crate) fn is_unknown_narrowing(&self) -> bool {
         self.narrowed && self.ty.is_some_and(|ty| *ty == RType::unknown())
+    }
+
+    /// The guard only raised `original`'s length lower bound on this
+    /// arm's path (`length(x) > 1L`, issue #838).
+    pub(crate) fn is_length_bound_narrowing(&self, original: &RType) -> bool {
+        self.narrowed
+            && self.ty.is_some_and(|ty| {
+                let Length::AtLeast(min) = ty.length else {
+                    return false;
+                };
+                let mut refined = original.clone();
+                refine_length_at_least(&mut refined, min) && refined == *ty
+            })
     }
 }
 
@@ -200,6 +214,14 @@ pub(crate) fn union_guard_continuation_refinement(views: UnionGuardViews<'_>) ->
     let defaulted = views.original_default_parameter
         || views.then.default_parameter
         || views.else_.default_parameter;
+    // A `return` guard on a length bound (`if (length(x) <= 1L)
+    // return(NULL)`) leaves the surviving arm's bound exact.
+    if !defaulted
+        && let Some(view) = surviving
+        && view.is_length_bound_narrowing(views.original)
+    {
+        return view.ty.cloned();
+    }
     let complement = narrow_away_from_null(views.original)?;
     match views.original.mode {
         Mode::Union => {
@@ -959,7 +981,11 @@ impl Checker {
                 // runs in discarding mode and emits nothing on its own, so
                 // without this walk almost all real R code would go
                 // unchecked.
-                if let Expr::Function { params, body, span } = value {
+                // A discarding walk (signature or fixpoint inference) emits
+                // nothing, and the body walk cannot change this scope.
+                if let Expr::Function { params, body, span } = value
+                    && !self.discarding
+                {
                     self.enter_function_body(
                         binding_name(target),
                         true,
@@ -1011,6 +1037,7 @@ impl Checker {
                                 r.push(t);
                             }
                             if bare == "return" {
+                                self.record_return_path(scope);
                                 scope.unreachable = true;
                             }
                             return;
@@ -1094,13 +1121,17 @@ impl Checker {
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
                 self.walk_block(body, &mut inner, returns.as_deref_mut());
-                self.finish_loop(
-                    scope,
-                    inner,
-                    false,
-                    iter_t.length == Length::One
-                        || matches!(iter_t.length, Length::Known(n) if n > 0),
-                );
+                let entered = !iter_t.length.may_be_empty();
+                if !entered {
+                    // Over an empty sequence R skips the body and binds
+                    // the loop variable to NULL, replacing any earlier
+                    // value. That NULL appears nowhere in the source and
+                    // needs an empty input, which ry does not report on,
+                    // so the variable is unknown rather than a NULL union
+                    // that `if (i == n)` after the loop would flag.
+                    scope.insert(name.clone(), RType::unknown());
+                }
+                self.finish_loop(scope, inner, false, entered);
             }
             Stmt::While { cond, body, .. } => {
                 // RY103: a loop condition is a length-1 logical context.
@@ -1135,6 +1166,7 @@ impl Checker {
                 } else if let Some(r) = returns {
                     r.push(RType::new(Mode::Null, Length::Zero));
                 }
+                self.record_return_path(scope);
                 scope.unreachable = true;
             }
         }
@@ -1398,12 +1430,24 @@ impl Checker {
             self.load_hook_frames.push(self.enclosing_formals.len());
         }
         self.check_discarded_branch_results(body);
+        self.begin_exit_paths(&fn_scope);
         self.walk_block(body, &mut fn_scope, None);
+        let returned = self.end_exit_paths();
         if is_load_hook {
             self.load_hook_frames.pop();
         }
         self.check_declaration_return(span, function_name, declaration.as_ref());
-        self.record_scope(function_name, span, params, &fn_scope);
+        if self.capture_scopes && !self.discarding {
+            // `on.exit()` code runs after the last statement, so its writes
+            // belong to the scope-exit snapshot only (#867). The fall-through
+            // state's unknown absorbs the `return()` paths' types in the join.
+            for name in crate::collect::on_exit_frame_writes(body).names {
+                if fn_scope.get(&name).is_some() {
+                    fn_scope.insert(name, RType::unknown());
+                }
+            }
+        }
+        self.record_scope(function_name, span, params, &fn_scope, returned);
         self.superassigned_captures.pop();
         self.enclosing_formals.pop();
         self.frame_writes.pop();
@@ -2340,22 +2384,38 @@ impl Checker {
         // when the guard narrowed at least one binding that can yield a
         // refinement at all — a union with a NULL member or a pure-`NULL`
         // binding (the `narrow_away_from_null` member scan is that set's
-        // cheap encoding), or a binding an arm narrowed to an unknown
-        // value: exactly what `union_guard_continuation_refinement`
-        // admits. Guard-free `if`s and other guards keep their previous
-        // cost: for them it returns `None` regardless of the divergence
-        // flags.
+        // cheap encoding), a binding an arm narrowed to an unknown
+        // value, or one whose length bound an arm raised: exactly what
+        // `union_guard_continuation_refinement` admits. Guard-free `if`s
+        // and other guards keep their previous cost: for them it returns
+        // `None` regardless of the divergence flags.
         let guard_may_refine = narrowed.iter().any(|name| {
             let original = scope.get(name);
             original.is_some_and(|original| narrow_away_from_null(original).is_some())
                 || [&then_delta, &else_delta].into_iter().any(|delta| {
                     let view = delta.binding(scope, name, original);
-                    BranchGuardView::new(view.ty, view.narrowed, false).is_unknown_narrowing()
+                    let view = BranchGuardView::new(view.ty, view.narrowed, false);
+                    view.is_unknown_narrowing()
+                        || original.is_some_and(|original| view.is_length_bound_narrowing(original))
                 })
         });
-        let then_return_diverges = guard_may_refine && !then_diverges && self.arm_diverges(then);
-        let else_return_diverges =
-            guard_may_refine && !else_diverges && else_.is_some_and(|arm| self.arm_diverges(arm));
+        // A project `return` binding, outside the `if` or in the arm
+        // itself, is an ordinary call that continues.
+        let guard_may_refine =
+            guard_may_refine && !ops_chooser::operator_rebound(self, "return", scope);
+        let binds_return = |delta: &crate::scope_journal::BranchDelta| {
+            ["return", "`return`"]
+                .iter()
+                .any(|name| delta.changed.contains_key(*name))
+        };
+        let then_return_diverges = guard_may_refine
+            && !then_diverges
+            && !binds_return(&then_delta)
+            && self.arm_diverges(then);
+        let else_return_diverges = guard_may_refine
+            && !else_diverges
+            && !binds_return(&else_delta)
+            && else_.is_some_and(|arm| self.arm_diverges(arm));
         let union_guard_facts: Vec<(String, RType)> = if narrowed.is_empty() {
             Vec::new()
         } else {
@@ -2805,6 +2865,7 @@ impl Checker {
         // the body (the named-return closure pattern). `if` branches
         // are walked without splitting the scope (v1 approximation).
         let mut returns: Vec<RType> = Vec::new();
+        let prev_depth = std::mem::replace(&mut self.closure_depth, depth + 1);
         self.walk_block(body, &mut scope, Some(&mut returns));
         // The trailing expression -- or a bare trailing function
         // literal, the closure-factory pattern -- is the implicit
@@ -2812,6 +2873,7 @@ impl Checker {
         if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
             returns.push(t);
         }
+        self.closure_depth = prev_depth;
         self.discarding = prev_discarding;
         if returns.is_empty() {
             return None;
@@ -2895,6 +2957,10 @@ impl Checker {
         scope: &mut Scope,
         mut returns: Option<&mut Vec<RType>>,
     ) {
+        #[cfg(test)]
+        {
+            self.block_walks += 1;
+        }
         self.walk_block_with(statements, |checker, statement, _| {
             checker.walk_stmt(statement, scope, returns.as_deref_mut());
         });
@@ -3097,7 +3163,7 @@ impl Checker {
         }
 
         if self.assign_class_attribute(target, class_write, scope)
-            || self.assign_replacement_target(target, scope)
+            || self.assign_replacement_target(target, &vt, scope)
         {
             return false;
         }
@@ -3196,13 +3262,13 @@ impl Checker {
                 for argument in args {
                     self.infer(&argument.value, scope);
                 }
-                // An unmodeled replacement (`oldClass<-`, `attributes<-`, a
-                // project `f<-`) may attach a class, so a known environment
-                // or language binding cannot keep its classless proof.
+                // An unaudited replacement (`oldClass<-`, `attributes<-`, a
+                // project `f<-`) returns whatever its setter builds, so no
+                // mode, length, or class survives it (#862). Audited setters
+                // return before reaching here. An already unknown binding
+                // keeps its markers, as for `x[i] <- v`.
                 if let Some(Expr::Ident { name, .. }) = args.first().map(|arg| &arg.value)
-                    && scope
-                        .get(name)
-                        .is_some_and(|ty| ty.mode.is_known_non_vector())
+                    && scope.get(name).is_some_and(|ty| *ty != RType::unknown())
                 {
                     scope.insert(name.clone(), RType::unknown());
                 }
@@ -3296,13 +3362,41 @@ impl Checker {
     /// Replacement calls such as `dimnames(x) <- value` mutate `x`; the
     /// accessor expression is not an ordinary read/call that should be
     /// argument-checked. Keep the binding but conservatively forget its shape.
-    pub(crate) fn assign_replacement_target(&mut self, target: &Expr, scope: &mut Scope) -> bool {
+    pub(crate) fn assign_replacement_target(
+        &mut self,
+        target: &Expr,
+        value: &RType,
+        scope: &mut Scope,
+    ) -> bool {
         let Expr::Call { func, args, .. } = target else {
             return false;
         };
         let Expr::Ident { name: accessor, .. } = func.as_ref() else {
             return false;
         };
+        if accessor == "length"
+            && let [
+                Arg {
+                    name: None,
+                    value: Expr::Ident { name, .. },
+                    ..
+                },
+            ] = args.as_slice()
+            && let Some(resized) = scope
+                .get(name)
+                .and_then(|base| self.base_length_replacement(base, value, scope))
+        {
+            scope.insert(name.clone(), resized);
+            return true;
+        }
+        if let Some((name, kept)) = self.audited_base_setter(accessor, args, scope) {
+            let had_list_origin = scope.has_list_origin(&name);
+            scope.insert(name.clone(), kept);
+            if had_list_origin {
+                scope.mark_list_origin(name);
+            }
+            return true;
+        }
         if !matches!(
             accessor.as_str(),
             "names"
@@ -3329,6 +3423,174 @@ impl Checker {
             scope.mark_list_origin(name.clone());
         }
         true
+    }
+
+    /// The type a base setter whose effect GNU R 4.6.1 proves leaves on its
+    /// target, or `None` when the write may dispatch, the setter may be
+    /// masked, or the effect is not provable (the target then widens):
+    ///
+    /// - `comment<-` and `attr<-` with an ordinary attribute name are not
+    ///   generic and keep the whole value, data frames and lists included.
+    /// - `environment<-` keeps a value that is not a function. A function
+    ///   keeps its mode, but what it returns may change.
+    /// - `levels<-`, `names<-`, `dim<-` and `dimnames<-` are internal
+    ///   generics, which dispatch only on a class attribute
+    ///   (`levels<-.factor`, `dimnames<-.data.frame`). A provably classless
+    ///   value keeps its mode, length and class. `names<-`, `dim<-` and
+    ///   `dimnames<-` replace or drop the names a list schema records.
+    /// - `is.na<-` dispatches with `UseMethod`, implicit classes included.
+    ///   With no project method, a classless vector or list keeps its mode
+    ///   and may grow (`is.na(x) <- 5` pads to length 5).
+    ///
+    /// `storage.mode<-` and `mode<-` change the mode, and `units<-` works
+    /// only through `units<-.difftime`, so they stay unaudited.
+    fn audited_base_setter(
+        &self,
+        accessor: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Option<(String, RType)> {
+        let (target, rest) = args.split_first()?;
+        let Expr::Ident { name, .. } = &target.value else {
+            return None;
+        };
+        if target.name.as_deref().is_some_and(|name| name != "x") {
+            return None;
+        }
+        let base = scope.get(name)?;
+        if *base == RType::unknown()
+            || !self.base_setter_is_unmasked(&format!("{accessor}<-"), scope)
+        {
+            return None;
+        }
+        fn classless(ty: &RType) -> bool {
+            !ty.class.storage_proxy
+                && ty.class.is_classless()
+                && ty
+                    .members
+                    .iter()
+                    .flat_map(|members| members.iter())
+                    .all(classless)
+        }
+        let kept = match (accessor, rest) {
+            ("comment", []) => base.clone(),
+            ("attr", [which])
+                if which.name.as_deref().is_none_or(|name| name == "which")
+                    // Attributes that change what ry tracks or what R
+                    // dispatches on take the unaudited path.
+                    && matches!(&which.value, Expr::String(attribute, _)
+                        if !matches!(
+                            attribute.as_str(),
+                            "names" | "dim" | "dimnames" | "class" | "tsp" | "row.names" | "levels"
+                        )) =>
+            {
+                base.clone()
+            }
+            ("environment", []) if !base.mode.is_unknown() && base.mode != Mode::Function => {
+                base.clone()
+            }
+            ("levels", []) if classless(base) => base.clone(),
+            // A union's members would keep their old schemas.
+            ("names" | "dim" | "dimnames", []) if classless(base) && base.members.is_none() => {
+                RType {
+                    columns: None,
+                    ..base.clone()
+                }
+            }
+            ("is.na", [])
+                if classless(base)
+                    && matches!(
+                        base.mode,
+                        Mode::Logical
+                            | Mode::Integer
+                            | Mode::Double
+                            | Mode::Complex
+                            | Mode::Character
+                            | Mode::List
+                    )
+                    && !self.implicit_class_method_may_apply("is.na<-", base, scope) =>
+            {
+                RType::new(base.mode, Length::lower_bound(base.length.min_possible()))
+            }
+            _ => return None,
+        };
+        Some((name.clone(), kept))
+    }
+
+    /// Whether `UseMethod(generic)` may find a method other than base's
+    /// default for a classless value: a project method for its implicit
+    /// class (`is.na<-.character`, `is.na<-.numeric`, `is.na<-.matrix`) or
+    /// a project `is.na<-.default`.
+    fn implicit_class_method_may_apply(&self, generic: &str, base: &RType, scope: &Scope) -> bool {
+        let implicit: &[&str] = match base.mode {
+            Mode::Logical => &["logical"],
+            Mode::Integer => &["integer", "numeric"],
+            Mode::Double => &["double", "numeric"],
+            Mode::Complex => &["complex"],
+            Mode::Character => &["character"],
+            Mode::List => &["list"],
+            _ => return true,
+        };
+        // A value with `dim` also dispatches on "matrix" and "array"; ry does
+        // not track `dim`, so those count for every value.
+        let groups: [&[&str]; 3] = [implicit, &["matrix", "array"], &["default"]];
+        groups.into_iter().any(|classes| {
+            let receiver =
+                RType::new(base.mode, base.length).with_class(ClassVector::from_slice(classes));
+            self.s3_method_may_apply(generic, &receiver, scope)
+        }) || self.project_defines_method(|name| name == generic)
+    }
+
+    /// Whether `setter` is base R's: no data mask, project base stub, or
+    /// binding of the name may replace it.
+    fn base_setter_is_unmasked(&self, setter: &str, scope: &Scope) -> bool {
+        !scope.data_mask_unknown
+            && !self.user_stubs.contains_key("base")
+            && self.resolves_to_base(setter, scope)
+            && !self.literal_bindings_may_be_shadowed(
+                [setter, format!("`{setter}`").as_str()],
+                &HashSet::new(),
+                scope,
+            )
+    }
+
+    /// Base `length<-` on a classless atomic vector or list keeps its
+    /// storage mode and truncates or pads (with `NA` or `NULL`) to the new
+    /// length, dropping `dim`. A classed value may dispatch to a method.
+    fn base_length_replacement(&self, base: &RType, value: &RType, scope: &Scope) -> Option<RType> {
+        // A storage proxy (`Sys.Date() + 1`) hides a class R keeps.
+        if base.class.storage_proxy
+            || !base.class.is_classless()
+            || !matches!(
+                base.mode,
+                Mode::Logical
+                    | Mode::Integer
+                    | Mode::Double
+                    | Mode::Complex
+                    | Mode::Character
+                    | Mode::Raw
+                    | Mode::List
+            )
+            || !self.base_setter_is_unmasked("length<-", scope)
+        {
+            return None;
+        }
+        // R truncates a fractional length; NA or a negative one is an error.
+        let length = match value.value_facts.numeric_bounds {
+            Some((low, high))
+                if low == high
+                    && value.length == Length::One
+                    && matches!(value.mode, Mode::Integer | Mode::Double) =>
+            {
+                let length = f64::from_bits(low);
+                if !(length.is_finite() && length >= 0.0) {
+                    return None;
+                }
+                crate::exact_length(length as usize)
+            }
+            _ => Length::Unknown,
+        };
+        Some(RType::new(base.mode, length))
     }
 
     pub(crate) fn assign_nested_record_path(
@@ -3723,7 +3985,31 @@ impl Checker {
                     schema.columns.clear();
                 }
                 schema.complete = false;
-                scope.insert(base_name.clone(), base_t.with_columns(Arc::new(schema)));
+                let old = base_t.length;
+                let mut updated = base_t.with_columns(Arc::new(schema));
+                if matches!(kind, IndexKind::Double | IndexKind::Single) {
+                    // A positional write on a class-less list keeps or
+                    // extends it, while NULL deletes: `[[<-` one element,
+                    // `[<-` any number of them. A classed list may run
+                    // its own method, and a rebound operator may return
+                    // anything, which proves nothing (#863).
+                    let operator = if matches!(kind, IndexKind::Double) {
+                        "[[<-"
+                    } else {
+                        "[<-"
+                    };
+                    let base_operator = self.resolves_to_base(operator, scope)
+                        && !ops_chooser::operator_rebound(self, operator, scope);
+                    let may_delete = crate::may_delete_element(&vt);
+                    updated.length = match kind {
+                        _ if !updated.class.is_classless() || !base_operator => Length::Unknown,
+                        IndexKind::Single if may_delete => Length::Unknown,
+                        _ => Length::lower_bound(
+                            old.min_possible().saturating_sub(usize::from(may_delete)),
+                        ),
+                    };
+                }
+                scope.insert(base_name.clone(), updated);
                 return true;
             }
             return false;
@@ -4406,6 +4692,9 @@ impl Checker {
                                         (-f64::from_bits(lo)).to_bits(),
                                     )
                                 });
+                            if let Some(class) = self.unary_fallback_class(*op, &t, mode, scope) {
+                                result.class = class;
+                            }
                             result
                         }
                     }
@@ -4428,7 +4717,26 @@ impl Checker {
                                 format!("cannot apply `!` to `{}`", t.mode),
                             );
                         }
-                        RType::new(Mode::Logical, t.length)
+                        // `!` on raw is bitwise and stays raw. An operand
+                        // that may be raw or logical has no single mode.
+                        if t.mode == Mode::Union
+                            && t.members
+                                .iter()
+                                .flat_map(|members| members.iter())
+                                .any(|member| member.mode == Mode::Raw)
+                        {
+                            return RType::unknown();
+                        }
+                        let mode = if t.mode == Mode::Raw {
+                            Mode::Raw
+                        } else {
+                            Mode::Logical
+                        };
+                        let mut result = RType::new(mode, t.length);
+                        if let Some(class) = self.unary_fallback_class(*op, &t, mode, scope) {
+                            result.class = class;
+                        }
+                        result
                     }
                 }
             }
@@ -4500,7 +4808,8 @@ impl Checker {
                 // non-emitting inference path so a function literal in a
                 // top-level expression (`g <- f(); v <- (function() 1L)()`)
                 // resolves the same way as one inside a return slot.
-                let value = self.function_value_from_literal(params, body, scope, 0);
+                let value =
+                    self.function_value_from_literal(params, body, scope, self.closure_depth);
                 // A closure defined here may later superassign into the
                 // bindings this scope flattens; its definition is the
                 // point after which those bindings are unknown-typed

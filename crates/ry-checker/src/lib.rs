@@ -688,8 +688,12 @@ impl SelectSlotRole {
 /// Name resolution inside a data mask (a dplyr-style verb argument or a
 /// table `[` call). Every scope cloned from the masked one, including
 /// function bodies defined there, still evaluates inside the mask.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct DataMaskFrame {
+    /// Which mask entry this is. Copy-on-write keeps it, so a `return()`
+    /// can tell a function defined in this mask from a later mask walk.
+    /// Equality ignores it.
+    pub(crate) id: u64,
     /// A bare value-position symbol is a column candidate before it is a
     /// scope function, because the schema cannot prove the name absent.
     pub(crate) columns_first: bool,
@@ -701,6 +705,22 @@ pub(crate) struct DataMaskFrame {
     /// An unknown effect inside the mask may have rebound the enclosing
     /// environment, so `env` keeps its names but not their types.
     pub(crate) env_unknown: bool,
+}
+
+impl DataMaskFrame {
+    pub(crate) fn next_id() -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl PartialEq for DataMaskFrame {
+    fn eq(&self, other: &Self) -> bool {
+        self.columns_first == other.columns_first
+            && self.columns == other.columns
+            && self.env == other.env
+            && self.env_unknown == other.env_unknown
+    }
 }
 
 /// What unmodeled code on some path into the current point may have done.
@@ -831,6 +851,27 @@ pub struct Scope {
     /// Execution cannot continue in this block because a preceding operation
     /// is known to throw. Cloned scopes keep this fact local to that path.
     pub(crate) unreachable: bool,
+}
+
+/// The frame a `return()` leaves. A data mask without a column schema shares
+/// its caller's lookup frame, so the mask is part of the identity: every mask
+/// gets its own `DataMaskFrame` id, while a function body defined inside one
+/// inherits it.
+#[derive(Clone)]
+pub(crate) struct ExitFrame(Option<Arc<FunctionLookupFrame>>, Option<u64>);
+
+impl ExitFrame {
+    pub(crate) fn of(scope: &Scope) -> Self {
+        Self(
+            scope.outward_functions.clone(),
+            scope.data_mask.as_ref().map(|mask| mask.id),
+        )
+    }
+
+    pub(crate) fn same(&self, scope: &Scope) -> bool {
+        self.0.as_ref().map(Arc::as_ptr) == scope.outward_functions.as_ref().map(Arc::as_ptr)
+            && self.1 == scope.data_mask.as_ref().map(|mask| mask.id)
+    }
 }
 
 impl Scope {
@@ -1826,8 +1867,17 @@ pub struct Checker {
     refinement_dependencies: Option<HashMap<String, HashSet<String>>>,
     #[cfg(test)]
     refinement_counts: HashMap<String, usize>,
+    // Statement blocks walked, so tests can bound the work per nesting
+    // level (#893).
+    #[cfg(test)]
+    block_walks: usize,
     // Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
+    // Closure-nesting depth of the literal whose body `walk_literal_returns`
+    // is walking: 0 outside any signature walk. A literal met there is one
+    // level deeper, so `MAX_CLOSURE_DEPTH` bounds nested signature and
+    // callback-return inference (#893).
+    closure_depth: usize,
     // Packages attached via `library(pkg)` / `require(pkg)`, plus any
     // declared in `ry.toml`'s `packages` key (threaded in via
     // `set_loaded`), each with the packages it attaches in turn. The dplyr
@@ -1904,6 +1954,13 @@ pub struct Checker {
     capture_references: bool,
     reference_capture: Option<Box<reference_facts::ReferenceCapture>>,
     scope_records: Vec<ScopeRecord>,
+    // One frame per function body walked while `capture_scopes` is set:
+    // the body's execution frame and the joined states of the paths that
+    // left it through `return()`. Only scope recording reads them, so
+    // diagnostics cannot move.
+    /// Per function body being recorded: the frame it runs in (lookup frame
+    /// and data mask) and the join of its `return()` states.
+    scope_exit_paths: Vec<(ExitFrame, Option<Box<Scope>>)>,
     // Assignment-site types for editor hints, captured only on request.
     assignment_types: Option<HashMap<Span, RType>>,
     // Armed vacuous-all guards (RY110), installed by the pass-3 walk at
@@ -2125,7 +2182,10 @@ impl Checker {
             refinement_dependencies: None,
             #[cfg(test)]
             refinement_counts: HashMap::new(),
+            #[cfg(test)]
+            block_walks: 0,
             inferring: Vec::new(),
+            closure_depth: 0,
             loaded: Arc::new(HashSet::new()),
             bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
@@ -2153,6 +2213,7 @@ impl Checker {
             capture_references: false,
             reference_capture: None,
             scope_records: Vec::new(),
+            scope_exit_paths: Vec::new(),
             assignment_types: None,
             vacuous_guards: Vec::new(),
             vacuous_helpers: FxMap::default(),
@@ -2325,6 +2386,7 @@ impl Checker {
         // unwind can never leak load-time framing into the next file.
         self.load_hook_frames.clear();
         self.lazy_context_depth = 0;
+        self.closure_depth = 0;
         self.network_load_context_file = infer::network::load_context_file(
             &self.path,
             self.package_facts.source_package.is_some(),
@@ -2339,7 +2401,9 @@ impl Checker {
         // R's parser rejects it before any syntax consideration.
         let encoding_flagged = self.emit_encoding_diagnostics(file);
         self.emit_parse_errors(file);
-        if !encoding_flagged && file.parse_errors.is_empty() {
+        let misparsed =
+            !file.parse_errors.is_empty() || file.syntax_violations.iter().any(|v| v.misparsed);
+        if !encoding_flagged && !misparsed {
             self.declaration_findings
                 .extend(self.declarations.reports_for(&file.path));
         }
@@ -2355,7 +2419,10 @@ impl Checker {
         // A file flagged for non-UTF-8 source or a leading BOM is
         // suppressed the same way (#376, #474): its tree is a faithful
         // parse of a lossy Latin-1 transcoding (or of text R's parser
-        // refuses at 1:1), and R rejects the whole file regardless.
+        // refuses at 1:1), and R rejects the whole file regardless. So is
+        // an error-free tree that misreads a region R stops at (#841:
+        // `fjkdsfa 2` as two expressions, a dangling `else` or a stray
+        // `_` placeholder as a symbol).
         let semantic_start = self.diagnostics.len();
         let mut scope = self.top_level_scope();
         if self.capture_references {
@@ -2370,7 +2437,7 @@ impl Checker {
         self.superassigned_captures.push(superassigned);
         self.walk_block(&file.stmts, &mut scope, None);
         self.superassigned_captures.pop();
-        if encoding_flagged || !file.parse_errors.is_empty() {
+        if encoding_flagged || misparsed {
             self.diagnostics.truncate(semantic_start);
             // Declarations are semantic claims too. A repaired AST cannot
             // establish their attachment or a call/return mismatch.
@@ -2430,25 +2497,49 @@ impl Checker {
         records
     }
 
+    /// Open a frame for the `return()` paths of the function body about to
+    /// be walked in `body`. Pair with [`Self::end_exit_paths`].
+    pub(crate) fn begin_exit_paths(&mut self, body: &Scope) {
+        if self.capture_scopes {
+            self.scope_exit_paths.push((ExitFrame::of(body), None));
+        }
+    }
+
+    pub(crate) fn end_exit_paths(&mut self) -> Option<Box<Scope>> {
+        if self.capture_scopes {
+            self.scope_exit_paths.pop().and_then(|(_, paths)| paths)
+        } else {
+            None
+        }
+    }
+
     // Snapshot one completed function-body scope. Called at the end of
     // `walk_stmt`'s two function-definition arms; `discarding` guards the
-    // fixpoint / signature-building re-walks of the same body.
+    // fixpoint / signature-building re-walks of the same body. A call can
+    // leave through `return()` as well as by falling through, so the
+    // snapshot joins `returned` (those paths) into the final state.
     pub(crate) fn record_scope(
         &mut self,
         name: Option<&str>,
         span: Span,
         params: &[Param],
         scope: &Scope,
+        returned: Option<Box<Scope>>,
     ) {
         if !self.capture_scopes || self.discarding {
             return;
         }
+        let mut exit = Some(Box::new(scope.clone()));
+        if let Some(returned) = returned {
+            infer::loops::join_path(&mut exit, &returned);
+        }
+        let scope = *exit.expect("scope exit state");
         self.scope_records.push(ScopeRecord {
             kind: ScopeRecordKind::Function,
             name: name.map(str::to_string),
             span,
             params: params.iter().map(|p| (p.name.clone(), p.span)).collect(),
-            scope: scope.clone(),
+            scope,
         });
     }
 

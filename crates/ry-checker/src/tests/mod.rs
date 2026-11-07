@@ -3,6 +3,7 @@ use ry_core::RParser;
 
 mod call_contracts;
 mod call_head_lookup;
+mod closure_nesting_work;
 mod constructors;
 mod data_frames_s3;
 mod diagnostics;
@@ -78,6 +79,7 @@ mod structure_constructor;
 mod deferred_calls;
 
 mod cli_templates;
+mod exit_paths;
 mod failed_namespace;
 mod integer_range;
 mod literal_conditions;

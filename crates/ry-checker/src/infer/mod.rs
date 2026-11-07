@@ -97,9 +97,9 @@ impl ConditionContext {
 ///
 /// * the journal's continuation facts: doing so would flow the
 ///   else-branch narrowing of pre-existing guards into continuations.
-///   The one exception is the exact null-guard refinement
-///   ([`union_guard_continuation_refinement`], issues #362 and #692);
-///   and
+///   The one exception is the exact null-guard and length-bound
+///   refinement ([`union_guard_continuation_refinement`], issues #362,
+///   #692 and #838), which a project `return` binding disables; and
 /// * callee bodies reached through the collected-helper recursion:
 ///   `return` exits the *callee*, and its caller continues past the
 ///   call site.
@@ -144,6 +144,19 @@ impl<'a> BranchGuardView<'a> {
     /// The guard proved the recorded type wrong on this arm's path.
     pub(crate) fn is_unknown_narrowing(&self) -> bool {
         self.narrowed && self.ty.is_some_and(|ty| *ty == RType::unknown())
+    }
+
+    /// The guard only raised `original`'s length lower bound on this
+    /// arm's path (`length(x) > 1L`, issue #838).
+    pub(crate) fn is_length_bound_narrowing(&self, original: &RType) -> bool {
+        self.narrowed
+            && self.ty.is_some_and(|ty| {
+                let Length::AtLeast(min) = ty.length else {
+                    return false;
+                };
+                let mut refined = original.clone();
+                refine_length_at_least(&mut refined, min) && refined == *ty
+            })
     }
 }
 
@@ -200,6 +213,14 @@ pub(crate) fn union_guard_continuation_refinement(views: UnionGuardViews<'_>) ->
     let defaulted = views.original_default_parameter
         || views.then.default_parameter
         || views.else_.default_parameter;
+    // A `return` guard on a length bound (`if (length(x) <= 1L)
+    // return(NULL)`) leaves the surviving arm's bound exact.
+    if !defaulted
+        && let Some(view) = surviving
+        && view.is_length_bound_narrowing(views.original)
+    {
+        return view.ty.cloned();
+    }
     let complement = narrow_away_from_null(views.original)?;
     match views.original.mode {
         Mode::Union => {
@@ -1011,6 +1032,7 @@ impl Checker {
                                 r.push(t);
                             }
                             if bare == "return" {
+                                self.record_return_path(scope);
                                 scope.unreachable = true;
                             }
                             return;
@@ -1094,13 +1116,17 @@ impl Checker {
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
                 self.walk_block(body, &mut inner, returns.as_deref_mut());
-                self.finish_loop(
-                    scope,
-                    inner,
-                    false,
-                    iter_t.length == Length::One
-                        || matches!(iter_t.length, Length::Known(n) if n > 0),
-                );
+                let entered = !iter_t.length.may_be_empty();
+                if !entered {
+                    // Over an empty sequence R skips the body and binds
+                    // the loop variable to NULL, replacing any earlier
+                    // value. That NULL appears nowhere in the source and
+                    // needs an empty input, which ry does not report on,
+                    // so the variable is unknown rather than a NULL union
+                    // that `if (i == n)` after the loop would flag.
+                    scope.insert(name.clone(), RType::unknown());
+                }
+                self.finish_loop(scope, inner, false, entered);
             }
             Stmt::While { cond, body, .. } => {
                 // RY103: a loop condition is a length-1 logical context.
@@ -1135,6 +1161,7 @@ impl Checker {
                 } else if let Some(r) = returns {
                     r.push(RType::new(Mode::Null, Length::Zero));
                 }
+                self.record_return_path(scope);
                 scope.unreachable = true;
             }
         }
@@ -1398,12 +1425,14 @@ impl Checker {
             self.load_hook_frames.push(self.enclosing_formals.len());
         }
         self.check_discarded_branch_results(body);
+        self.begin_exit_paths(&fn_scope);
         self.walk_block(body, &mut fn_scope, None);
+        let returned = self.end_exit_paths();
         if is_load_hook {
             self.load_hook_frames.pop();
         }
         self.check_declaration_return(span, function_name, declaration.as_ref());
-        self.record_scope(function_name, span, params, &fn_scope);
+        self.record_scope(function_name, span, params, &fn_scope, returned);
         self.superassigned_captures.pop();
         self.enclosing_formals.pop();
         self.frame_writes.pop();
@@ -2340,22 +2369,38 @@ impl Checker {
         // when the guard narrowed at least one binding that can yield a
         // refinement at all — a union with a NULL member or a pure-`NULL`
         // binding (the `narrow_away_from_null` member scan is that set's
-        // cheap encoding), or a binding an arm narrowed to an unknown
-        // value: exactly what `union_guard_continuation_refinement`
-        // admits. Guard-free `if`s and other guards keep their previous
-        // cost: for them it returns `None` regardless of the divergence
-        // flags.
+        // cheap encoding), a binding an arm narrowed to an unknown
+        // value, or one whose length bound an arm raised: exactly what
+        // `union_guard_continuation_refinement` admits. Guard-free `if`s
+        // and other guards keep their previous cost: for them it returns
+        // `None` regardless of the divergence flags.
         let guard_may_refine = narrowed.iter().any(|name| {
             let original = scope.get(name);
             original.is_some_and(|original| narrow_away_from_null(original).is_some())
                 || [&then_delta, &else_delta].into_iter().any(|delta| {
                     let view = delta.binding(scope, name, original);
-                    BranchGuardView::new(view.ty, view.narrowed, false).is_unknown_narrowing()
+                    let view = BranchGuardView::new(view.ty, view.narrowed, false);
+                    view.is_unknown_narrowing()
+                        || original.is_some_and(|original| view.is_length_bound_narrowing(original))
                 })
         });
-        let then_return_diverges = guard_may_refine && !then_diverges && self.arm_diverges(then);
-        let else_return_diverges =
-            guard_may_refine && !else_diverges && else_.is_some_and(|arm| self.arm_diverges(arm));
+        // A project `return` binding, outside the `if` or in the arm
+        // itself, is an ordinary call that continues.
+        let guard_may_refine =
+            guard_may_refine && !ops_chooser::operator_rebound(self, "return", scope);
+        let binds_return = |delta: &crate::scope_journal::BranchDelta| {
+            ["return", "`return`"]
+                .iter()
+                .any(|name| delta.changed.contains_key(*name))
+        };
+        let then_return_diverges = guard_may_refine
+            && !then_diverges
+            && !binds_return(&then_delta)
+            && self.arm_diverges(then);
+        let else_return_diverges = guard_may_refine
+            && !else_diverges
+            && !binds_return(&else_delta)
+            && else_.is_some_and(|arm| self.arm_diverges(arm));
         let union_guard_facts: Vec<(String, RType)> = if narrowed.is_empty() {
             Vec::new()
         } else {

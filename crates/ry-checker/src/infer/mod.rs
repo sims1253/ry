@@ -4682,6 +4682,9 @@ impl Checker {
                                         (-f64::from_bits(lo)).to_bits(),
                                     )
                                 });
+                            if let Some(class) = self.unary_fallback_class(*op, &t, mode, scope) {
+                                result.class = class;
+                            }
                             result
                         }
                     }
@@ -4704,7 +4707,26 @@ impl Checker {
                                 format!("cannot apply `!` to `{}`", t.mode),
                             );
                         }
-                        RType::new(Mode::Logical, t.length)
+                        // `!` on raw is bitwise and stays raw. An operand
+                        // that may be raw or logical has no single mode.
+                        if t.mode == Mode::Union
+                            && t.members
+                                .iter()
+                                .flat_map(|members| members.iter())
+                                .any(|member| member.mode == Mode::Raw)
+                        {
+                            return RType::unknown();
+                        }
+                        let mode = if t.mode == Mode::Raw {
+                            Mode::Raw
+                        } else {
+                            Mode::Logical
+                        };
+                        let mut result = RType::new(mode, t.length);
+                        if let Some(class) = self.unary_fallback_class(*op, &t, mode, scope) {
+                            result.class = class;
+                        }
+                        result
                     }
                 }
             }

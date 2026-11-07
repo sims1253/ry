@@ -281,3 +281,88 @@ fn modeled_base_ops_method_keeps_its_checked_class_but_marks_the_proxy() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn methodless_unary_ops_keep_the_class_when_the_storage_mode_stays() {
+    // GNU R's unary `-` and `!` keep every attribute unless they coerce:
+    // `-` keeps a number's class, `!` a logical's or raw's, empty input
+    // included; `-TRUE` and `!1` drop it (#890).
+    let foo = ClassVector::single("foo");
+    for (expr, mode, class) in [
+        ("-structure(1, class = 'foo')", Mode::Double, foo.clone()),
+        ("-structure(1L, class = 'foo')", Mode::Integer, foo.clone()),
+        (
+            "-structure(numeric(0), class = 'foo')",
+            Mode::Double,
+            foo.clone(),
+        ),
+        (
+            "!structure(TRUE, class = 'foo')",
+            Mode::Logical,
+            foo.clone(),
+        ),
+        (
+            "!structure(as.raw(1), class = 'foo')",
+            Mode::Raw,
+            foo.clone(),
+        ),
+        (
+            "-structure(TRUE, class = 'foo')",
+            Mode::Integer,
+            ClassVector::empty(),
+        ),
+        (
+            "!structure(1, class = 'foo')",
+            Mode::Logical,
+            ClassVector::empty(),
+        ),
+        ("-1", Mode::Double, ClassVector::empty()),
+        ("!TRUE", Mode::Logical, ClassVector::empty()),
+    ] {
+        let source = format!("out <- {expr}");
+        let (diagnostics, scope) = check_with_scope(&source);
+        let result = scope.get("out").unwrap();
+        assert_eq!((result.mode, &result.class), (mode, &class), "{source}");
+        assert!(!result.class.storage_proxy, "{source}");
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn unary_ops_on_unions_claim_no_class_or_mode_they_cannot_prove() {
+    // `!` on raw is raw, so a raw-or-logical operand has no single mode.
+    let (_, scope) = check_with_scope("x <- if (runif(1) > 0.5) as.raw(1) else TRUE\nout <- !x");
+    assert_eq!(scope.get("out").unwrap(), &RType::unknown());
+    // A classed member's class may survive either operator, including a
+    // member whose class only a base method decides (`-Sys.time()`).
+    for source in [
+        "x <- if (runif(1) > 0.5) NULL else structure(TRUE, class = 'foo')\nout <- !x",
+        "x <- if (runif(1) > 0.5) TRUE else -Sys.time()\nout <- !x",
+        "x <- if (runif(1) > 0.5) structure(1, class = 'foo') else 1L\nout <- -x",
+        // `structure()` sets the class on the union itself, not on a member.
+        "x <- if (runif(1) > 0.5) TRUE else 1L\nout <- !structure(x, class = 'foo')",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert!(!scope.get("out").unwrap().class.export_known(), "{source}");
+    }
+    // A classless union keeps its known empty class. `TRUE` and `1L` have
+    // different modes, so the join really builds a union.
+    let (_, scope) = check_with_scope("x <- if (runif(1) > 0.5) TRUE else 1L\nout <- !x");
+    assert!(scope.get("out").unwrap().class.export_known());
+}
+
+#[test]
+fn unary_ops_with_a_base_method_export_an_unknown_class() {
+    // `Ops.Date`, `Ops.POSIXt` and `Ops.factor` decide these in R (most of
+    // them error or warn), so facts must not claim a known class.
+    for source in [
+        "out <- -Sys.Date()",
+        "out <- !Sys.Date()",
+        "out <- -Sys.time()",
+        "out <- !factor('a')",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        let result = scope.get("out").unwrap();
+        assert!(!result.class.export_known(), "{source}: {result:?}");
+    }
+}

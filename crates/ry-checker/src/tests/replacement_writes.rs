@@ -615,6 +615,7 @@ fn rm_list_backticks_and_union_names_writes_widen() {
         ("x <- 1L; rm(x, list = character())", "x"),
         ("x <- 1L; rm(`x`)", "x"),
         ("`x` <- 1L; rm(`x`)", "`x`"),
+        ("`x` <- 1L; rm(x)", "`x`"),
         (
             "y <- if (runif(1) > 0.5) list(old = 1) else NULL; names(y) <- NULL",
             "y",

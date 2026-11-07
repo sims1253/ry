@@ -78,10 +78,7 @@ impl Checker {
         let mut names = Vec::new();
         for argument in args {
             match (argument.name.as_deref(), &argument.value) {
-                // The binding may be stored under either spelling.
-                (None, Expr::Ident { name, .. }) => {
-                    names.extend([name.as_str(), semantic_argument_name(name)]);
-                }
+                (None, Expr::Ident { name, .. }) => names.push(semantic_argument_name(name)),
                 (None, Expr::String(name, _)) => names.push(name.as_str()),
                 (Some("envir"), envir) if self.targets_this_frame(Some(envir), scope) => {}
                 (Some("inherits"), Expr::Logical(false, _)) => {}
@@ -91,10 +88,16 @@ impl Checker {
                 _ => return,
             }
         }
-        for name in names {
-            if scope.get(name).is_some() && !scope.is_parameter(name) {
-                scope.insert(name.to_owned(), RType::unknown());
-            }
+        // A binding may be stored as `x` or `` `x` ``; R removes either.
+        let removed: Vec<String> = scope
+            .bindings
+            .keys()
+            .filter(|key| names.contains(&semantic_argument_name(key)))
+            .filter(|key| !scope.is_parameter(key))
+            .cloned()
+            .collect();
+        for key in removed {
+            scope.insert(key, RType::unknown());
         }
     }
 }

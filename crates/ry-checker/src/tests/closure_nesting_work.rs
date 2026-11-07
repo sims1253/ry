@@ -99,3 +99,18 @@ fn nested_closure_work_grows_linearly_with_depth() {
         );
     }
 }
+
+/// The fourth nested callback hits the closure-depth cap, but its
+/// constant body still types it: `v` is character, so `v + 1L` errors in
+/// R ("non-numeric argument to binary operator"), as main reports.
+#[test]
+fn nested_sapply_callbacks_keep_their_return_type() {
+    let diags = check(
+        "v <- sapply(1L, function(a) sapply(1L, function(b) sapply(1L, function(c) sapply(1L, function(d) \"x\"))))\n\
+         v + 1L\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY040"),
+        "expected RY040 from character + integer, got {diags:?}"
+    );
+}

@@ -92,13 +92,9 @@ impl Checker {
         let fallback_class =
             (op.is_arithmetic() && lt.mode != Mode::Union && rt.mode != Mode::Union).then(|| {
                 let symbol = op_symbol(op);
-                let may_dispatch = |ty: &RType| {
-                    ty.class.storage_proxy
-                        || (!ty.class.is_classless()
-                            && (self.s3_method_may_apply(symbol, ty, scope)
-                                || self.s3_method_may_apply("Ops", ty, scope)))
-                };
-                if may_dispatch(&lt) || may_dispatch(&rt) {
+                if self.ops_method_may_apply(symbol, &lt, scope)
+                    || self.ops_method_may_apply(symbol, &rt, scope)
+                {
                     ClassVector::storage_proxy()
                 } else {
                     primitive_arith_class(&lt, &rt)
@@ -450,6 +446,50 @@ impl Checker {
             }
         }
         None
+    }
+
+    /// Whether R may call an `Ops` or `symbol` method on `ty` instead of the
+    /// primitive: a storage-proxy result of a modeled base method, or a
+    /// classed value some method may apply to.
+    pub(crate) fn ops_method_may_apply(&self, symbol: &str, ty: &RType, scope: &Scope) -> bool {
+        ty.class.storage_proxy
+            || (!ty.class.is_classless()
+                && (self.s3_method_may_apply(symbol, ty, scope)
+                    || self.s3_method_may_apply("Ops", ty, scope)))
+    }
+
+    /// The class a unary `-` or `!` result exports once no project method
+    /// returned a value (#890): unknown through the storage proxy when an
+    /// `Ops` method may apply (`-Sys.Date()`), else R's primitive rule.
+    pub(crate) fn unary_fallback_class(
+        &self,
+        op: UnaryOpKind,
+        operand: &RType,
+        result_mode: Mode,
+        scope: &Scope,
+    ) -> Option<ClassVector> {
+        let symbol = match op {
+            UnaryOpKind::Neg => "-",
+            UnaryOpKind::Not => "!",
+        };
+        if result_mode.is_unknown() {
+            return None;
+        }
+        // Union members reach the primitive undispatched, and a classed
+        // member's class may survive, so only a provably classless union
+        // keeps a known class.
+        if operand.mode == Mode::Union {
+            // `structure(x, class = )` sets the class on the union itself.
+            let classed = std::iter::once(operand)
+                .chain(operand.members.iter().flat_map(|members| members.iter()))
+                .any(|member| member.class.storage_proxy || !member.class.is_classless());
+            return classed.then(ClassVector::storage_proxy);
+        }
+        Some(if self.ops_method_may_apply(symbol, operand, scope) {
+            ClassVector::storage_proxy()
+        } else {
+            primitive_unary_class(operand, result_mode)
+        })
     }
 
     pub(crate) fn try_s3_unary_dispatch(
@@ -1135,7 +1175,7 @@ impl Checker {
         })
     }
 
-    fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
+    pub(super) fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
         self.fn_table.functions.s4().defines_method(&generic)
             || self.project_defines_s3_method(generic)
     }
@@ -1420,6 +1460,18 @@ fn primitive_arith_class(lt: &RType, rt: &RType) -> ClassVector {
         (Some(_), Some(_)) if lt.class.is_classless() => rt.class.clone(),
         (Some(_), Some(_)) if !lt.class.is_unknown() => lt.class.clone(),
         _ => ClassVector::unknown(),
+    }
+}
+
+/// The class attribute R's unary `-` and `!` primitives leave on their
+/// result: all of the operand's attributes when the result keeps its storage
+/// mode (`-` on a number, `!` on a logical or raw vector, empty input
+/// included), none after a coercion (`-TRUE` is a classless integer).
+fn primitive_unary_class(operand: &RType, result_mode: Mode) -> ClassVector {
+    if operand.class.is_classless() || result_mode != operand.mode {
+        ClassVector::empty()
+    } else {
+        operand.class.clone()
     }
 }
 

@@ -21,6 +21,18 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Stop reporting RY000 for calls and subsets nested 43 to 49 deep, which
+  GNU R parses. Argument and parameter lists no longer count toward ry's
+  syntax nesting limit. Past the limit, a file within R's 49-bracket limit
+  gets the new RY129 warning ("file not checked") instead of RY000 and no
+  longer fails the run. Nesting past R's own limit reports RY000 with R's
+  "contextstack overflow" (#887).
+- Unary `-` and `!` keep the class R's primitive keeps:
+  `-structure(1, class = "foo")` and `!structure(TRUE, class = "foo")`
+  are still a `foo`, as is the empty-input case. `-TRUE` and `!1` coerce
+  and drop the class. `dump-facts` reports the class as unknown where a
+  base `Ops` method decides it (`-Sys.Date()`, `!factor("a")`), and
+  `!` on a raw vector is raw (#890).
 - Check nested function literals in time linear in their depth. Each
   level used to multiply the work by 2 to 5, so 20 nested
   `f <- function() { ... }` levels took 5 s and 12 nested `lapply()`
@@ -70,6 +82,21 @@ All notable changes to ry are documented in this file.
   Before, `x <- 1L; for (i in seq_len(n)) x <- "a"` exported `x` as
   character only and `i` as integer only. A loop proven to run, such as
   `for (i in 1:3)`, keeps the body's types (#860).
+- A replacement function ry has not audited, such as `oldClass<-`,
+  `attributes<-`, or a project `foo<-`, now widens its target to unknown.
+  `dump-facts` no longer exports the type and class from before the
+  write. Base setters whose effect R proves keep what R keeps: `length<-`
+  on a classless vector keeps the mode and takes the new length,
+  `comment<-` and `attr<-` with an ordinary name keep the whole value,
+  `levels<-`, `names<-`, `dim<-` and `dimnames<-` keep a classless value's
+  mode, length and class, `is.na<-` keeps a classless vector's mode, and
+  `environment<-` keeps a value that is not a function. A setter that may
+  dispatch to a method still widens (#862).
+- `eval(quote(x <- v))`, `evalq(x <- v)`, `rm(x)`, and
+  `assign("x", v, envir = environment())` now update `x` in the current
+  frame, and `on.exit(x <- v)` widens `x` in the function's scope-exit
+  snapshot. `rm(x)` exports `x` as unknown rather than removing it, so a
+  later read stays free of RY010 when other code rebinds the name (#867).
 
 ## [0.12.0] - 2026-11-01
 

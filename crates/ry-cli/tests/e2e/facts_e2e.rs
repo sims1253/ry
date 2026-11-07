@@ -363,3 +363,38 @@ fn dynamic_assignments_do_not_invent_imported_or_captured_provenance() {
     assert_eq!(y["origin"]["callee_alias"]["target"], "median");
     assert_eq!(y["origin"]["callee_alias"]["resolution"], "not_established");
 }
+
+/// #867: writes to the current frame inside `eval(quote())`, `evalq()`,
+/// `assign(envir = environment())`, `rm()`, and `on.exit()`. GNU R 4.6.1
+/// returns `"a"` from `f`, `e`, and `g`, removes `x` in `h`, and leaves it
+/// character when `k` exits. A write into another environment stays out.
+#[test]
+fn visible_frame_writes_reach_the_scope_exit_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("frame.R"),
+        "\
+f <- function() { x <- 1L; eval(quote(x <- \"a\")); x }
+e <- function() { x <- 1L; evalq(x <- \"a\"); x }
+g <- function() { x <- 1L; assign(\"x\", \"a\", envir = environment()); x }
+g2 <- function() { x <- 1L; assign(envir = environment(), x = \"x\", value = \"a\", inherits = FALSE); x }
+h <- function() { x <- 1L; rm(x); 1 }
+h2 <- function() { x <- 1L; rm(x, inherits = FALSE); 1 }
+k <- function() { x <- 1L; on.exit(x <- \"a\"); x }
+other <- function() { x <- 1L; eval(quote(x <- \"a\"), new.env()); x }
+",
+    )
+    .unwrap();
+    let output = facts(dir.path(), &["frame.R"]);
+    let scopes = output["files"][0]["scopes"].as_array().unwrap();
+    let x_mode = |name: &str| {
+        let scope = scopes.iter().find(|scope| scope["name"] == name).unwrap();
+        binding(scope, "x")["type"]["mode"].clone()
+    };
+    for name in ["f", "e", "h", "h2", "k"] {
+        assert_eq!(x_mode(name), "opaque", "{name}");
+    }
+    assert_eq!(x_mode("g"), "character");
+    assert_eq!(x_mode("g2"), "character");
+    assert_eq!(x_mode("other"), "integer");
+}

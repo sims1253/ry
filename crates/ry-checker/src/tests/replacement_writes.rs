@@ -398,6 +398,59 @@ fn unknown_name_presence_widens_list_and_delete_lengths() {
     assert_eq!(scope.get("l").unwrap().length.exact(), None);
 }
 
+/// #862: a replacement function ry has not audited may return anything,
+/// so its target keeps no mode, length, or class. GNU R 4.6.1: `x` is
+/// character and `h`, `k`, and `l` are objects of class `"myc"`.
+#[test]
+fn unaudited_replacement_widens_its_target() {
+    let source = "\
+x <- 1L; `foo<-` <- function(x, value) \"s\"; foo(x) <- 1
+h <- 1; oldClass(h) <- \"myc\"
+k <- 1; attributes(k) <- list(class = \"myc\")
+l <- 1; mostattributes(l) <- list(class = \"myc\")
+";
+    let (diagnostics, scope) = check_with_scope(source);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    for name in ["x", "h", "k", "l"] {
+        assert_eq!(scope.get(name), Some(&RType::unknown()), "{name}");
+    }
+}
+
+/// Base `length<-` on a classless vector keeps the storage mode and takes
+/// the new length (R truncates `2.7` to 2). A classed value may dispatch,
+/// and a project `length<-` returns anything.
+#[test]
+fn base_length_replacement_keeps_mode_and_takes_the_new_length() {
+    for (source, mode, length) in [
+        ("y <- 1:3; length(y) <- 5", Mode::Integer, Length::Known(5)),
+        (
+            "y <- list(1); length(y) <- 2.7",
+            Mode::List,
+            Length::Known(2),
+        ),
+        ("y <- 1:3; length(y) <- 0L", Mode::Integer, Length::Zero),
+        (
+            "y <- 1:3; n <- nchar(Sys.time()); length(y) <- n",
+            Mode::Integer,
+            Length::Unknown,
+        ),
+    ] {
+        let (_, scope) = check_with_scope(source);
+        let y = scope.get("y").unwrap();
+        assert_eq!((y.mode, y.length), (mode, length), "{source}: {y:?}");
+        assert!(y.class.is_classless(), "{source}: {y:?}");
+    }
+    for source in [
+        "y <- factor(\"a\"); length(y) <- 2",
+        // `Sys.Date() + 1` keeps class Date in R, behind a storage proxy.
+        "y <- Sys.Date() + 1; length(y) <- 2",
+        "`length<-` <- function(x, value) \"s\"; y <- 1:3; length(y) <- 5",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert_eq!(scope.get("y"), Some(&RType::unknown()), "{source}");
+    }
+}
+
 /// The list and named writes from #863, with GNU R 4.6.1's length. Before
 /// the fix the positional list writes kept the pre-write length. Each
 /// exported length must admit R's, and the known-length positional write
@@ -443,4 +496,133 @@ fn positional_list_write_keeps_a_lower_bound() {
         let (_, scope) = check_with_scope(source);
         assert_eq!(scope.get("l").unwrap().length, Length::Unknown, "{source}");
     }
+}
+
+/// Base setters that GNU R 4.6.1 proves keep the target's shape no longer
+/// cost the diagnostics R confirms after them: `"a" + 1` errors, `x[1]` of
+/// a list is never `1`, and `df$zz` is not a column.
+#[test]
+fn audited_base_setters_keep_the_diagnostics_r_confirms() {
+    for (source, code) in [
+        ("x <- \"a\"; is.na(x) <- 1; x + 1", "RY040"),
+        (
+            "x <- list(a = 1); comment(x) <- \"k\"; identical(x[1], 1)",
+            "RY101",
+        ),
+        (
+            "df <- data.frame(a = 1); comment(df) <- \"c\"; df$zz",
+            "RY060",
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == code),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+/// What each audited setter keeps, as GNU R 4.6.1 reports it. `names<-`,
+/// `dim<-` and `dimnames<-` drop the list schema whose names they replace,
+/// and `is.na<-` may pad the vector.
+#[test]
+fn audited_base_setters_keep_what_r_keeps() {
+    for (source, mode, length, class) in [
+        (
+            "y <- data.frame(a = 1:2); comment(y) <- \"c\"",
+            Mode::List,
+            Length::Known(1),
+            ClassVector::single("data.frame"),
+        ),
+        (
+            "y <- c(1, 2); attr(y, \"units\") <- \"cm\"",
+            Mode::Double,
+            Length::Known(2),
+            ClassVector::empty(),
+        ),
+        (
+            "y <- 1:3; levels(y) <- c(\"a\", \"b\")",
+            Mode::Integer,
+            Length::Known(3),
+            ClassVector::empty(),
+        ),
+        (
+            "y <- 1:4; dim(y) <- c(2L, 2L); dimnames(y) <- list(c(\"a\", \"b\"), NULL)",
+            Mode::Integer,
+            Length::Known(4),
+            ClassVector::empty(),
+        ),
+        (
+            "y <- c(TRUE, FALSE); environment(y) <- globalenv()",
+            Mode::Logical,
+            Length::Known(2),
+            ClassVector::empty(),
+        ),
+        (
+            "y <- c(1.5, 2); is.na(y) <- 5",
+            Mode::Double,
+            Length::AtLeast(2),
+            ClassVector::empty(),
+        ),
+    ] {
+        let (diagnostics, scope) = check_with_scope(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        let y = scope.get("y").unwrap();
+        assert_eq!(
+            (y.mode, y.length, &y.class),
+            (mode, length, &class),
+            "{source}"
+        );
+    }
+    let (_, scope) = check_with_scope("y <- list(a = 1, b = \"x\"); names(y) <- c(\"p\", \"q\")");
+    let y = scope.get("y").unwrap();
+    assert_eq!(
+        (y.mode, y.length, y.columns.is_none()),
+        (Mode::List, Length::Known(2), true)
+    );
+}
+
+/// Where a method may apply, the setter is masked, or R changes the mode,
+/// the target still widens: `levels<-.factor`, `is.na<-.factor`, a project
+/// `is.na<-` method (which dispatches on implicit classes too), a data
+/// frame's possible `names<-` method, a masked `comment<-`, a function's
+/// new environment, and `storage.mode<-`.
+#[test]
+fn setters_that_may_dispatch_or_change_the_mode_still_widen() {
+    for source in [
+        "y <- factor(\"a\"); levels(y) <- \"b\"",
+        "y <- factor(\"a\"); is.na(y) <- 1",
+        "`is.na<-.character` <- function(x, value) 1\ny <- \"a\"; is.na(y) <- 1",
+        "`is.na<-.matrix` <- function(x, value) 1\ny <- \"a\"; is.na(y) <- 1",
+        "`is.na<-.default` <- function(x, value) 1\ny <- \"a\"; is.na(y) <- 1",
+        "y <- data.frame(a = 1); names(y) <- \"zz\"",
+        "`comment<-` <- function(x, value) 1\ny <- \"a\"; comment(y) <- \"k\"",
+        "y <- function() 1; environment(y) <- new.env()",
+        "y <- \"a\"; storage.mode(y) <- \"integer\"",
+        "y <- 1; attr(y, \"class\") <- \"foo\"",
+    ] {
+        let (_, scope) = check_with_scope(source);
+        assert_eq!(scope.get("y"), Some(&RType::unknown()), "{source}");
+    }
+}
+
+/// `rm()` alongside a computed `list =` still removes its positional names,
+/// a backticked name is the binding's own, and `names<-` on a union cannot
+/// clear only some members' schemas, so each target widens.
+#[test]
+fn rm_list_backticks_and_union_names_writes_widen() {
+    let stale = [
+        ("x <- 1L; rm(x, list = character())", "x"),
+        ("x <- 1L; rm(`x`)", "x"),
+        ("`x` <- 1L; rm(`x`)", "`x`"),
+        ("`x` <- 1L; rm(x)", "`x`"),
+        (
+            "y <- if (runif(1) > 0.5) list(old = 1) else NULL; names(y) <- NULL",
+            "y",
+        ),
+    ]
+    .into_iter()
+    .filter(|(source, name)| check_with_scope(source).1.get(name) != Some(&RType::unknown()))
+    .collect::<Vec<_>>();
+    assert!(stale.is_empty(), "kept a stale type: {stale:?}");
 }

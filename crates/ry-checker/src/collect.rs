@@ -538,6 +538,42 @@ pub(crate) fn frame_writes(params: &[Param], body: &[Stmt]) -> WriteSet {
     writes
 }
 
+/// Names that evaluating `expr` in the current frame visibly binds: plain
+/// assignments and recognized installers outside nested function bodies.
+/// An installer with a computed target only sets `opaque`.
+pub(crate) fn expression_frame_writes(expr: &Expr) -> WriteSet {
+    let mut writes = WriteSet::default();
+    let _ = walk_expr(expr, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
+        if let Some((name, _)) = frame_binding(node) {
+            writes.insert_name(name);
+        }
+        if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
+            collect_callable_binding_write(func, args, &mut writes);
+        }
+        ControlFlow::Continue(Descend::Into)
+    });
+    writes
+}
+
+/// Names the `on.exit()` expressions in `body` visibly bind in its frame.
+/// That code runs after the body's last statement.
+pub(crate) fn on_exit_frame_writes(body: &[Stmt]) -> WriteSet {
+    let mut writes = WriteSet::default();
+    let _ = walk_stmts(body, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
+        if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+            && let Expr::Ident { name, .. } = func.as_ref()
+            && strip_package(semantic_argument_name(name), "base")
+                .unwrap_or(semantic_argument_name(name))
+                == "on.exit"
+            && let Some(expression) = named_or_first_positional(args, "expr")
+        {
+            writes.extend(expression_frame_writes(&expression.value));
+        }
+        ControlFlow::Continue(Descend::Into)
+    });
+    writes
+}
+
 /// Names that forcing a default may bind in the function's own frame.
 /// None is an unconditional effect at definition time.
 pub(crate) fn default_local_writes(params: &[Param]) -> WriteSet {

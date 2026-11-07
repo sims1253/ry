@@ -957,3 +957,33 @@ fn r_parse_rejections_match_base_r() {
         );
     }
 }
+
+/// R's parser nests at most 49 brackets ("contextstack overflow" at 50;
+/// `[[` takes two slots, and an `if` inside braces one more). Every form
+/// below is the deepest R 4.6.1 accepts (`Rscript --vanilla -e
+/// 'parse(text = ...)'`; one level more fails), and ry must parse it rather
+/// than report its own nesting limit (#887).
+#[test]
+fn deepest_bracket_nesting_r_accepts_parses() {
+    let nest = |open: &str, inner: &str, close: &str, n: usize| {
+        format!("{}{inner}{}", open.repeat(n), close.repeat(n))
+    };
+    for source in [
+        format!("x{}", nest("[x", "", "]", 49)),
+        format!("x{}", nest("[[x", "", "]]", 24)),
+        nest("f(", "1", ")", 49),
+        nest("f(a = ", "1", ")", 49),
+        nest("x$f(", "1", ")", 49),
+        nest("pkg::f(", "1", ")", 49),
+        format!("x <- {}", nest("list(a = ", "1", ")", 49)),
+        format!("x <- {}", nest("(", "1", ")", 49)),
+        format!("x <- {}", nest("{", "1", "}", 49)),
+        nest("for (i in x) { ", "1", " }", 49),
+        nest("if (a) { ", "1", " }", 25),
+        nest("tryCatch({ ", "1", " }, error = identity)", 24),
+    ] {
+        let file = parse(&source);
+        assert!(file.parse_errors.is_empty(), "{source}");
+        assert!(!file.stmts.is_empty(), "{source}");
+    }
+}

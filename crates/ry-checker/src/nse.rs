@@ -293,6 +293,7 @@ impl Checker {
     pub(crate) fn dplyr_data_mask_scope(&self, base_scope: &Scope, df_type: &RType) -> Scope {
         let enclosing = base_scope.data_mask.as_deref();
         let mut frame = DataMaskFrame {
+            id: DataMaskFrame::next_id(),
             columns_first: enclosing.is_some_and(|frame| frame.columns_first),
             columns: enclosing
                 .map(|frame| frame.columns.clone())

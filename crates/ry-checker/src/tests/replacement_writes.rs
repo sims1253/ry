@@ -442,6 +442,8 @@ fn base_length_replacement_keeps_mode_and_takes_the_new_length() {
     }
     for source in [
         "y <- factor(\"a\"); length(y) <- 2",
+        // `Sys.Date() + 1` keeps class Date in R, behind a storage proxy.
+        "y <- Sys.Date() + 1; length(y) <- 2",
         "`length<-` <- function(x, value) \"s\"; y <- 1:3; length(y) <- 5",
     ] {
         let (_, scope) = check_with_scope(source);

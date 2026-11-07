@@ -3499,7 +3499,9 @@ impl Checker {
     /// storage mode and truncates or pads (with `NA` or `NULL`) to the new
     /// length, dropping `dim`. A classed value may dispatch to a method.
     fn base_length_replacement(&self, base: &RType, value: &RType, scope: &Scope) -> Option<RType> {
-        if !base.class.is_classless()
+        // A storage proxy (`Sys.Date() + 1`) hides a class R keeps.
+        if base.class.storage_proxy
+            || !base.class.is_classless()
             || !matches!(
                 base.mode,
                 Mode::Logical

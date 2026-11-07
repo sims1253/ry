@@ -1792,6 +1792,7 @@ mod selected_branch_tests {
             len: 2,
             known: true,
             guarded: false,
+            storage_proxy: false,
         };
         assert!(!proven_class_guard(&scope, "x", &date, &target(partial)));
     }

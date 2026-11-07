@@ -24,7 +24,8 @@ auto-includes = false
 pr-run-mode = "skip"
 dispatch-releases = true
 # Sidecars join the same release upload after every local archive is built.
-global-artifacts-jobs = ["./binary-checksums"]
+# The smoke hook starts each binary; the release waits for both hooks.
+global-artifacts-jobs = ["./binary-checksums", "./smoke-binaries"]
 install-path = ["$XDG_BIN_HOME/", "$XDG_DATA_HOME/../bin", "~/.local/bin"]
 install-updater = false
 

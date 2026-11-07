@@ -328,12 +328,28 @@ impl Length {
 /// `guarded` marks names established by a passing class test such as
 /// `inherits(x, "foo")` or `is.data.frame(x)`. Such a test proves the
 /// guard held, not the value's whole class vector.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// `storage_proxy` marks a class that stands in for the result of an S3
+/// method the checker models by storage mode only, such as a base `Ops`
+/// method that falls through to the primitive (`Sys.Date() + 1`). Checks
+/// keep using the stored class; exported facts report it as unknown.
+/// Equality ignores the marker so it cannot change inference.
+#[derive(Debug, Clone, Eq, Default)]
 pub struct ClassVector {
     pub names: [Option<Arc<str>>; 4],
     pub len: u8,
     pub known: bool,
     pub guarded: bool,
+    pub storage_proxy: bool,
+}
+
+impl PartialEq for ClassVector {
+    fn eq(&self, other: &Self) -> bool {
+        self.names == other.names
+            && self.len == other.len
+            && self.known == other.known
+            && self.guarded == other.guarded
+    }
 }
 
 impl ClassVector {
@@ -346,7 +362,22 @@ impl ClassVector {
             len: 0,
             known: true,
             guarded: false,
+            storage_proxy: false,
         }
+    }
+
+    /// The classless state the storage model gives an unmodeled S3 method
+    /// result, marked so exported facts do not claim it is classless.
+    pub fn storage_proxy() -> Self {
+        ClassVector {
+            storage_proxy: true,
+            ..ClassVector::empty()
+        }
+    }
+
+    /// Whether exported facts may report this class vector as known.
+    pub fn export_known(&self) -> bool {
+        self.known && !self.storage_proxy
     }
 
     /// A single-class value, e.g. `structure(x, class = "foo")`.
@@ -356,6 +387,7 @@ impl ClassVector {
             len: 1,
             known: true,
             guarded: false,
+            storage_proxy: false,
         }
     }
 
@@ -377,6 +409,7 @@ impl ClassVector {
             len: 0,
             known: false,
             guarded: false,
+            storage_proxy: false,
         }
     }
 
@@ -908,7 +941,8 @@ impl RType {
 
     /// Primitive storage result for addition, subtraction or multiplication.
     /// Use [`Self::arith_for`] for operator-specific coercion. Class dispatch
-    /// belongs to the checker; this operation returns no class or schema.
+    /// belongs to the checker; this operation returns no schema, and a known
+    /// class only when both operands are classless.
     ///
     /// Union semantics: distribute over members;
     /// the op errors ONLY if every member-pair errors. A union of
@@ -971,12 +1005,24 @@ impl RType {
             // An unknown length cannot prove that the call reaches the error.
             return Some(RType::unknown());
         }
+        // R's primitive copies the class attribute of the longer operand, but
+        // a classed operand may own an `Ops` method that this storage model
+        // cannot see, and an unknown class may be either. Only two classless
+        // operands prove the result classless; the checker applies the
+        // primitive retention rule once it has ruled out dispatch.
+        let class = if self.class.is_classless() && rhs.class.is_classless() {
+            if self.class.storage_proxy || rhs.class.storage_proxy {
+                ClassVector::storage_proxy()
+            } else {
+                ClassVector::empty()
+            }
+        } else {
+            ClassVector::unknown()
+        };
         Some(RType {
             mode,
             length,
-            // The primitive storage model does not infer class dispatch or
-            // attribute propagation from operand types alone.
-            class: ClassVector::empty(),
+            class,
             columns: None,
             fn_sig: None,
             value_facts: ValueFacts::default(),
@@ -1062,20 +1108,29 @@ impl RType {
                 ..RType::unknown()
             };
         }
-        if self == other {
-            return self;
-        }
-        if self.same_shape(&other) {
-            return self.merge_same_shape(&other);
-        }
-        union_of(self, other)
+        // Equality ignores the export-only proxy marker; keep it from either side.
+        let proxy = self.class.storage_proxy || other.class.storage_proxy;
+        let mut joined = if self == other {
+            self
+        } else if self.same_shape(&other) {
+            self.merge_same_shape(&other)
+        } else {
+            return union_of(self, other);
+        };
+        joined.class.storage_proxy |= proxy;
+        joined
     }
 
     /// Element type of an iterable used in `for (var in iter)`. For an
     /// atomic vector this is a length-1 value of the same mode; for a
     /// list it is a length-1 list; for opaque input it stays opaque.
     /// The class and column schema are dropped: iterating over a classed
-    /// vector yields the bare elements in R.
+    /// vector such as a `Date` yields the bare elements in R. A factor is
+    /// the exception: `for` reads it through `asCharacterFactor`, so each
+    /// element is a level string. R refuses class `"factor"` on anything
+    /// but integer storage, and `structure()` converts a double to integer
+    /// for it, so only an integer or double whose class is unknown, or only
+    /// guarded, may be a factor and claims no element mode (#861).
     ///
     /// For a `Mode::Union`, the element type is the union of each member's
     /// element type. Distributing -- rather than passing
@@ -1100,6 +1155,11 @@ impl RType {
                     None => RType::unknown(),
                 }
             }
+            // A class on the union itself applies to every member.
+            _ if self.class.contains("factor") => RType::scalar(Mode::Character),
+            _ if (!self.class.known || self.class.guarded) && self.may_be_factor_storage() => {
+                RType::unknown()
+            }
             Mode::Union => match self.members.as_ref() {
                 Some(ms) => {
                     let elems: Vec<RType> = ms.iter().map(|m| m.element()).collect();
@@ -1121,6 +1181,19 @@ impl RType {
                 }
                 element
             }
+        }
+    }
+
+    /// Whether this may be, or `structure()` may convert it to, the
+    /// integer storage every factor has.
+    fn may_be_factor_storage(&self) -> bool {
+        match self.mode {
+            Mode::Integer | Mode::Double => true,
+            Mode::Union => self
+                .members
+                .as_ref()
+                .is_none_or(|members| members.iter().any(RType::may_be_factor_storage)),
+            _ => false,
         }
     }
 
@@ -1238,10 +1311,10 @@ impl RType {
 /// `Length::Unknown`.
 fn union_of(a: RType, b: RType) -> RType {
     let mut members: Vec<RType> = Vec::new();
-    let push_dedup = |v: &mut Vec<RType>, t: RType| {
-        if !v.iter().any(|m| m == &t) {
-            v.push(t);
-        }
+    let push_dedup = |v: &mut Vec<RType>, t: RType| match v.iter_mut().find(|m| **m == t) {
+        // Equality ignores the export-only proxy marker; keep it.
+        Some(member) => member.class.storage_proxy |= t.class.storage_proxy,
+        None => v.push(t),
     };
     match a.mode {
         Mode::Union => {
@@ -1695,6 +1768,73 @@ mod tests {
     }
 
     #[test]
+    fn element_of_factor_is_a_level_string() {
+        // `for (v in factor(c("a", "b")))` binds `v` to "a", then "b".
+        let factor =
+            RType::new(Mode::Integer, Length::Known(2)).with_class(ClassVector::single("factor"));
+        assert_eq!(factor.element(), RType::scalar(Mode::Character));
+        let ordered = RType::new(Mode::Integer, Length::Known(2))
+            .with_class(ClassVector::from_slice(&["ordered", "factor"]));
+        assert_eq!(ordered.element(), RType::scalar(Mode::Character));
+    }
+
+    #[test]
+    fn element_of_unknown_class_claims_no_mode() {
+        // An unknown or merely guarded class on integer storage may still
+        // inherit "factor"; `structure(c(1, 2), class = k)` makes a double
+        // an integer factor when `k` is "factor".
+        let unknown =
+            RType::new(Mode::Integer, Length::Known(2)).with_class(ClassVector::unknown());
+        assert!(unknown.element().mode.is_unknown());
+        let guarded =
+            RType::new(Mode::Integer, Length::Known(2)).with_class(ClassVector::guard("foo"));
+        assert!(guarded.element().mode.is_unknown());
+        let double = RType::new(Mode::Double, Length::Known(2)).with_class(ClassVector::unknown());
+        assert!(double.element().mode.is_unknown());
+        let union = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double));
+        assert!(
+            union
+                .with_class(ClassVector::unknown())
+                .element()
+                .mode
+                .is_unknown()
+        );
+    }
+
+    #[test]
+    fn element_of_unknown_class_on_other_storage_keeps_its_mode() {
+        // R refuses class "factor" on anything but integer storage, so
+        // `for (v in structure(c("a", "b"), class = k))` binds strings.
+        for mode in [Mode::Character, Mode::Logical, Mode::Complex] {
+            let value = RType::new(mode, Length::Known(2)).with_class(ClassVector::unknown());
+            assert_eq!(value.element().mode, mode);
+        }
+        let union = RType::scalar(Mode::Character).join(RType::scalar(Mode::Logical));
+        let element = union.with_class(ClassVector::unknown()).element();
+        assert_eq!(element.mode, Mode::Union);
+    }
+
+    #[test]
+    fn element_of_classed_union_follows_the_union_class() {
+        // `structure(if (flag) 1L else 2, class = "factor", levels = ...)`.
+        let union = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double));
+        let factor = union.clone().with_class(ClassVector::single("factor"));
+        assert_eq!(factor.element(), RType::scalar(Mode::Character));
+        let date = union.with_class(ClassVector::single("Date"));
+        assert_eq!(date.element().mode, Mode::Union);
+    }
+
+    #[test]
+    fn element_of_date_stays_double() {
+        let date =
+            RType::new(Mode::Double, Length::Known(2)).with_class(ClassVector::single("Date"));
+        let element = date.element();
+        assert_eq!(element.mode, Mode::Double);
+        assert_eq!(element.length, Length::One);
+        assert!(element.class.is_classless());
+    }
+
+    #[test]
     fn element_of_union_distributes_over_members() {
         // element() of a union is the join of each member's element type.
         // Previously the `_` arm built a malformed union
@@ -1971,13 +2111,26 @@ mod tests {
     }
 
     #[test]
-    fn arith_strips_class() {
-        let lhs = RType::scalar(Mode::Double).with_class(ClassVector::single("lm"));
-        let rhs = RType::scalar(Mode::Double);
-        let r = lhs.arith(rhs).unwrap();
-        assert!(!r.class.is_unknown());
-        assert!(!r.class.has_known_class());
+    fn union_dedup_keeps_the_storage_proxy_marker() {
+        let plain = RType::scalar(Mode::Double);
+        let proxy = plain.clone().with_class(ClassVector::storage_proxy());
+        let either = plain.join(RType::scalar(Mode::Character));
+        let joined = either.join(proxy);
+        let members = joined.members.expect("union members");
+        let double = members.iter().find(|m| m.mode == Mode::Double).unwrap();
+        assert!(double.class.storage_proxy, "{members:?}");
+    }
+
+    #[test]
+    fn arith_class_is_empty_only_for_classless_operands() {
+        let plain = RType::scalar(Mode::Double);
+        let r = plain.clone().arith(plain.clone()).unwrap();
         assert_eq!(r.class, ClassVector::empty());
+        // A classed operand may own an `Ops` method, and an unknown class
+        // may be anything; neither proves the result classless (#865).
+        let classed = RType::scalar(Mode::Double).with_class(ClassVector::single("lm"));
+        assert!(classed.arith(plain.clone()).unwrap().class.is_unknown());
+        assert!(RType::unknown().arith(plain).unwrap().class.is_unknown());
     }
 
     #[test]

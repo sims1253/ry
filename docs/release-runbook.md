@@ -78,12 +78,16 @@ v{version}  (e.g. v0.10.0)
    gh workflow run release.yml --ref <release-branch> -f tag=dry-run
    ```
 
-   Record the run's commit SHA. Require all nine platform builds and
-   `custom-binary-checksums` to succeed, with `host` skipped, because
-   `dry-run` builds artifacts without creating a release. Inspect the
-   `artifacts-binary-checksums` artifact for nine `.bin.sha256` files. The
-   checksum hook verifies each archive before hashing its executable, and a
-   failed hook blocks publication.
+   Record the run's commit SHA. Require all nine platform builds,
+   `custom-binary-checksums`, and `custom-smoke-binaries` to succeed, with
+   `host` skipped, because `dry-run` builds artifacts without creating a
+   release. Inspect the `artifacts-binary-checksums` artifact for nine
+   `.bin.sha256` files. The checksum hook verifies each archive before
+   hashing its executable. The smoke hook runs `ry --version` and
+   `ry check` on the fixture from the manual smoke-test recipe below, on
+   the runner type that built each binary. It skips `aarch64-pc-windows-msvc`
+   and `armv7-unknown-linux-gnueabihf`, which are cross-compiled on x64
+   runners. A failed hook blocks publication.
 4. Tag that exact reviewed commit: `git tag v{version} <reviewed-commit-sha>`.
 5. Push tag: `git push origin v{version}`.
 6. Dispatch the release explicitly against the tag:

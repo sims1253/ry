@@ -1,0 +1,499 @@
+{
+  "schema_version": 1,
+  "r_version": "4.6.1",
+  "corpora": {
+    "posit": {
+      "files": 8397,
+      "r_rejected": 18,
+      "ry_rejected": 18,
+      "disagreements": 0,
+      "packages": {
+        "actions": {
+          "files": 4,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "bigrquery": {
+          "files": 54,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "blastula": {
+          "files": 58,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "blogdown": {
+          "files": 23,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "bookdown": {
+          "files": 39,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "broom": {
+          "files": 230,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "bslib": {
+          "files": 129,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "cli": {
+          "files": 171,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "corrr": {
+          "files": 28,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "dbplyr": {
+          "files": 195,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "devtools": {
+          "files": 94,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "dplyr": {
+          "files": 195,
+          "r_rejected": 1,
+          "ry_rejected": 1
+        },
+        "dt": {
+          "files": 41,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "dtplyr": {
+          "files": 72,
+          "r_rejected": 1,
+          "ry_rejected": 1
+        },
+        "ellmer": {
+          "files": 128,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "flexdashboard": {
+          "files": 26,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "forcats": {
+          "files": 55,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "ggplot2": {
+          "files": 357,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "glue": {
+          "files": 23,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "gt": {
+          "files": 289,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "httr": {
+          "files": 94,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "infer": {
+          "files": 42,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "keras3": {
+          "files": 133,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "leaflet": {
+          "files": 87,
+          "r_rejected": 3,
+          "ry_rejected": 3
+        },
+        "learnr": {
+          "files": 87,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "lintr": {
+          "files": 346,
+          "r_rejected": 4,
+          "ry_rejected": 4
+        },
+        "lubridate": {
+          "files": 88,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "magrittr": {
+          "files": 17,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "multidplyr": {
+          "files": 17,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "pagedown": {
+          "files": 15,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "pak": {
+          "files": 639,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "parsnip": {
+          "files": 355,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "pkgdown": {
+          "files": 135,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "plumber": {
+          "files": 202,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "purrr": {
+          "files": 117,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "r2d3": {
+          "files": 21,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "readr": {
+          "files": 67,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "readxl": {
+          "files": 38,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "recipes": {
+          "files": 291,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "renv": {
+          "files": 356,
+          "r_rejected": 2,
+          "ry_rejected": 2
+        },
+        "reprex": {
+          "files": 70,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "reticulate": {
+          "files": 102,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "rlang": {
+          "files": 163,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "rmarkdown": {
+          "files": 87,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "roxygen2": {
+          "files": 178,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "rticles": {
+          "files": 25,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "rvest": {
+          "files": 32,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "shiny-r": {
+          "files": 275,
+          "r_rejected": 2,
+          "ry_rejected": 2
+        },
+        "shinydashboard": {
+          "files": 29,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "sparklyr": {
+          "files": 292,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "stringr": {
+          "files": 67,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "styler": {
+          "files": 650,
+          "r_rejected": 4,
+          "ry_rejected": 4
+        },
+        "tensorflow": {
+          "files": 32,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "testthat": {
+          "files": 266,
+          "r_rejected": 1,
+          "ry_rejected": 1
+        },
+        "tibble": {
+          "files": 102,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "tidymodels": {
+          "files": 11,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "tidyr": {
+          "files": 86,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "tidyverse": {
+          "files": 14,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "tinytex": {
+          "files": 23,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "torch": {
+          "files": 251,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "usethis": {
+          "files": 184,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "vroom": {
+          "files": 100,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        }
+      },
+      "disagreement_files": []
+    },
+    "tidyverse": {
+      "files": 4197,
+      "r_rejected": 7,
+      "ry_rejected": 7,
+      "disagreements": 0,
+      "packages": {
+        "blob": {
+          "files": 20,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "cli": {
+          "files": 169,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "curl": {
+          "files": 54,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "dbplyr": {
+          "files": 195,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "dplyr": {
+          "files": 195,
+          "r_rejected": 1,
+          "ry_rejected": 1
+        },
+        "dtplyr": {
+          "files": 72,
+          "r_rejected": 1,
+          "ry_rejected": 1
+        },
+        "duckplyr": {
+          "files": 385,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "forcats": {
+          "files": 55,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "fs": {
+          "files": 44,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "ggplot2": {
+          "files": 357,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "glue": {
+          "files": 23,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "googledrive": {
+          "files": 119,
+          "r_rejected": 1,
+          "ry_rejected": 1
+        },
+        "googlesheets4": {
+          "files": 119,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "haven": {
+          "files": 36,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "hms": {
+          "files": 32,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "jsonlite": {
+          "files": 100,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "lubridate": {
+          "files": 88,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "magrittr": {
+          "files": 17,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "modelr": {
+          "files": 37,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "purrr": {
+          "files": 117,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "r-source": {
+          "files": 938,
+          "r_rejected": 4,
+          "ry_rejected": 4
+        },
+        "readr": {
+          "files": 67,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "readxl": {
+          "files": 38,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "reprex": {
+          "files": 70,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "rlang": {
+          "files": 156,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "rvest": {
+          "files": 32,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "scales": {
+          "files": 95,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "stringr": {
+          "files": 67,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "testthat": {
+          "files": 240,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "tibble": {
+          "files": 102,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "tidyr": {
+          "files": 86,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "tidyverse": {
+          "files": 14,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "withr": {
+          "files": 58,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        }
+      },
+      "disagreement_files": []
+    }
+  }
+}

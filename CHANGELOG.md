@@ -4,6 +4,51 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The release workflow now starts each release binary on the runner type
+  that built it, and a binary that fails blocks the release: `ry --version`
+  must report the workspace version and `ry check` must report RY040 on a
+  small fixture. The two targets cross-compiled on x64 runners,
+  `aarch64-pc-windows-msvc` and `armv7-unknown-linux-gnueabihf`, are
+  skipped (#856).
+### Added
+
+- A ratcheted parse differential in `ecosystem/run.sh --check`: GNU R's
+  `parse()` and ry's RY000 must agree on every `.R` file of both corpora
+  and base R's sources (12,594 files, no disagreements), so a false
+  RY000 on valid R or newly accepted R-rejected input fails CI (#841).
+
+### Fixed
+
+- Report RY000 for syntax GNU R's `parse()` rejects but tree-sitter
+  accepts: repeated formals (`function(x, x)`), two expressions on one
+  line (`fjkdsfa 2`), a top-level dangling `else`, a `_` placeholder
+  outside a named argument of a `|>` call, unknown or NUL string escapes
+  (`'\q'`, `"\0"`), an exponent without digits (`1e`), and more than 49
+  nested brackets. Two expressions on one line, a dangling `else`, and a
+  misplaced `_` no longer also report RY010 on the misread tree (#841).
+- Stop reporting RY000 for a native-pipe call to a special function that
+  passes the `_` placeholder, such as `` x |> `+`(e1 = _, e2 = 1) ``,
+  which R accepts.
+- On Windows, a source whose resolved path is over 260 characters again
+  matches the scoped `paths` of its config and stays in its package's
+  context, rather than being skipped as if it were outside them (#880).
+- Arithmetic with no `Ops` method keeps the class of the longer operand,
+  as R's primitive does: the left class wins at equal lengths, and empty
+  results drop it. `structure(1, class = "foo") * 2` no longer reports
+  RY061 for a `$` that dispatches to `$.foo`. `dump-facts` reports the
+  class as unknown when an operand's class is unknown or a base method
+  such as `+.Date` decides it, instead of a known empty class (#865).
+- `for (v in f)` over a factor types `v` as a character string, as R
+  does. An integer or double whose class is unknown no longer claims
+  an element mode, since it may be a factor, and a `Date` still yields
+  plain doubles (#861).
+- A positional `[[<-` or `[<-` write on a list no longer keeps the old
+  length in `dump-facts`. `l[[i]] <- v` keeps the old length as a lower
+  bound, and a NULL value, which deletes, widens it (#863).
+- `list(...)` no longer has length 1. It has unknown length, or the
+  count of the other arguments as a lower bound (#864).
 ### Fixed
 
 - A `length(x) > 1L` bound now survives a `return()` exit

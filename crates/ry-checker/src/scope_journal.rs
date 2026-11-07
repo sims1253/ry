@@ -804,6 +804,7 @@ mod tests {
             bindings: HashMap::new(),
         }));
         scope.data_mask = Some(Arc::new(DataMaskFrame {
+            id: 0,
             columns_first: false,
             columns: FxSet::default(),
             env: [("x".to_string(), RType::new(Mode::Integer, Length::One))]

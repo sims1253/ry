@@ -688,8 +688,12 @@ impl SelectSlotRole {
 /// Name resolution inside a data mask (a dplyr-style verb argument or a
 /// table `[` call). Every scope cloned from the masked one, including
 /// function bodies defined there, still evaluates inside the mask.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct DataMaskFrame {
+    /// Which mask entry this is. Copy-on-write keeps it, so a `return()`
+    /// can tell a function defined in this mask from a later mask walk.
+    /// Equality ignores it.
+    pub(crate) id: u64,
     /// A bare value-position symbol is a column candidate before it is a
     /// scope function, because the schema cannot prove the name absent.
     pub(crate) columns_first: bool,
@@ -701,6 +705,22 @@ pub(crate) struct DataMaskFrame {
     /// An unknown effect inside the mask may have rebound the enclosing
     /// environment, so `env` keeps its names but not their types.
     pub(crate) env_unknown: bool,
+}
+
+impl DataMaskFrame {
+    pub(crate) fn next_id() -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl PartialEq for DataMaskFrame {
+    fn eq(&self, other: &Self) -> bool {
+        self.columns_first == other.columns_first
+            && self.columns == other.columns
+            && self.env == other.env
+            && self.env_unknown == other.env_unknown
+    }
 }
 
 /// What unmodeled code on some path into the current point may have done.
@@ -831,6 +851,27 @@ pub struct Scope {
     /// Execution cannot continue in this block because a preceding operation
     /// is known to throw. Cloned scopes keep this fact local to that path.
     pub(crate) unreachable: bool,
+}
+
+/// The frame a `return()` leaves. A data mask without a column schema shares
+/// its caller's lookup frame, so the mask is part of the identity: every mask
+/// gets its own `DataMaskFrame` id, while a function body defined inside one
+/// inherits it.
+#[derive(Clone)]
+pub(crate) struct ExitFrame(Option<Arc<FunctionLookupFrame>>, Option<u64>);
+
+impl ExitFrame {
+    pub(crate) fn of(scope: &Scope) -> Self {
+        Self(
+            scope.outward_functions.clone(),
+            scope.data_mask.as_ref().map(|mask| mask.id),
+        )
+    }
+
+    pub(crate) fn same(&self, scope: &Scope) -> bool {
+        self.0.as_ref().map(Arc::as_ptr) == scope.outward_functions.as_ref().map(Arc::as_ptr)
+            && self.1 == scope.data_mask.as_ref().map(|mask| mask.id)
+    }
 }
 
 impl Scope {
@@ -1913,6 +1954,13 @@ pub struct Checker {
     capture_references: bool,
     reference_capture: Option<Box<reference_facts::ReferenceCapture>>,
     scope_records: Vec<ScopeRecord>,
+    // One frame per function body walked while `capture_scopes` is set:
+    // the body's execution frame and the joined states of the paths that
+    // left it through `return()`. Only scope recording reads them, so
+    // diagnostics cannot move.
+    /// Per function body being recorded: the frame it runs in (lookup frame
+    /// and data mask) and the join of its `return()` states.
+    scope_exit_paths: Vec<(ExitFrame, Option<Box<Scope>>)>,
     // Assignment-site types for editor hints, captured only on request.
     assignment_types: Option<HashMap<Span, RType>>,
     // Armed vacuous-all guards (RY110), installed by the pass-3 walk at
@@ -2165,6 +2213,7 @@ impl Checker {
             capture_references: false,
             reference_capture: None,
             scope_records: Vec::new(),
+            scope_exit_paths: Vec::new(),
             assignment_types: None,
             vacuous_guards: Vec::new(),
             vacuous_helpers: FxMap::default(),
@@ -2447,25 +2496,49 @@ impl Checker {
         records
     }
 
+    /// Open a frame for the `return()` paths of the function body about to
+    /// be walked in `body`. Pair with [`Self::end_exit_paths`].
+    pub(crate) fn begin_exit_paths(&mut self, body: &Scope) {
+        if self.capture_scopes {
+            self.scope_exit_paths.push((ExitFrame::of(body), None));
+        }
+    }
+
+    pub(crate) fn end_exit_paths(&mut self) -> Option<Box<Scope>> {
+        if self.capture_scopes {
+            self.scope_exit_paths.pop().and_then(|(_, paths)| paths)
+        } else {
+            None
+        }
+    }
+
     // Snapshot one completed function-body scope. Called at the end of
     // `walk_stmt`'s two function-definition arms; `discarding` guards the
-    // fixpoint / signature-building re-walks of the same body.
+    // fixpoint / signature-building re-walks of the same body. A call can
+    // leave through `return()` as well as by falling through, so the
+    // snapshot joins `returned` (those paths) into the final state.
     pub(crate) fn record_scope(
         &mut self,
         name: Option<&str>,
         span: Span,
         params: &[Param],
         scope: &Scope,
+        returned: Option<Box<Scope>>,
     ) {
         if !self.capture_scopes || self.discarding {
             return;
         }
+        let mut exit = Some(Box::new(scope.clone()));
+        if let Some(returned) = returned {
+            infer::loops::join_path(&mut exit, &returned);
+        }
+        let scope = *exit.expect("scope exit state");
         self.scope_records.push(ScopeRecord {
             kind: ScopeRecordKind::Function,
             name: name.map(str::to_string),
             span,
             params: params.iter().map(|p| (p.name.clone(), p.span)).collect(),
-            scope: scope.clone(),
+            scope,
         });
     }
 

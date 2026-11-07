@@ -78,7 +78,10 @@ impl Checker {
         let mut names = Vec::new();
         for argument in args {
             match (argument.name.as_deref(), &argument.value) {
-                (None, Expr::Ident { name, .. }) => names.push(semantic_argument_name(name)),
+                // The binding may be stored under either spelling.
+                (None, Expr::Ident { name, .. }) => {
+                    names.extend([name.as_str(), semantic_argument_name(name)]);
+                }
                 (None, Expr::String(name, _)) => names.push(name.as_str()),
                 (Some("envir"), envir) if self.targets_this_frame(Some(envir), scope) => {}
                 (Some("inherits"), Expr::Logical(false, _)) => {}

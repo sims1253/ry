@@ -345,8 +345,9 @@ fn unary_ops_on_unions_claim_no_class_or_mode_they_cannot_prove() {
         let (_, scope) = check_with_scope(source);
         assert!(!scope.get("out").unwrap().class.export_known(), "{source}");
     }
-    // A classless union keeps its known empty class.
-    let (_, scope) = check_with_scope("x <- if (runif(1) > 0.5) TRUE else NA\nout <- !x");
+    // A classless union keeps its known empty class. `TRUE` and `1L` have
+    // different modes, so the join really builds a union.
+    let (_, scope) = check_with_scope("x <- if (runif(1) > 0.5) TRUE else 1L\nout <- !x");
     assert!(scope.get("out").unwrap().class.export_known());
 }
 

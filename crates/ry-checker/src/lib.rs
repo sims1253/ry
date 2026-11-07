@@ -688,8 +688,12 @@ impl SelectSlotRole {
 /// Name resolution inside a data mask (a dplyr-style verb argument or a
 /// table `[` call). Every scope cloned from the masked one, including
 /// function bodies defined there, still evaluates inside the mask.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct DataMaskFrame {
+    /// Which mask entry this is. Copy-on-write keeps it, so a `return()`
+    /// can tell a function defined in this mask from a later mask walk.
+    /// Equality ignores it.
+    pub(crate) id: u64,
     /// A bare value-position symbol is a column candidate before it is a
     /// scope function, because the schema cannot prove the name absent.
     pub(crate) columns_first: bool,
@@ -701,6 +705,22 @@ pub(crate) struct DataMaskFrame {
     /// An unknown effect inside the mask may have rebound the enclosing
     /// environment, so `env` keeps its names but not their types.
     pub(crate) env_unknown: bool,
+}
+
+impl DataMaskFrame {
+    pub(crate) fn next_id() -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl PartialEq for DataMaskFrame {
+    fn eq(&self, other: &Self) -> bool {
+        self.columns_first == other.columns_first
+            && self.columns == other.columns
+            && self.env == other.env
+            && self.env_unknown == other.env_unknown
+    }
 }
 
 /// What unmodeled code on some path into the current point may have done.
@@ -835,19 +855,22 @@ pub struct Scope {
 
 /// The frame a `return()` leaves. A data mask without a column schema shares
 /// its caller's lookup frame, so the mask is part of the identity: every mask
-/// gets its own `DataMaskFrame`, while a function body defined inside one
+/// gets its own `DataMaskFrame` id, while a function body defined inside one
 /// inherits it.
 #[derive(Clone)]
-pub(crate) struct ExitFrame(Option<Arc<FunctionLookupFrame>>, Option<Arc<DataMaskFrame>>);
+pub(crate) struct ExitFrame(Option<Arc<FunctionLookupFrame>>, Option<u64>);
 
 impl ExitFrame {
     pub(crate) fn of(scope: &Scope) -> Self {
-        Self(scope.outward_functions.clone(), scope.data_mask.clone())
+        Self(
+            scope.outward_functions.clone(),
+            scope.data_mask.as_ref().map(|mask| mask.id),
+        )
     }
 
     pub(crate) fn same(&self, scope: &Scope) -> bool {
         self.0.as_ref().map(Arc::as_ptr) == scope.outward_functions.as_ref().map(Arc::as_ptr)
-            && self.1.as_ref().map(Arc::as_ptr) == scope.data_mask.as_ref().map(Arc::as_ptr)
+            && self.1 == scope.data_mask.as_ref().map(|mask| mask.id)
     }
 }
 

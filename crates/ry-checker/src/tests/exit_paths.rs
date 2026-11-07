@@ -117,3 +117,15 @@ fn child_frame_returns_do_not_reach_the_enclosing_scope_exit() {
     let x = exit_type(&exits, "g", "x");
     assert!(admits(&x, Mode::Character), "g: {x:?}");
 }
+
+/// A function defined inside a mask keeps its own `return()` paths even
+/// after an unknown call copies the mask on write.
+#[test]
+fn returns_of_a_function_defined_in_a_mask_join_its_exit() {
+    let exits = function_exits(
+        "g <- with(list(a = 1L), { f <- function(c, factor) { factor(); x <- 1L; if (c) return(x); x <- \"a\"; x }; f })\n",
+    );
+    let x = exit_type(&exits, "f", "x");
+    assert!(admits(&x, Mode::Integer), "{x:?}");
+    assert!(admits(&x, Mode::Character), "{x:?}");
+}

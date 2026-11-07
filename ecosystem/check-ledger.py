@@ -17,6 +17,12 @@ what per-key loops over the observed labels alone miss: a negative entry
 for an unseen category offset by a positive one preserves both the total
 and every observed count.
 
+A parse-differential ledger (`corpora`, docs/corpus/parse-differential.json)
+is validated instead for its totals: each corpus's counts equal the sums of
+its packages, `disagreements` equals the disagreement list, and per package
+the rejections both sides agree on match:
+r_rejected - (R-only rejections) == ry_rejected - (ry-only rejections).
+
 Usage:
   python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json
 """
@@ -44,9 +50,53 @@ def compare_summary(name: str, summary: dict, actual: Counter, errors: list) -> 
             )
 
 
+def check_parse_ledger(data: dict, errors: list) -> int:
+    """Validate a parse-differential ledger; return its file count."""
+    files = 0
+    for name, corpus in data["corpora"].items():
+        packages = corpus["packages"]
+        disagreements = corpus["disagreement_files"]
+        for key in ("files", "r_rejected", "ry_rejected"):
+            total = sum(package[key] for package in packages.values())
+            if corpus[key] != total:
+                errors.append(f"{name}.{key} ({corpus[key]}) != package sum ({total})")
+        if corpus["disagreements"] != len(disagreements):
+            errors.append(
+                f"{name}.disagreements ({corpus['disagreements']}) "
+                f"!= disagreement_files length ({len(disagreements)})"
+            )
+        only = Counter()
+        for entry in disagreements:
+            if entry["package"] not in packages:
+                errors.append(f"{name}: disagreement in undeclared package {entry['package']!r}")
+            if {entry["r"], entry["ry"]} != {"accept", "reject"}:
+                errors.append(f"{name}: {entry['path']!r} is not a disagreement")
+            only[(entry["package"], "r" if entry["r"] == "reject" else "ry")] += 1
+        for package_name, package in packages.items():
+            if (package["r_rejected"] - only[(package_name, "r")]
+                    != package["ry_rejected"] - only[(package_name, "ry")]):
+                errors.append(
+                    f"{name}.packages[{package_name!r}]: rejection counts do not "
+                    "match its disagreements"
+                )
+        files += corpus["files"]
+    return files
+
+
 def check_ledger(path: str) -> int:
     with open(path) as f:
         data = json.load(f)
+
+    if "corpora" in data:
+        errors: list = []
+        files = check_parse_ledger(data, errors)
+        if errors:
+            print(f"FAIL: {path}")
+            for e in errors:
+                print(f"  {e}")
+            return 1
+        print(f"OK: {path} — {files} files, summary counts match")
+        return 0
 
     findings = data.get("findings", [])
     n = len(findings)

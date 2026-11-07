@@ -101,6 +101,15 @@ All notable changes to ry are documented in this file.
   frame, and `on.exit(x <- v)` widens `x` in the function's scope-exit
   snapshot. `rm(x)` exports `x` as unknown rather than removing it, so a
   later read stays free of RY010 when other code rebinds the name (#867).
+### Fixed
+
+- `sum(c(TRUE, FALSE))`, `sum(1:3)`, `abs(TRUE)`, `max(TRUE)` and
+  `seq(1, 10)` are integer, as in R; all were double. A `double_or_int`
+  return follows every data argument: any double makes it double, and
+  character or complex input leaves it unknown. `seq()` follows
+  `seq.default`'s storage rules and is `integer | double` where the mode
+  depends on unknown values. Its arguments match as R matches them, so
+  `seq(1, 10, length = 4)` has length 4 (#866).
 
 ## [0.12.0] - 2026-11-01
 

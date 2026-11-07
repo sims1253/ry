@@ -1302,7 +1302,7 @@ expression: snapshots
         line: 21
         start: 1069
     - code: RY105
-      message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this length guard is always TRUE"
+      message: "`u_dl` is a length-1 integer, so `length(...)` is 1 here and this length guard is always TRUE"
       severity: warning
       span:
         column: 13

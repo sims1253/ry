@@ -11,6 +11,7 @@ mod dplyr_schema_effects;
 mod error_probes;
 mod functions_classes;
 mod narrowing;
+mod numeric_return_modes;
 mod operator_s3_dispatch;
 mod ops_fallback;
 mod packages_typeshed;

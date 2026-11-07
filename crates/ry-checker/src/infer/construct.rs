@@ -586,7 +586,7 @@ impl Checker {
             return Some(self.infer_rep(args, arg_types));
         }
         if lookup_name == "seq" || lookup_name == "seq.int" {
-            return Some(self.infer_seq(args, arg_types));
+            return Some(self.infer_seq(lookup_name, args, arg_types));
         }
         None
     }
@@ -876,65 +876,50 @@ impl Checker {
     /// (R rounds to the nearest whole step in range), `length.out = n`
     /// when supplied (it wins over `by`, as R documents), or
     /// `|to - from| + 1` when `by` is absent (R defaults it to +/-1).
-    /// Otherwise the mode is still reported — integer when the first
-    /// argument is an integer literal, else double — with
-    /// `Length::Unknown`.
-    pub(crate) fn infer_seq(&self, args: &[Arg], arg_types: &[RType]) -> RType {
-        // Helper: find (was_supplied, literal_value) for a named or
-        // positional argument. Named args win over positional. The
-        // `pos` index counts only unnamed args, so `seq(from=1, 10)`
-        // still matches `to` at positional index 0.
-        let find = |name: &str, pos: usize| -> (bool, Option<i64>) {
-            match find_arg(args, name, pos) {
-                Some(i) => (true, extract_literal_int(&args[i].value)),
-                None => (false, None),
-            }
-        };
-
-        let (_, from_val) = find("from", 0);
-        let (_, to_val) = find("to", 1);
-        let (by_supplied, by_val) = find("by", 2);
-        let (lo_supplied, lo_val) = find("length.out", 3);
-
-        // Look at the named `from = ...` first, then the first
-        // positional arg.
-        let from_expr = args
-            .iter()
-            .find(|a| a.name.as_deref() == Some("from"))
-            .or_else(|| args.iter().find(|a| a.name.is_none()))
-            .map(|a| &a.value);
-        let from_is_int_literal = from_expr
-            .map(|e| matches!(e, Expr::Integer(_, _)))
-            .unwrap_or(false);
-        // Mode: integer if `from` is an integer literal or its inferred
-        // type is integer, else double (mirrors the typeshed's
-        // "double_or_int" rule).
-        let mode =
-            if from_is_int_literal || arg_types.first().map(|t| t.mode) == Some(Mode::Integer) {
-                Mode::Integer
-            } else {
-                Mode::Double
-            };
-
-        // If a length-determining arg was supplied but wasn't a
-        // literal, we can't pin the length. `length.out` and `by` both
-        // participate in the length formula, so a non-literal value
-        // for either forces Unknown. (`from`/`to` are handled below:
-        // `extract_literal_int` returns None for them, which makes the
-        // formula fall through to Unknown.)
-        if (lo_supplied && lo_val.is_none()) || (by_supplied && by_val.is_none()) {
-            return RType::new(mode, Length::Unknown);
+    /// Otherwise the length is `Length::Unknown`. The mode depends on
+    /// values (see [`seq_call_mode`]); one the checker cannot prove is
+    /// `integer | double`.
+    pub(crate) fn infer_seq(&self, lookup_name: &str, args: &[Arg], arg_types: &[RType]) -> RType {
+        // `seq.default`'s formals; `seq.int` takes the same ones. The
+        // `SEQ_*` indices below point into this list.
+        let bindings = match_arguments(
+            &["from", "to", "by", "length.out", "along.with", "..."],
+            args,
+        );
+        // An actual that `...` absorbs (a forwarded `...`, an extra
+        // positional) can stand for any formal.
+        if args.len() != arg_types.len() || bindings.param_for_arg.iter().any(Option::is_none) {
+            return integer_or_double_type(Length::Unknown);
         }
+        let literal = |formal: usize| {
+            bindings
+                .arg_for_param(formal)
+                .map(|i| extract_literal_int(&args[i].value))
+        };
+        let from_val = literal(SEQ_FROM).flatten();
+        let to_val = literal(SEQ_TO).flatten();
+        let by_literal = literal(SEQ_BY);
+        let lo_literal = literal(SEQ_LENGTH_OUT);
+        let along_supplied = bindings.bound_params[SEQ_ALONG_WITH];
 
-        // `length.out` wins over `by` when both are present.
-        let length = if let Some(n) = lo_val {
+        // A supplied `length.out`, `by` or `along.with` that isn't a
+        // literal leaves the length unknown. (`from`/`to` are handled
+        // below: `extract_literal_int` returns None for them, which makes
+        // the formula fall through to Unknown.)
+        let length = if along_supplied
+            || matches!(lo_literal, Some(None))
+            || matches!(by_literal, Some(None))
+        {
+            Length::Unknown
+        } else if let Some(Some(n)) = lo_literal {
+            // `length.out` wins over `by` when both are present.
             if n >= 0 {
                 Length::Known(n as usize)
             } else {
                 Length::Unknown
             }
         } else if let (Some(f), Some(t)) = (from_val, to_val) {
-            match by_val {
+            match by_literal.flatten() {
                 // by == 0: R errors at runtime; model as Unknown.
                 Some(0) => Length::Unknown,
                 Some(b) => {
@@ -942,14 +927,23 @@ impl Checker {
                     let step = b.unsigned_abs() as usize;
                     Length::Known(diff / step + 1)
                 }
-                // by not supplied (the supplied-non-literal case
-                // returned above): R defaults to +/-1.
+                // by not supplied: R defaults to +/-1.
                 None => Length::Known((t - f).unsigned_abs() as usize + 1),
             }
         } else {
             Length::Unknown
         };
-        RType::new(mode, length)
+        let supplied = std::array::from_fn(|formal| {
+            bindings
+                .arg_for_param(formal)
+                .map(|i| (&args[i].value, &arg_types[i]))
+        });
+        match seq_call_mode(lookup_name == "seq.int", supplied, lo_literal.flatten()) {
+            NumericMode::Integer => RType::new(Mode::Integer, length),
+            NumericMode::Double => RType::new(Mode::Double, length),
+            NumericMode::IntegerOrDouble => integer_or_double_type(length),
+            NumericMode::Unknown => RType::unknown(),
+        }
     }
 
     pub(crate) fn apply_sig(
@@ -993,6 +987,7 @@ impl Checker {
                 }
             }
             ReturnSpec::Concrete(c) => {
+                let mut integer_or_double = false;
                 let mode = if let Some(mode) = concrete_json_mode(&c.mode) {
                     mode
                 } else {
@@ -1000,14 +995,20 @@ impl Checker {
                         Some(JsonMode::Union) => {
                             return json_rtype_to_rtype(c);
                         }
-                        // Compound specs that pick by arg type. For v1 we
-                        // approximate "double_or_int" as the first arg's mode
-                        // if it's already integer, else double.
+                        // "double_or_int" follows the numeric data arguments.
+                        // An `integer | double` result is built below, once
+                        // the length is known.
                         Some(JsonMode::DoubleOrInt) => {
-                            if matches!(first.mode, Mode::Integer) {
-                                Mode::Integer
-                            } else {
-                                Mode::Double
+                            match double_or_int_mode(&double_or_int_inputs(
+                                sig, args, arg_types, &first,
+                            )) {
+                                NumericMode::Integer => Mode::Integer,
+                                NumericMode::Double => Mode::Double,
+                                NumericMode::IntegerOrDouble => {
+                                    integer_or_double = true;
+                                    Mode::Double
+                                }
+                                NumericMode::Unknown => Mode::Opaque,
                             }
                         }
                         // "arg0" as a mode spec: use the first param's mode.
@@ -1080,6 +1081,9 @@ impl Checker {
                     arg_types,
                 )
                 .unwrap_or(length);
+                if integer_or_double {
+                    return integer_or_double_type(length);
+                }
                 let mut result = RType::new(mode, length);
                 if c.class.is_empty() && mode.is_unknown() {
                     // An opaque return without a class entry knows nothing
@@ -1152,26 +1156,170 @@ fn rep_count(value: Option<Option<i64>>) -> Option<usize> {
     }
 }
 
-/// Find the argument for a named parameter: an exact-name argument wins, else
-/// the `pos`-th unnamed (positional) argument. `pos` counts only unnamed
-/// args, so `rep(each = 2, c(1,2,3), 1)` matches `x` at 0 and `times` at 1.
-fn find_arg(args: &[Arg], name: &str, pos: usize) -> Option<usize> {
-    for (i, a) in args.iter().enumerate() {
-        if a.name.as_deref() == Some(name) {
-            return Some(i);
+/// Indices of `seq.default`'s formals, as matched in [`Checker::infer_seq`].
+const SEQ_FROM: usize = 0;
+const SEQ_TO: usize = 1;
+const SEQ_BY: usize = 2;
+const SEQ_LENGTH_OUT: usize = 3;
+const SEQ_ALONG_WITH: usize = 4;
+
+/// The storage mode of a `seq()` / `seq.int()` call, following
+/// `seq.default`:
+///
+/// - `seq(n)` is `1L:n` for a numeric scalar `n`, and `seq(from, to)` is
+///   `from:to`, so both reuse the value-sensitive rule of `:`
+///   ([`RType::seq`]): `seq(1, 10)` is integer, `seq(1.5, 10)` double.
+/// - With `by`, the result keeps integer storage only when `from`, `to`
+///   and `by` are all integer or logical (`seq(1, 10, by = 2)` is double).
+///   `seq.int` also keeps it for whole doubles (`seq.int(1, 10, by = 1)`
+///   is integer), so only `seq` proves double from double endpoints.
+/// - `seq(length.out = n)` and `seq(along.with = x)` alone are
+///   `seq_len()`. `seq` with a positive literal `length.out` and double
+///   endpoints is double; `seq.int(1, 10, length.out = 4)` is integer.
+///
+/// Anything else depends on values the checker does not track.
+fn seq_call_mode(
+    seq_int: bool,
+    supplied: [Option<(&Expr, &RType)>; SEQ_ALONG_WITH + 1],
+    length_out: Option<i64>,
+) -> NumericMode {
+    let [from, to, by, length_out_arg, along_with] = supplied;
+    let length_out_supplied = length_out_arg.is_some();
+    let along_with = along_with.is_some();
+    // `is.logint()` in `seq.default`: integer or logical storage that is
+    // not an object.
+    let logint = |(_, ty): (&Expr, &RType)| {
+        matches!(ty.mode, Mode::Integer | Mode::Logical) && ty.class.is_classless()
+    };
+    let plain_double =
+        |(_, ty): (&Expr, &RType)| ty.mode == Mode::Double && ty.class.is_classless();
+    // `f1:f2` with two factor endpoints is their interaction, and inferred
+    // classes are not proof that a value is no factor; a literal is.
+    let literal = |(expr, _): (&Expr, &RType)| {
+        matches!(
+            expr,
+            Expr::Integer(..) | Expr::Double(..) | Expr::Logical(..)
+        )
+    };
+    let colon = |from: RType, to: RType, non_factor: bool| match from.seq(to, non_factor).mode {
+        Mode::Integer => NumericMode::Integer,
+        Mode::Double => NumericMode::Double,
+        Mode::Union => NumericMode::IntegerOrDouble,
+        _ => NumericMode::Unknown,
+    };
+    let one = RType::scalar(Mode::Integer);
+    match (from, to, by, length_out_supplied, along_with) {
+        (None, None, None, true, false) | (None, None, None, false, true) => NumericMode::Integer,
+        (Some(from), None, None, false, false) => colon(one, from.1.clone(), true),
+        (None, Some(to), None, false, false) => colon(one, to.1.clone(), true),
+        (Some(from), Some(to), None, false, false) => {
+            colon(from.1.clone(), to.1.clone(), literal(from) || literal(to))
         }
+        (Some(from), Some(to), Some(by), false, false) => {
+            if logint(from) && logint(to) && logint(by) {
+                NumericMode::Integer
+            } else if !seq_int && plain_double(from) && plain_double(to) {
+                NumericMode::Double
+            } else {
+                NumericMode::IntegerOrDouble
+            }
+        }
+        (from, to, None, true, false)
+            if !seq_int
+                && length_out.is_some_and(|n| n > 0)
+                && (from.is_some() || to.is_some())
+                && from.is_none_or(plain_double)
+                && to.is_none_or(plain_double) =>
+        {
+            NumericMode::Double
+        }
+        _ => NumericMode::IntegerOrDouble,
     }
-    let mut idx = 0usize;
-    for (i, a) in args.iter().enumerate() {
-        if a.name.is_some() {
-            continue;
-        }
-        if idx == pos {
-            return Some(i);
-        }
-        idx += 1;
+}
+
+/// The storage mode a numeric result can take when R picks it from values
+/// the checker may not know.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumericMode {
+    Integer,
+    Double,
+    IntegerOrDouble,
+    Unknown,
+}
+
+/// `integer | double` at `length`, for a result whose storage mode depends
+/// on values the checker does not know.
+fn integer_or_double_type(length: Length) -> RType {
+    RType::union(Arc::from(vec![
+        RType::new(Mode::Integer, length),
+        RType::new(Mode::Double, length),
+    ]))
+}
+
+/// The data arguments a `double_or_int` return follows: everything `...`
+/// absorbs when the signature leads with it (`sum(..., na.rm)`, `max(...)`),
+/// else the first formal. `na.rm` is a formal of every dots-led member in
+/// R even where the stub omits it, so it never counts as data.
+fn double_or_int_inputs(
+    sig: &FunctionSig,
+    args: &[Arg],
+    arg_types: &[RType],
+    first: &RType,
+) -> Vec<RType> {
+    if sig.params.first().is_none_or(|param| param.name != "...") {
+        return vec![first.clone()];
     }
-    None
+    if args.is_empty() {
+        return arg_types.to_vec();
+    }
+    // `...` never binds a formal of its own: what it absorbs is unbound.
+    let bindings = match_params(&sig.params, args);
+    args.iter()
+        .zip(arg_types)
+        .zip(&bindings.param_for_arg)
+        .filter(|((arg, _), formal)| formal.is_none() && arg.name.as_deref() != Some("na.rm"))
+        .map(|((_, ty), _)| ty.clone())
+        .collect()
+}
+
+/// Resolve a `double_or_int` return from its data arguments. R keeps
+/// integer storage when every input is logical or integer
+/// (`sum(c(TRUE, FALSE))`, `abs(TRUE)` and `max(TRUE)` are integer) and
+/// widens to double once any input is double. Character and complex input
+/// keeps neither mode (`max("a")` is character, `sum(1i)` is complex), and
+/// the members disagree on it (`abs(1i)` is double), so an input of any
+/// other known mode leaves the result mode unknown.
+fn double_or_int_mode(inputs: &[RType]) -> NumericMode {
+    let mut all_integer = true;
+    let mut any_double = false;
+    for input in inputs {
+        let members: &[RType] = match (&input.mode, &input.members) {
+            (Mode::Union, Some(members)) => members,
+            _ => std::slice::from_ref(input),
+        };
+        let mut can_be_integer = false;
+        let mut can_be_double = false;
+        for member in members {
+            match member.mode {
+                Mode::Logical | Mode::Integer => can_be_integer = true,
+                // An unproven input keeps the historical double
+                // approximation: it still proves the result atomic, which
+                // `mean(x)$value` (RY061) relies on.
+                Mode::Double => can_be_double = true,
+                mode if mode.is_unknown() => can_be_double = true,
+                _ => return NumericMode::Unknown,
+            }
+        }
+        any_double |= !can_be_integer;
+        all_integer &= !can_be_double;
+    }
+    if inputs.is_empty() || any_double {
+        NumericMode::Double
+    } else if all_integer {
+        NumericMode::Integer
+    } else {
+        NumericMode::IntegerOrDouble
+    }
 }
 
 pub(crate) fn semantic_return_length(

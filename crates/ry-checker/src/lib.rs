@@ -1867,8 +1867,17 @@ pub struct Checker {
     refinement_dependencies: Option<HashMap<String, HashSet<String>>>,
     #[cfg(test)]
     refinement_counts: HashMap<String, usize>,
+    // Statement blocks walked, so tests can bound the work per nesting
+    // level (#893).
+    #[cfg(test)]
+    block_walks: usize,
     // Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
+    // Closure-nesting depth of the literal whose body `walk_literal_returns`
+    // is walking: 0 outside any signature walk. A literal met there is one
+    // level deeper, so `MAX_CLOSURE_DEPTH` bounds nested signature and
+    // callback-return inference (#893).
+    closure_depth: usize,
     // Packages attached via `library(pkg)` / `require(pkg)`, plus any
     // declared in `ry.toml`'s `packages` key (threaded in via
     // `set_loaded`), each with the packages it attaches in turn. The dplyr
@@ -2173,7 +2182,10 @@ impl Checker {
             refinement_dependencies: None,
             #[cfg(test)]
             refinement_counts: HashMap::new(),
+            #[cfg(test)]
+            block_walks: 0,
             inferring: Vec::new(),
+            closure_depth: 0,
             loaded: Arc::new(HashSet::new()),
             bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
@@ -2374,6 +2386,7 @@ impl Checker {
         // unwind can never leak load-time framing into the next file.
         self.load_hook_frames.clear();
         self.lazy_context_depth = 0;
+        self.closure_depth = 0;
         self.network_load_context_file = infer::network::load_context_file(
             &self.path,
             self.package_facts.source_package.is_some(),

@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.35",
+  "version": "0.0.36",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -3713,12 +3713,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "opaque",
         "length": "unknown",
-        "members": [
-          "integer",
-          "null"
-        ],
         "na": false
       }
     },

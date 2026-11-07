@@ -6,6 +6,12 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- The vendored typeshed moves to r-typeshed c5659cb, whose base stubs now
+  match GNU R: `mean()`, `prod()`, `round()` and `cumprod()` return
+  double or complex, `seq()` integer or double, `names()`, `rownames()`
+  and `colnames()` may be `NULL`, `dim()`, `nrow()` and `ncol()` make no
+  claim, `table()`, `proc.time()`, `ordered()`, `interaction()` and
+  `dist()` declare their classes, and more stubs allow `NA` (#866).
 - The release workflow now starts each release binary on the runner type
   that built it, and a binary that fails blocks the release: `ry --version`
   must report the workspace version and `ry check` must report RY040 on a
@@ -67,8 +73,6 @@ All notable changes to ry are documented in this file.
   bound, and a NULL value, which deletes, widens it (#863).
 - `list(...)` no longer has length 1. It has unknown length, or the
   count of the other arguments as a lower bound (#864).
-### Fixed
-
 - A `length(x) > 1L` bound now survives a `return()` exit
   (`if (length(x) <= 1L) return(NULL)`), a false `||` before an early
   exit (`if (length(x) <= 1L || is.null(y)) stop()`), and a join with a

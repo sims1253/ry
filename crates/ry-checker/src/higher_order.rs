@@ -579,10 +579,7 @@ impl Checker {
         captured_scope: &Scope,
         depth: usize,
     ) -> Option<RType> {
-        // Past the cap, a constant body still costs one flat walk and
-        // nests nothing, so keep its type (#893).
-        if depth >= MAX_CLOSURE_DEPTH && !matches!(body, [Stmt::Expr(e)] if plain_scalar_literal(e))
-        {
+        if depth >= MAX_CLOSURE_DEPTH {
             return None;
         }
         self.walk_literal_returns(body, captured_scope, depth, |scope| {

@@ -439,7 +439,7 @@ fn contains_na_literal(expr: &Expr) -> bool {
 /// A scalar literal with no class and no evaluation beyond itself, so
 /// an operator over it cannot dispatch to an `Ops` method. A negated
 /// numeric literal keeps that property through the primitive `-`.
-pub(crate) fn plain_scalar_literal(expr: &Expr) -> bool {
+fn plain_scalar_literal(expr: &Expr) -> bool {
     match expr {
         Expr::Logical(..) | Expr::Integer(..) | Expr::Double(..) | Expr::String(..) => true,
         Expr::UnaryOp {

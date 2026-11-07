@@ -40,9 +40,9 @@ rules:
     ignore:
       - release.yml
   # cargo-dist emits secrets: inherit for every custom hook and has no
-  # setting for an explicit secret map. The checksum hook is a trusted
-  # workflow in this repository, requests only contents: read, and reads no
-  # secrets. Keep the generated file byte-identical to dist's output.
+  # setting for an explicit secret map. The checksum and smoke hooks are
+  # trusted workflows in this repository, request only contents: read, and
+  # read no secrets. Keep the generated file byte-identical to dist's output.
   secrets-inherit:
     ignore:
       - release.yml

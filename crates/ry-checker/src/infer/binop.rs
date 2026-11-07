@@ -479,10 +479,9 @@ impl Checker {
         // member's class may survive, so only a provably classless union
         // keeps a known class.
         if operand.mode == Mode::Union {
-            let classed = operand
-                .members
-                .iter()
-                .flat_map(|members| members.iter())
+            // `structure(x, class = )` sets the class on the union itself.
+            let classed = std::iter::once(operand)
+                .chain(operand.members.iter().flat_map(|members| members.iter()))
                 .any(|member| member.class.storage_proxy || !member.class.is_classless());
             return classed.then(ClassVector::storage_proxy);
         }

@@ -339,6 +339,8 @@ fn unary_ops_on_unions_claim_no_class_or_mode_they_cannot_prove() {
         "x <- if (runif(1) > 0.5) NULL else structure(TRUE, class = 'foo')\nout <- !x",
         "x <- if (runif(1) > 0.5) TRUE else -Sys.time()\nout <- !x",
         "x <- if (runif(1) > 0.5) structure(1, class = 'foo') else 1L\nout <- -x",
+        // `structure()` sets the class on the union itself, not on a member.
+        "x <- if (runif(1) > 0.5) TRUE else 1L\nout <- !structure(x, class = 'foo')",
     ] {
         let (_, scope) = check_with_scope(source);
         assert!(!scope.get("out").unwrap().class.export_known(), "{source}");

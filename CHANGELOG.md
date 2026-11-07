@@ -4,6 +4,21 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The release workflow now starts each release binary on the runner type
+  that built it, and a binary that fails blocks the release: `ry --version`
+  must report the workspace version and `ry check` must report RY040 on a
+  small fixture. The two targets cross-compiled on x64 runners,
+  `aarch64-pc-windows-msvc` and `armv7-unknown-linux-gnueabihf`, are
+  skipped (#856).
+### Added
+
+- A ratcheted parse differential in `ecosystem/run.sh --check`: GNU R's
+  `parse()` and ry's RY000 must agree on every `.R` file of both corpora
+  and base R's sources (12,594 files, no disagreements), so a false
+  RY000 on valid R or newly accepted R-rejected input fails CI (#841).
+
 ### Fixed
 
 - Check nested function literals in time linear in their depth. Each

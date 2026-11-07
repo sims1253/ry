@@ -797,8 +797,8 @@ b <- mtcars %>% .$mpg[.$cyl > 4]
 # R rejects `$` as a native pipe right-hand side at parse time.
 a <- mtcars |> .$mpg
 
-## case: the native underscore is unbound in a magrittr pipe
-# expect: RY010
+## case: R's parser rejects the native underscore in a magrittr pipe
+# expect: RY000
 b <- mtcars %>% _$mpg
 
 ## case: an unknown column through the magrittr dot is reported

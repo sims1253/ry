@@ -36,7 +36,7 @@ pub(crate) fn export_type(ty: &RType) -> Value {
         .map(|name| name.as_deref())
         .collect();
     let class = json!({
-        "kind": if ty.class.known { "known" } else { "unknown" },
+        "kind": if ty.class.export_known() { "known" } else { "unknown" },
         "names": class_names,
         // The checker stores only the first four classes. At capacity it
         // cannot tell us whether the original class vector was longer.

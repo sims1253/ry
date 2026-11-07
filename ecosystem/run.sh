@@ -436,6 +436,47 @@ if ! $local_only; then
   fi
 fi
 
+# Parse differential (#841): GNU R's parse() and ry's RY000 must agree on
+# whether each .R file of the processed packages parses. A manifest may add
+# pinned source trees with `# parse-source: <name> <url> <commit> <dir>...`
+# (tab-separated); only their .R files under the listed directories are
+# fetched. The ledger ratchets counts and every disagreeing file.
+if ! $local_only; then
+  require_command python3
+  parse_sources=()
+  for name in "${root_packages[@]}"; do
+    parse_sources+=("$name=$cache_dir/$name")
+  done
+  while IFS=$'\t' read -r _ name url pinned_ref dirs; do
+    if ! [[ "$pinned_ref" =~ ^[0-9a-f]{40}$ ]] || [[ -z "$dirs" ]]; then
+      echo "ecosystem: parse-source '$name' needs a URL, a full commit ID, and directories" >&2
+      exit 1
+    fi
+    source_dir="$cache_dir/.parse-sources/$name"
+    patterns=()
+    for dir in $dirs; do
+      patterns+=("/$dir/**/*.R" "/$dir/**/*.r")
+    done
+    if [[ "$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || true)" != "$pinned_ref" ]] ||
+      [[ "$(git -C "$source_dir" sparse-checkout list 2>/dev/null || true)" != "$(printf '%s\n' "${patterns[@]}")" ]]; then
+      echo "ecosystem: fetching parse source $name at $pinned_ref"
+      rm -rf "$source_dir"
+      git init -q "$source_dir"
+      git -C "$source_dir" sparse-checkout set --no-cone "${patterns[@]}"
+      git -C "$source_dir" fetch -q --depth 1 --filter=blob:none "$url" "$pinned_ref"
+      git -C "$source_dir" checkout -q --detach FETCH_HEAD
+    fi
+    parse_sources+=("$name=$source_dir")
+  done < <(grep '^# parse-source:[[:space:]]' "$packages_file" || true)
+  parse_mode=update
+  $check && parse_mode=check
+  python3 "$ecosystem_dir/parse_differential.py" "$parse_mode" \
+    --binary "$binary" \
+    --ledger "$root/docs/corpus/parse-differential.json" \
+    --corpus "${corpus_slug:-tidyverse}" \
+    "${parse_sources[@]}"
+fi
+
 summary_names=("$summary_prefix.md")
 if ! $local_only; then
   summary_names+=("$summary_prefix.root.md")

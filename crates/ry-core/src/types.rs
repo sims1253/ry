@@ -260,8 +260,13 @@ impl Length {
         if let (Some(a), Some(b)) = (self.exact(), other.exact())
             && a == b
         {
-            // `One` and `Known(1)` spell the same exact length.
-            return self;
+            // `One` and `Known(1)` spell the same exact length. Return one
+            // spelling for both orders so the join is commutative.
+            return match a {
+                0 => Length::Zero,
+                1 => Length::One,
+                n => Length::Known(n),
+            };
         }
         Length::lower_bound(self.min_possible().min(other.min_possible()))
     }
@@ -585,7 +590,11 @@ pub struct FunctionSignature {
 /// `RType` is `Clone` (not `Copy`): the `columns` and `fn_sig` fields
 /// hold `Arc`-shared heap data, and the `class` names are `Arc<str>`.
 /// Cloning bumps refcounts and is cheap.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Equality treats union members as a set: `join` keeps members in the
+/// order the branches were seen, for messages, but `a.join(b)` must equal
+/// `b.join(a)` so the fixpoint loop converges on the same type either way.
+#[derive(Debug, Clone, Eq)]
 pub struct RType {
     pub mode: Mode,
     pub length: Length,
@@ -727,6 +736,47 @@ impl ValueFacts {
     }
 }
 
+impl PartialEq for RType {
+    fn eq(&self, other: &Self) -> bool {
+        // Destructure so a new field cannot be left out of equality.
+        let RType {
+            mode,
+            length,
+            class,
+            columns,
+            fn_sig,
+            members,
+            value_facts,
+        } = self;
+        *mode == other.mode
+            && *length == other.length
+            && *class == other.class
+            && *columns == other.columns
+            && *fn_sig == other.fn_sig
+            && *value_facts == other.value_facts
+            && match (members, &other.members) {
+                (Some(left), Some(right)) => {
+                    Arc::ptr_eq(left, right)
+                        || (left.len() == right.len() && left.iter().all(|m| right.contains(m)))
+                }
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
+
+/// For each member of `left`, the index of the member of `right` with the
+/// same shape. `union_of` merges members of the same shape, so a match is
+/// unique. `None` when the member lists do not pair up.
+fn pair_members(left: &[RType], right: &[RType]) -> Option<Vec<usize>> {
+    if left.len() != right.len() {
+        return None;
+    }
+    left.iter()
+        .map(|member| right.iter().position(|other| member.same_shape(other)))
+        .collect()
+}
+
 /// Maximum number of distinct members in a union. Beyond this, `join`
 /// gives up and collapses to `RType::unknown()` (matching ty's approach
 /// to large literal unions). 4 is enough for the common control-flow
@@ -770,12 +820,7 @@ impl RType {
         };
         let members = match (&self.members, &other.members) {
             (Some(left), Some(right)) => {
-                Arc::ptr_eq(left, right)
-                    || (left.len() == right.len()
-                        && left
-                            .iter()
-                            .zip(right.iter())
-                            .all(|(ty, other_ty)| ty.same_shape(other_ty)))
+                Arc::ptr_eq(left, right) || pair_members(left, right).is_some()
             }
             (None, None) => true,
             _ => false,
@@ -808,11 +853,13 @@ impl RType {
             );
             self.fn_sig = Some(Arc::new(signature));
         }
-        if let (Some(left), Some(right)) = (&self.members, &other.members) {
+        if let (Some(left), Some(right)) = (&self.members, &other.members)
+            && let Some(pairs) = pair_members(left, right)
+        {
             self.members = Some(Arc::from(
                 left.iter()
-                    .zip(right.iter())
-                    .map(|(a, b)| a.clone().merge_same_shape(b))
+                    .zip(pairs)
+                    .map(|(a, b)| a.clone().merge_same_shape(&right[b]))
                     .collect::<Vec<_>>(),
             ));
         }
@@ -1311,9 +1358,16 @@ impl RType {
 /// `Length::Unknown`.
 fn union_of(a: RType, b: RType) -> RType {
     let mut members: Vec<RType> = Vec::new();
-    let push_dedup = |v: &mut Vec<RType>, t: RType| match v.iter_mut().find(|m| **m == t) {
-        // Equality ignores the export-only proxy marker; keep it.
-        Some(member) => member.class.storage_proxy |= t.class.storage_proxy,
+    // A member of the same shape absorbs the new one, as a non-union join
+    // would. Keeping both would make the member count, and so the collapse
+    // at `MAX_UNION_MEMBERS`, depend on how the branches were grouped.
+    let push_dedup = |v: &mut Vec<RType>, t: RType| match v.iter_mut().find(|m| m.same_shape(&t)) {
+        Some(member) => {
+            // Equality ignores the export-only proxy marker; keep it.
+            let proxy = member.class.storage_proxy || t.class.storage_proxy;
+            *member = member.clone().merge_same_shape(&t);
+            member.class.storage_proxy = proxy;
+        }
         None => v.push(t),
     };
     match a.mode {
@@ -1739,7 +1793,9 @@ mod tests {
     #[test]
     fn length_join_and_refine_bounds() {
         use Length::*;
-        assert_eq!(Known(1).join(One), Known(1));
+        // Both spellings of length one join to `One`, in either order.
+        assert_eq!(Known(1).join(One), One);
+        assert_eq!(One.join(Known(1)), One);
         assert_eq!(Known(2).join(Known(3)), AtLeast(2));
         assert_eq!(Known(1).join(Known(3)), Nonempty);
         assert_eq!(Zero.join(AtLeast(2)), Unknown);

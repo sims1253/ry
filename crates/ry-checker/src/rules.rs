@@ -63,13 +63,20 @@ impl RuleExample {
             let (path, contents) = section.split_once('\n').unwrap_or((section, ""));
             let path = path.trim();
             let contents = contents.trim_end_matches('\n');
-            match path.split_once('.') {
-                Some(("flagged", ext)) => flagged = Some((ext, contents)),
-                Some(("fixed", ext)) => fixed = Some((ext, contents)),
+            let repeated = match path.split_once('.') {
+                Some(("flagged", ext)) => flagged.replace((ext, contents)).is_some(),
+                Some(("fixed", ext)) => fixed.replace((ext, contents)).is_some(),
                 _ if path.is_empty() || path.starts_with('/') || path.contains("..") => {
                     return Err(format!("invalid support path `{path}`"));
                 }
-                _ => support.push((path, contents)),
+                _ => {
+                    let seen = support.iter().any(|(seen, _)| *seen == path);
+                    support.push((path, contents));
+                    seen
+                }
+            };
+            if repeated {
+                return Err(format!("repeated section `{path}`"));
             }
         }
         let (extension, flagged) = flagged.ok_or("missing `--- flagged.<ext>` section")?;
@@ -565,6 +572,8 @@ mod tests {
             "fix: f\n--- flagged.R\nx\n",
             "fix: f\n--- flagged.R\nx\n--- fixed.Rmd\ny\n",
             "fix: f\n--- ../ry.toml\nz\n--- flagged.R\nx\n--- fixed.R\ny\n",
+            "fix: f\n--- flagged.R\nx\n--- flagged.R\nw\n--- fixed.R\ny\n",
+            "fix: f\n--- ry.toml\nz\n--- ry.toml\nz\n--- flagged.R\nx\n--- fixed.R\ny\n",
         ];
         for case in cases {
             assert!(RuleExample::parse(case).is_err(), "{case}");

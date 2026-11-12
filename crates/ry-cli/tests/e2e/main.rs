@@ -12,6 +12,7 @@ mod facts_e2e;
 mod facts_oracle;
 mod facts_references;
 mod parse_failures;
+mod reduce_e2e;
 mod related_locations;
 mod report_inputs;
 mod stdin_e2e;

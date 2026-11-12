@@ -258,7 +258,7 @@ impl rds2rust::RdsInput for TrackedInput<'_> {
                 needed: len,
                 available: self.bytes.len().saturating_sub(start),
             })?;
-        self.read_end.set(self.read_end.get().max(end));
+        self.read_end.update(|read_end| read_end.max(end));
         Ok(chunk.to_vec())
     }
 

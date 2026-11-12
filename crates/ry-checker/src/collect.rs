@@ -792,7 +792,7 @@ impl Checker {
             // escaped identifiers require an R decoder before aliasing.
             if matches!(target, Expr::Ident { .. })
                 && !name.contains('\\')
-                && let Some(unquoted) = name.strip_prefix('`').and_then(|s| s.strip_suffix('`'))
+                && let Some(unquoted) = name.strip_circumfix('`', '`')
             {
                 table.known_vars.insert(unquoted.to_string());
             }

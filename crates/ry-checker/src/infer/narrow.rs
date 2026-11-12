@@ -1248,7 +1248,7 @@ impl Checker {
             ..
         } = test
         {
-            truth = !truth;
+            truth.toggle();
             test = expr;
         }
         let Expr::Call { func, args, .. } = test else {
@@ -1498,7 +1498,7 @@ impl Checker {
             ..
         } = test
         {
-            negated = !negated;
+            negated.toggle();
             test = expr;
         }
         let Expr::Call { func, args, .. } = test else {

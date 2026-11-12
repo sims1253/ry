@@ -279,10 +279,11 @@ async fn shutdown_with_queued_work_publishes_nothing_afterwards() {
 
     settled.session.notify("exit", Value::Null).await.unwrap();
     drop(settled.session);
-    tokio::time::timeout(std::time::Duration::from_secs(3), settled.server)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(3), settled.server)
         .await
         .expect("server stops after exit")
         .expect("server task completes");
+    assert_eq!(code, std::process::ExitCode::SUCCESS, "exit after shutdown");
 }
 
 /// Two edits to a closed file in its own `DESCRIPTION` package, queued

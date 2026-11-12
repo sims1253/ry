@@ -1159,7 +1159,7 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
             if let Ok(full) = node.utf8_text(src.as_bytes()) {
                 // Strip the leading `#` (R comments start with exactly
                 // one `#`; any further `#` are part of the body).
-                let body = full.strip_prefix('#').unwrap_or(full).to_string();
+                let body = full.trim_prefix('#').to_string();
                 out.push(crate::ast::Comment { line, col, body });
             }
         } else if node.kind() == "special" {
@@ -1513,7 +1513,7 @@ fn exponent_without_digits(literal: &str) -> bool {
         return false;
     };
     let rest = &literal[at + 1..];
-    let rest = rest.strip_prefix(['+', '-']).unwrap_or(rest);
+    let rest = rest.trim_prefix(['+', '-']);
     !rest.starts_with(|c: char| c.is_ascii_digit())
 }
 
@@ -1557,11 +1557,7 @@ fn repeated_formals(function: Node, src: &str, out: &mut Vec<crate::ast::SyntaxV
         let Some(raw) = text(name, src) else {
             continue;
         };
-        let formal = raw
-            .strip_prefix('`')
-            .and_then(|r| r.strip_suffix('`'))
-            .unwrap_or(&raw)
-            .to_string();
+        let formal = raw.strip_circumfix('`', '`').unwrap_or(&raw).to_string();
         if seen.contains(&formal) {
             out.push(violation(
                 name,

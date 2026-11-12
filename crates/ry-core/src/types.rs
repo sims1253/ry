@@ -430,17 +430,11 @@ impl ClassVector {
 
     /// True if `name` is in the class vector. Mirrors R's `inherits()`.
     pub fn contains(&self, name: &str) -> bool {
-        if self.len == 0 {
-            return false;
-        }
-        for i in 0..(self.len as usize).min(4) {
-            if let Some(n) = &self.names[i]
-                && &**n == name
-            {
-                return true;
-            }
-        }
-        false
+        self.names
+            .iter()
+            .take(self.len as usize)
+            .flatten()
+            .any(|n| &**n == name)
     }
 
     /// True if we could not determine the class at all.
@@ -1524,14 +1518,18 @@ impl RType {
         if self.class.has_known_class() {
             let mut first = true;
             f.write_str(":")?;
-            for i in 0..(self.class.len as usize).min(4) {
-                if let Some(n) = &self.class.names[i] {
-                    if !first {
-                        f.write_str(",")?;
-                    }
-                    f.write_str(n)?;
-                    first = false;
+            for n in self
+                .class
+                .names
+                .iter()
+                .take(self.class.len as usize)
+                .flatten()
+            {
+                if !first {
+                    f.write_str(",")?;
                 }
+                f.write_str(n)?;
+                first = false;
             }
         } else if self.class.is_unknown() {
             f.write_str(":?")?;

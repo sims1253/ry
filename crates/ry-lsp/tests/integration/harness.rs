@@ -330,7 +330,7 @@ pub fn file_uri(path: &Path) -> String {
 pub fn published_from_cli_value(value: &Value, root: &Path) -> Published {
     let path = value["path"].as_str().unwrap();
     let relative = normalize_path(Path::new(path), root);
-    let relative = relative.strip_prefix("./").unwrap_or(&relative).to_string();
+    let relative = relative.trim_prefix("./").to_string();
     // Lossy, because a finding can sit in a file that is not UTF-8.
     let source = std::fs::read(root.join(&relative))
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())

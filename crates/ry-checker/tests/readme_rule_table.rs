@@ -25,8 +25,7 @@ struct Row {
 /// Split a table line `| a | b |` into trimmed cells.
 fn cells(raw: &str) -> Vec<String> {
     let trimmed = raw.trim();
-    let trimmed = trimmed.strip_prefix('|').unwrap_or(trimmed);
-    let trimmed = trimmed.strip_suffix('|').unwrap_or(trimmed);
+    let trimmed = trimmed.trim_prefix('|').trim_suffix('|');
     trimmed.split('|').map(|c| c.trim().to_string()).collect()
 }
 

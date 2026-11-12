@@ -470,7 +470,7 @@ pub(crate) fn run_dump_facts(
                 "source_hash": sources[&path]["source_hash"],
                 "context_id": context_id,
                 "scopes": export_scopes(&file, scope_records),
-                "imports": imported.get(&path).map(|imports| imports.iter().collect::<BTreeMap<_,_>>()).unwrap_or_default(),
+                "imports": imported.get(&path).map_or_default(|imports| imports.iter().collect::<BTreeMap<_,_>>()),
             });
             if references {
                 let facts = reference_captures.remove(&path).unwrap_or_default();

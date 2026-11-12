@@ -7,7 +7,6 @@
 //!   representing `ry.toml`.
 //! - [`Baseline`], [`load_baseline`], [`write_baseline_file`],
 //!   [`subtract_baseline`]: the diagnostics-baseline machinery.
-//! - [`build_filter`]: rule severity remapping from a [`Config`].
 
 pub mod baseline;
 pub mod config;

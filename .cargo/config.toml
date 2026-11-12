@@ -1,0 +1,7 @@
+# Resolve only crate versions published at least a week ago, matching the
+# Dependabot cooldown (.github/dependabot.yml). This covers local
+# `cargo update` and `cargo add` too. Versions already in Cargo.lock are
+# kept. To take a newer release early, such as a security fix, set
+# CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow for that one command.
+[registry]
+global-min-publish-age = "7 days"

@@ -39,7 +39,7 @@ fn parse_marker(src: &str) -> Option<Expectation> {
     let first = src.lines().next()?;
     // A BOM-prefixed fixture (err_bom.R) carries its BOM before the
     // marker; skip it so the marker still reads as the first line.
-    let first = first.strip_prefix('\u{feff}').unwrap_or(first);
+    let first = first.trim_prefix('\u{feff}');
     let trimmed = first.trim_start_matches([' ', '\t']);
     if !trimmed.starts_with('#') {
         return None;
@@ -381,11 +381,7 @@ fn case_files_match_their_expectations() {
         .unwrap_or_else(|e| panic!("{}: {e}", snapshot_dir.display()))
         .filter_map(|entry| {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-            Some(
-                name.strip_prefix("corpus__cases_")?
-                    .strip_suffix(".snap")?
-                    .to_string(),
-            )
+            Some(name.strip_circumfix("corpus__cases_", ".snap")?.to_string())
         })
         .collect();
     assert_eq!(

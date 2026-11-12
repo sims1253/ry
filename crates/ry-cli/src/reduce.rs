@@ -54,9 +54,7 @@ pub(crate) fn run_reduce(args: ReduceArgs) -> Result<ExitCode> {
         .filter(|(_, code, _)| *code == oracle.code)
         .find(|(line, _, _)| args.line.is_none_or(|wanted| *line == wanted));
     let Some((line, _, message)) = target else {
-        let place = args
-            .line
-            .map_or(String::new(), |line| format!(" on line {line}"));
+        let place = args.line.map_or_default(|line| format!(" on line {line}"));
         eprintln!(
             "ry reduce: {} reports no {}{place}",
             args.file.display(),

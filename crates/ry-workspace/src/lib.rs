@@ -47,7 +47,7 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
         .ancestors()
         .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
         .map(|ancestor| {
-            let ancestor = if ancestor.as_os_str().is_empty() {
+            let ancestor = if ancestor.is_empty() {
                 Path::new(".")
             } else {
                 ancestor
@@ -721,7 +721,7 @@ fn is_test_or_script_file(path: &Path) -> bool {
 fn package_relative_path(path: &Path, root: &Path) -> Option<PathBuf> {
     let parent = path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .unwrap_or_else(|| Path::new("."));
     let path = ry_config::canonical_path(parent)
         .ok()?
@@ -1349,7 +1349,7 @@ fn find_package_namespace(
 }
 
 fn directory_matches_r_version(directory: &str, minor_version: &str) -> bool {
-    let candidate = directory.strip_prefix("R-").unwrap_or(directory);
+    let candidate = directory.trim_prefix("R-");
     candidate == minor_version
         || candidate.strip_prefix(minor_version).is_some_and(|suffix| {
             suffix.starts_with('.') || suffix.starts_with('-') || suffix.starts_with('_')

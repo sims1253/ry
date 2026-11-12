@@ -146,16 +146,13 @@ fn r_engine_tail(info: &str) -> Option<&str> {
 /// Whether a backtick fence's info string opens a knitr chunk of any
 /// engine, as knitr's `\{([a-zA-Z0-9_]+( *[ ,].*)?)\}` pattern reads it.
 fn knitr_chunk(info: &str) -> bool {
-    info.trim()
-        .strip_prefix('{')
-        .and_then(|info| info.strip_suffix('}'))
-        .is_some_and(|inner| {
-            let engine = inner
-                .bytes()
-                .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-                .count();
-            engine > 0 && (engine == inner.len() || inner[engine..].starts_with([' ', ',']))
-        })
+    info.trim().strip_circumfix('{', '}').is_some_and(|inner| {
+        let engine = inner
+            .bytes()
+            .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+            .count();
+        engine > 0 && (engine == inner.len() || inner[engine..].starts_with([' ', ',']))
+    })
 }
 
 fn simple_key(key: &str) -> Result<&str, ()> {
@@ -341,11 +338,7 @@ fn header_fields(inner: &str) -> Result<Vec<&str>, HeaderError> {
 /// whereas a root execution or format key makes execution uncertain. Other
 /// root flow syntax is refused rather than treated as ordinary block YAML.
 fn root_flow_execution(line: &str) -> Result<bool, ()> {
-    let inner = line
-        .trim()
-        .strip_prefix('{')
-        .and_then(|value| value.strip_suffix('}'))
-        .ok_or(())?;
+    let inner = line.trim().strip_circumfix('{', '}').ok_or(())?;
     if inner.len() > MAX_HEADER_BYTES {
         return Err(());
     }
@@ -387,7 +380,7 @@ fn header_options(
 /// first field without `=`. A quoted label stays as a bare argument.
 fn strip_label(inner: &str) -> &str {
     let rest = inner.trim_start();
-    let rest = rest.strip_prefix(',').unwrap_or(rest);
+    let rest = rest.trim_prefix(',');
     if rest.trim_start().starts_with(['"', '\'']) {
         return rest;
     }
@@ -461,7 +454,7 @@ fn cell_options(
     let Some(first) = lines.first() else {
         return Ok(None);
     };
-    let first = first.strip_prefix(' ').unwrap_or(first);
+    let first = first.trim_prefix(' ');
     let yaml = first.split_once(':').is_some_and(|(key, rest)| {
         !key.is_empty() && !key.contains(' ') && rest.chars().next().is_none_or(char::is_whitespace)
     });

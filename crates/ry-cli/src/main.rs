@@ -4,6 +4,7 @@ mod facts;
 mod facts_declarations;
 mod facts_types;
 mod pipeline;
+mod reduce;
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -210,6 +211,31 @@ enum Cmd {
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         output_format: String,
     },
+    /// Shrink an R file while `ry check` still reports one diagnostic.
+    ///
+    /// Writes the smallest file found to stdout. Each candidate is checked
+    /// in place of FILE, so it keeps FILE's project and configuration; FILE
+    /// itself is not changed. A candidate must keep a diagnostic with the
+    /// same code and message as the target.
+    Reduce {
+        /// The R file to shrink.
+        file: PathBuf,
+        /// Rule code of the diagnostic to keep, such as RY092.
+        #[arg(long, value_name = "CODE")]
+        code: String,
+        /// Keep the diagnostic with this code on this line. Defaults to the
+        /// first one in the file.
+        #[arg(long, value_name = "N")]
+        line: Option<usize>,
+        /// Also require that each candidate runs without error under
+        /// `Rscript --vanilla`, so a false positive stays one. This runs
+        /// the candidates' R code.
+        #[arg(long)]
+        rscript: bool,
+        /// Write the result to this file instead of stdout.
+        #[arg(long, short = 'o', value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
     /// Explain a rule (or all rules).
     #[command(visible_alias = "rule")]
     ExplainRule(ExplainRuleArgs),
@@ -327,6 +353,19 @@ fn main() -> Result<ExitCode> {
             print_version(&output_format);
             Ok(ExitCode::SUCCESS)
         }
+        Cmd::Reduce {
+            file,
+            code,
+            line,
+            rscript,
+            output,
+        } => reduce::run_reduce(reduce::ReduceArgs {
+            file,
+            code,
+            line,
+            rscript,
+            output,
+        }),
         Cmd::ExplainRule(args) => run_explain_rule(args.rule, &args.output_format),
         Cmd::Explain { command } => match command {
             ExplainCmd::Rule(args) => run_explain_rule(args.rule, &args.output_format),

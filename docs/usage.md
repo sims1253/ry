@@ -326,6 +326,22 @@ Use `ry dump-facts R/ --format json` to export versioned scope snapshots as
 JSON. Add `--references` to include reference facts. See the
 [structured facts reference](facts.md) for schemas, output fields, and limits.
 
+## Reducing a false positive
+
+`ry reduce R/model.R --code RY092` writes the smallest version of
+`R/model.R` it finds that still reports an RY092 diagnostic with the same
+message. Add `--line N` to choose the RY092 on line N, and `-o PATH` to
+write to a file. Each candidate is checked in place of the file, with the
+same project and configuration, so a diagnostic that depends on other
+package files still reproduces. The file on disk is not changed.
+
+The reducer deletes top-level expressions, statements, call arguments, and
+function parameters, and replaces expressions with their parts. The result
+can stop being valid R that runs. Add `--rscript` to require that each
+candidate runs without error under `Rscript --vanilla`, so the result stays
+a false positive. That option runs the candidates' R code, each in an empty
+temporary directory with a 10-second limit.
+
 ## Editors
 
 `ry server` speaks the Language Server Protocol over stdio: diagnostics

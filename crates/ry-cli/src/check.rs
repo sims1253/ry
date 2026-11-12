@@ -1192,7 +1192,7 @@ fn read_stdin_overlay(
 /// The directory containing `path`, `.` for a bare filename.
 fn source_parent(path: &std::path::Path) -> &std::path::Path {
     path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .unwrap_or_else(|| std::path::Path::new("."))
 }
 

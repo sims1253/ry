@@ -64,7 +64,7 @@ impl FixtureProject {
 }
 
 fn checked_relative(path: &Path) -> io::Result<&Path> {
-    if path.as_os_str().is_empty()
+    if path.is_empty()
         || path.components().any(|component| {
             matches!(
                 component,

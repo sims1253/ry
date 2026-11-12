@@ -19,7 +19,7 @@ fn is_file_eligible_with_excludes(
     // such as `.` still lines up with the config root.
     let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
-    let relative = path.strip_prefix(&root).unwrap_or(&path);
+    let relative = path.trim_prefix(&root);
     !excludes.matches(&relative.to_string_lossy().replace('\\', "/"))
 }
 
@@ -70,7 +70,7 @@ pub fn is_file_eligible_with_limits(
 }
 
 /// Whether the walk from `walk_root` would land the on-disk file `path`,
-/// decided without walking. It applies the rules of [`discover_recursive`]
+/// decided without walking. It applies the rules of `discover_recursive`
 /// to the file and to each ancestor below `walk_root`: symlinks, `exclude`
 /// patterns (a bare `exclude = ["vendor"]` prunes the directory but never
 /// matches `vendor/defs.R` itself), pruned directory shapes, depth,
@@ -100,12 +100,12 @@ pub fn is_single_file_walk_admitted(
     }
     // No walk reaches outside its root. Without this check the ancestor
     // loop below would climb past the root.
-    if !walk_root.as_os_str().is_empty() && path.strip_prefix(walk_root).is_err() {
+    if !walk_root.is_empty() && path.strip_prefix(walk_root).is_err() {
         return false;
     }
     // An empty `walk_root` (the server fallback with no root) has no walk
     // to agree with, so only the file checks below apply.
-    if !walk_root.as_os_str().is_empty() {
+    if !walk_root.is_empty() {
         // The outermost package level, as in `discover_r_files`: the nearest
         // DESCRIPTION at or above the walk root. It can sit above the folder
         // when the config was inherited.
@@ -628,9 +628,9 @@ fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
         .map(|prefix| prefix.chars().rev().take_while(|&ch| ch == '\\').count())
         .unwrap_or(0);
     let anchored_end = regex.ends_with('$') && trailing_backslashes.is_multiple_of(2);
-    let body = regex.strip_prefix('^').unwrap_or(regex);
+    let body = regex.trim_prefix('^');
     let body = if anchored_end {
-        body.strip_suffix('$').unwrap_or(body)
+        body.trim_suffix('$')
     } else {
         body
     };

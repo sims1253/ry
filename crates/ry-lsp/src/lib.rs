@@ -1,6 +1,6 @@
 //! ry language server. Publishes the diagnostics `ry check` produces and
 //! offers inlay hints and suppression quick fixes. It has no navigation
-//! features. Request handling lives in [`backend`].
+//! features. Request handling lives in the private `backend` module.
 //!
 //! The protocol uses stdout for JSON-RPC framing, so log output on stdout
 //! corrupts the stream. The CLI routes all `tracing` output to stderr

@@ -456,7 +456,7 @@ values when static package metadata proves that they exist.
 
 ## Building from source
 
-Install Rust 1.90 or newer, then run:
+Install Rust 1.100 or newer, then run:
 
 ```sh
 git clone https://github.com/sims1253/ry

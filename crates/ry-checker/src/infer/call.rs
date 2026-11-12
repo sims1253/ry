@@ -2304,15 +2304,12 @@ impl Checker {
                     .columns
                     .iter()
                     .find(|(key, _)| {
-                        key.strip_prefix("[[")
-                            .and_then(|rest| rest.strip_suffix("]]"))
-                            .and_then(|digits| {
-                                let canonical = !digits.is_empty()
-                                    && digits.bytes().all(|byte| byte.is_ascii_digit())
-                                    && (digits.len() == 1 || !digits.starts_with('0'));
-                                canonical.then(|| digits.parse::<i64>().ok()).flatten()
-                            })
-                            == Some(index)
+                        key.strip_circumfix("[[", "]]").and_then(|digits| {
+                            let canonical = !digits.is_empty()
+                                && digits.bytes().all(|byte| byte.is_ascii_digit())
+                                && (digits.len() == 1 || !digits.starts_with('0'));
+                            canonical.then(|| digits.parse::<i64>().ok()).flatten()
+                        }) == Some(index)
                     })
                     .map(|(_, ty)| ty.clone())
             }
@@ -3682,7 +3679,10 @@ fn collect_template_regions(text: &str, base: usize, regions: &mut Vec<(usize, u
                 let inner = &text[i + 1..end];
                 let trimmed = inner.trim();
                 if let Some(content) = markup_span_content(trimmed) {
-                    let content_offset = content.as_ptr() as usize - text.as_ptr() as usize;
+                    let content_offset = text
+                        .substr_range(content)
+                        .expect("markup span content is a slice of the template")
+                        .start;
                     collect_template_regions(content, base + content_offset, regions);
                 } else if !trimmed.starts_with(['?', '/']) {
                     regions.push((base + i + 1, base + end));

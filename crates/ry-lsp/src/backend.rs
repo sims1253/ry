@@ -116,7 +116,7 @@ impl FolderAnalysisContext {
         folder_settings: FolderSettings,
         previous: Option<&FolderAnalysisContext>,
     ) -> Self {
-        let found = if root.as_os_str().is_empty() {
+        let found = if root.is_empty() {
             Ok((None, ry_config::Config::default()))
         } else {
             discover_folder_config(&folder_settings, &root)
@@ -141,7 +141,7 @@ impl FolderAnalysisContext {
             }
             _ => Arc::new(loaded.stubs),
         };
-        let baseline_root = Some(root.as_path()).filter(|root| !root.as_os_str().is_empty());
+        let baseline_root = Some(root.as_path()).filter(|root| !root.is_empty());
         let baseline = match load_folder_baseline(&folder_settings, &config, baseline_root) {
             Ok(baseline) => baseline,
             Err(error) => {
@@ -193,7 +193,7 @@ impl FolderAnalysisContext {
     fn anchor(&self) -> Option<&Path> {
         self.config_root
             .as_deref()
-            .or_else(|| Some(self.root.as_path()).filter(|root| !root.as_os_str().is_empty()))
+            .or_else(|| Some(self.root.as_path()).filter(|root| !root.is_empty()))
     }
 
     fn excludes_path(&self, path: &str) -> bool {
@@ -421,7 +421,7 @@ impl State {
         }
         let path = Path::new(doc_path);
         let ctx = self.context_for_path(doc_path);
-        if ctx.root.as_os_str().is_empty() || !path.starts_with(&ctx.root) {
+        if ctx.root.is_empty() || !path.starts_with(&ctx.root) {
             return true;
         }
         ry_workspace::is_file_eligible_with_limits(

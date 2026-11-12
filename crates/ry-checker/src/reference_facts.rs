@@ -448,9 +448,7 @@ impl ReferenceCapture {
 // unsupported names. The semantic lookup and provenance retain the checker's
 // raw names. Escaped names need a full R decoder and are outside this subset.
 fn ordinary_spelling(name: &str) -> Option<&str> {
-    let quoted = name
-        .strip_prefix('`')
-        .and_then(|name| name.strip_suffix('`'));
+    let quoted = name.strip_circumfix('`', '`');
     let key = quoted.unwrap_or(name);
     if key.contains('\\')
         || matches!(key, "<-" | "=" | "->" | "{" | "(" | "function")

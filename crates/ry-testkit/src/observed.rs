@@ -29,7 +29,7 @@ pub struct ObservedPosition {
 pub fn normalize_path(path: impl AsRef<Path>, root: impl AsRef<Path>) -> String {
     let path = path.as_ref();
     let root = root.as_ref();
-    let relative = path.strip_prefix(root).unwrap_or(path);
+    let relative = path.trim_prefix(root);
     let mut parts = Vec::new();
     for component in relative.components() {
         match component {

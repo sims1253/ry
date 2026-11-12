@@ -45,7 +45,7 @@ pub struct RuleExample {
 
 impl RuleExample {
     pub fn parse(source: &'static str) -> Result<Self, String> {
-        let source = source.strip_suffix('\n').unwrap_or(source);
+        let source = source.trim_suffix('\n');
         let (head, body) = source
             .split_once("\n--- ")
             .ok_or("expected at least one `--- <path>` section")?;

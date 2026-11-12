@@ -381,7 +381,7 @@ fn parse_noqa_codes(text: &str) -> SuppressionKind {
         }
         &after[..close]
     } else {
-        text.strip_prefix(':').unwrap_or(text).trim()
+        text.trim_prefix(':').trim()
     };
     let codes: Vec<String> = list
         .split([',', ' ', '\t'])

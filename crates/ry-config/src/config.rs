@@ -48,7 +48,7 @@ const DEFAULT_INDEX_MAX_DEPTH: u64 = 64;
 /// exactly the same file set.
 ///
 /// Each key accepts a positive integer; zero is a configuration error
-/// rather than an undocumented "unlimited" sentinel ([`Config::validate`]).
+/// rather than an undocumented "unlimited" sentinel ([`Config::load_file`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct IndexConfig {
@@ -514,9 +514,7 @@ impl Config {
             path: path.to_path_buf(),
             source,
         })?;
-        let parent = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty());
+        let parent = path.parent().filter(|parent| !parent.is_empty());
         let root = std::path::absolute(parent.unwrap_or(Path::new("."))).map_err(|source| {
             ConfigError::Read {
                 path: path.to_path_buf(),

@@ -1372,16 +1372,6 @@ impl RType {
     }
 }
 
-/// Build a union of two (non-equal, non-opaque) types.
-///
-/// Flattens members of existing unions, deduplicates by `==`, caps at
-/// `MAX_UNION_MEMBERS` (collapsing to `RType::unknown()` beyond the cap).
-///
-/// Member payloads (class/columns/fn_sig) are deliberately KEPT on each
-/// member: distribute-based column access in a later phase needs the
-/// per-member shape. The union itself carries no class/columns/fn_sig.
-/// The length is the common member length if all members agree, else
-/// `Length::Unknown`.
 /// Add `member` to a union's member list. A member of the same shape
 /// absorbs it, as a non-union join would. Keeping both would make the
 /// member count, the collapse at `MAX_UNION_MEMBERS`, and the pairing of
@@ -1408,6 +1398,17 @@ pub fn merge_repeated_shapes(members: impl IntoIterator<Item = RType>) -> Vec<RT
     out
 }
 
+/// Build a union of two (non-equal, non-opaque) types.
+///
+/// Flattens members of existing unions, merges members of the same shape,
+/// and caps at `MAX_UNION_MEMBERS` (collapsing to `RType::unknown()` beyond
+/// the cap).
+///
+/// Member payloads (class/columns/fn_sig) are deliberately KEPT on each
+/// member: distribute-based column access in a later phase needs the
+/// per-member shape. The union itself carries no class/columns/fn_sig.
+/// The length is the common member length if all members agree, else
+/// `Length::Unknown`.
 fn union_of(a: RType, b: RType) -> RType {
     let mut members: Vec<RType> = Vec::new();
     let push_dedup = push_union_member;

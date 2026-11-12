@@ -12,6 +12,6 @@ partial <- function(x) {
 --- fixed.R
 partial <- function(x) {
   #| x integer
-  stopifnot(identical(dim(x), 1L))
+  stopifnot(length(x) == 1L, is.null(dim(x)) || identical(dim(x), 1L))
   x
 }

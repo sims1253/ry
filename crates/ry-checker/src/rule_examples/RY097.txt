@@ -1,4 +1,4 @@
-fix: Keep Fortran in its own `.f` file, which ry does not check, and call it from R.
+fix: Put Fortran in the package's `src/` directory as a `.f` file, which R compiles and loads and ry does not check, and call it from R.
 --- flagged.R
       subroutine hello(n)
       integer n

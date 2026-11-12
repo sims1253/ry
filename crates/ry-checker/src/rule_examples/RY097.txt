@@ -1,4 +1,4 @@
-fix: Check only R source files: exclude files in other languages, such as Fortran, from the checked paths.
+fix: Keep Fortran in its own `.f` file, which ry does not check, and call it from R.
 --- flagged.R
       subroutine hello(n)
       integer n
@@ -8,5 +8,5 @@ fix: Check only R source files: exclude files in other languages, such as Fortra
       end
 --- fixed.R
 hello <- function(n) {
-  if (n > 0) print(n)
+  .Fortran("hello", n = as.integer(n))
 }

@@ -1,4 +1,4 @@
-fix: Compare the number explicitly, such as `n > 0`.
+fix: Compare the number explicitly, such as `n != 0`.
 --- ry.toml
 warn = ["RY003"]
 --- flagged.R
@@ -6,4 +6,4 @@ n <- 2
 if (n) print("nonzero")
 --- fixed.R
 n <- 2
-if (n > 0) print("nonzero")
+if (n != 0) print("nonzero")

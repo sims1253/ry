@@ -1,4 +1,4 @@
-fix: Use an argument name that the function has.
+fix: Remove the argument the function does not have, or correct its name.
 --- flagged.R
 area <- function(width, height) width * height
 a <- area(2, 3, depth = 4)

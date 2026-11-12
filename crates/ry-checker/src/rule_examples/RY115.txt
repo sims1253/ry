@@ -1,4 +1,4 @@
-fix: Declare only what ry supports, such as the class, and check the rest at run time.
+fix: Declare only what ry supports, such as the class, and check the dimension in the body.
 --- ry.toml
 [annotations.typehint]
 adopt = true
@@ -12,5 +12,6 @@ partial <- function(x) {
 --- fixed.R
 partial <- function(x) {
   #| x integer
+  stopifnot(identical(dim(x), 1L))
   x
 }

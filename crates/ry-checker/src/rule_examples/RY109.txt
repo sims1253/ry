@@ -1,7 +1,7 @@
-fix: Give the default a value that does not refer to the formal itself.
+fix: Give the default the value the function should use, not one that refers to the formal itself.
 --- flagged.R
-show <- function(x) 1L
-f <- function(n = n + 1) show(n)
+f <- function(n = n + 1) {
+  if (missing(n)) 0 else n
+}
 --- fixed.R
-show <- function(x) 1L
-f <- function(n = 1) show(n)
+f <- function(n = 0) n

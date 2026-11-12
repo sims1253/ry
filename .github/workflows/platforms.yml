@@ -7,7 +7,18 @@ name: Platforms
 on:
   schedule:
     - cron: "37 4 * * *"
+  # A manual run can narrow the suite to debug one platform failure:
+  #   gh workflow run platforms.yml --ref <branch> -f package=ry-lsp -f filter=session
   workflow_dispatch:
+    inputs:
+      package:
+        description: "Crate to test, e.g. ry-lsp. Empty tests the whole workspace."
+        type: string
+        default: ""
+      filter:
+        description: "Test name filter passed to the test binaries. Empty runs every test."
+        type: string
+        default: ""
   pull_request:
     paths:
       - ".github/workflows/platforms.yml"
@@ -37,9 +48,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Test
-        run: cargo test --locked --workspace --no-fail-fast
+        shell: bash
+        # Inputs reach the shell as environment variables, never as
+        # interpolated workflow expressions. Scheduled runs have no inputs.
+        env:
+          PACKAGE: ${{ inputs.package }}
+          FILTER: ${{ inputs.filter }}
+        run: |
+          scope=(--workspace)
+          if [[ -n "$PACKAGE" ]]; then scope=(-p "$PACKAGE"); fi
+          filter=()
+          if [[ -n "$FILTER" ]]; then filter=(-- "$FILTER"); fi
+          cargo test --locked "${scope[@]}" --no-fail-fast "${filter[@]}"

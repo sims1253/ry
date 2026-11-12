@@ -1,0 +1,59 @@
+name: Known-gap budget
+
+# Fails when a pull request raises the number of `# oracle: known-gap`
+# fixtures above its base branch. The known_gap_budget_matches_fixtures test
+# in crates/ry-checker/tests/oracle.rs keeps the committed count equal to the
+# fixtures, so editing the file alone cannot change it. A new gap is fine when
+# it records a real limitation; a maintainer accepts it with the
+# known-gap-increase label. Without the label, a fixture that started failing
+# cannot be quietly retagged as a gap.
+#
+# This is its own workflow because it must rerun when a label changes, and
+# CI should not rebuild for that. For the same reason ci.yml's `Check` job
+# cannot wait for it, so the ruleset requires `Known-gap budget` by name
+# beside `Check`.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: known-gap-budget-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  budget:
+    name: Known-gap budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BUDGET: crates/ry-checker/tests/oracle-known-gaps.txt
+      BASE_REF: ${{ github.base_ref }}
+      ALLOW_INCREASE: ${{ contains(github.event.pull_request.labels.*.name, 'known-gap-increase') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: crates/ry-checker/tests/oracle-known-gaps.txt
+          sparse-checkout-cone-mode: false
+      - name: Compare with the base branch
+        run: |
+          git fetch --quiet --depth=1 origin "refs/heads/$BASE_REF"
+          if ! base=$(git show "FETCH_HEAD:$BUDGET" 2>/dev/null); then
+            echo "The base branch has no known-gap budget yet."
+            exit 0
+          fi
+          head=$(cat "$BUDGET")
+          [[ "$base" =~ ^[0-9]+$ && "$head" =~ ^[0-9]+$ ]]
+          echo "Known gaps: $base on $BASE_REF, $head here."
+          if (( head <= base )); then
+            exit 0
+          fi
+          if [[ "$ALLOW_INCREASE" == true ]]; then
+            echo "Accepted by the known-gap-increase label."
+            exit 0
+          fi
+          echo "::error file=$BUDGET::Known-gap fixtures grew from $base to $head. Fix the fixture instead, or ask a maintainer to add the known-gap-increase label."
+          exit 1

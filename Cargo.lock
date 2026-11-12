@@ -1551,6 +1551,7 @@ dependencies = [
 name = "ry-core"
 version = "0.12.0"
 dependencies = [
+ "proptest",
  "serde",
  "serde_json",
  "stacker",

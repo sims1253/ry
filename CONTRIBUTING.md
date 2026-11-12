@@ -55,6 +55,11 @@ extension activation, package sizes, and the historical dashboard.
   premise stated by that diagnostic with an error, warning, `quote()` shape,
   or explicit assertion. A `known-gap` fixture cannot count as a claim. Adding
   a rule without a registered claim fixture fails the default oracle test.
+- `crates/ry-checker/tests/oracle-known-gaps.txt` holds the number of
+  `known-gap` fixtures, and the default oracle test fails when it differs.
+  A pull request that raises the number fails the Known-gap budget check
+  until a maintainer adds the `known-gap-increase` label. Removing a gap
+  lowers the number; write the new count to the file.
 - An oracle fixture can also check `ry dump-facts` against R. Add one or
   more `# oracle-facts: name ...` lines naming top-level bindings. The file
   must run without error, so tag it `# oracle: must-pass`. The facts oracle

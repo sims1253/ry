@@ -7,7 +7,18 @@ name: Platforms
 on:
   schedule:
     - cron: "37 4 * * *"
+  # A manual run can narrow the suite to debug one platform failure:
+  #   gh workflow run platforms.yml --ref <branch> -f package=ry-lsp -f filter=session
   workflow_dispatch:
+    inputs:
+      package:
+        description: "Crate to test, e.g. ry-lsp. Empty tests the whole workspace."
+        type: string
+        default: ""
+      filter:
+        description: "Test name filter passed to the test binaries. Empty runs every test."
+        type: string
+        default: ""
   pull_request:
     paths:
       - ".github/workflows/platforms.yml"
@@ -42,4 +53,15 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Test
-        run: cargo test --locked --workspace --no-fail-fast
+        shell: bash
+        # Inputs reach the shell as environment variables, never as
+        # interpolated workflow expressions. Scheduled runs have no inputs.
+        env:
+          PACKAGE: ${{ inputs.package }}
+          FILTER: ${{ inputs.filter }}
+        run: |
+          scope=(--workspace)
+          if [[ -n "$PACKAGE" ]]; then scope=(-p "$PACKAGE"); fi
+          filter=()
+          if [[ -n "$FILTER" ]]; then filter=(-- "$FILTER"); fi
+          cargo test --locked "${scope[@]}" --no-fail-fast "${filter[@]}"

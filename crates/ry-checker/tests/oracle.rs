@@ -542,6 +542,52 @@ fn tag_label(tag: &Tag) -> &'static str {
     }
 }
 
+/// The committed number of `known-gap` fixtures. The known-gap budget
+/// workflow fails a pull request that raises it, unless a maintainer adds
+/// the `known-gap-increase` label, so a failing fixture is not quietly
+/// retagged as a gap.
+const KNOWN_GAP_BUDGET: &str = "tests/oracle-known-gaps.txt";
+
+/// Keeps the committed budget equal to the fixtures, so the budget cannot
+/// be raised or lowered by editing the file alone. Runs without R.
+#[test]
+fn known_gap_budget_matches_fixtures() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut gaps: Vec<String> = Vec::new();
+    for entry in fs::read_dir(root.join("testdata/oracle")).expect("read oracle fixture directory")
+    {
+        let path = entry.expect("oracle fixture entry").path();
+        if !path.is_file() {
+            continue;
+        }
+        // `.R.bytes` sidecars hold non-UTF-8 fixtures; their tag line is ASCII.
+        let bytes = fs::read(&path).expect("read oracle fixture");
+        if matches!(
+            tag_of(&String::from_utf8_lossy(&bytes)),
+            Some(Tag::KnownGap(_))
+        ) {
+            gaps.push(path.file_name().unwrap().to_string_lossy().into_owned());
+        }
+    }
+    gaps.sort();
+    let budget_path = root.join(KNOWN_GAP_BUDGET);
+    let budget: usize = fs::read_to_string(&budget_path)
+        .expect("read known-gap budget")
+        .trim()
+        .parse()
+        .expect("known-gap budget is a whole number");
+    assert_eq!(
+        gaps.len(),
+        budget,
+        "crates/ry-checker/{KNOWN_GAP_BUDGET} says {budget} known-gap fixture(s), \
+         but testdata/oracle has {}. Write {} to the file. A pull request that \
+         raises it needs the known-gap-increase label.\nKnown gaps:\n  {}",
+        gaps.len(),
+        gaps.len(),
+        gaps.join("\n  ")
+    );
+}
+
 /// Unit tests for the marker parser. These do NOT require R, so they run
 /// in the default (non-`--ignored`) gate and lock in the tag grammar
 /// (including the `known-gap` prefix match and reason-casing behavior)

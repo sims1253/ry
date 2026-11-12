@@ -11,7 +11,7 @@ All notable changes to ry are documented in this file.
   Rust 1.98 and 1.100. Prebuilt release binaries are unaffected; only
   building from source needs a newer toolchain. Cargo now resolves only
   crate versions published at least 7 days ago, matching the Dependabot
-  cooldown (#PR).
+  cooldown (#906).
 - The vendored typeshed moves to r-typeshed c5659cb, whose base stubs now
   match GNU R: `mean()`, `prod()`, `round()` and `cumprod()` return
   double or complex, `seq()` integer or double, `names()`, `rownames()`

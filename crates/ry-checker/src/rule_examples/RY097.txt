@@ -1,0 +1,12 @@
+fix: Check only R source files: exclude files in other languages, such as Fortran, from the checked paths.
+--- flagged.R
+      subroutine hello(n)
+      integer n
+      if (n .gt. 0) then
+        write(*,*) n
+      end if
+      end
+--- fixed.R
+hello <- function(n) {
+  if (n > 0) print(n)
+}

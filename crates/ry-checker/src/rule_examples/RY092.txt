@@ -1,0 +1,5 @@
+fix: Pass a value of the type the function expects.
+--- flagged.R
+m <- mean("not numeric")
+--- fixed.R
+m <- mean(c(1, 2, 3))

@@ -1,0 +1,7 @@
+fix: Index an atomic vector with `[` or `[[`, or store the values in a list.
+--- flagged.R
+x <- 1:10
+val <- x$column
+--- fixed.R
+x <- list(column = 1:10)
+val <- x$column

@@ -403,11 +403,24 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
             let json: Vec<serde_json::Value> = matched
                 .iter()
                 .map(|r| {
+                    let example = r.example();
+                    let files: serde_json::Map<String, serde_json::Value> = example
+                        .support
+                        .iter()
+                        .map(|(path, contents)| ((*path).to_string(), (*contents).into()))
+                        .collect();
                     serde_json::json!({
                         "code": r.code,
                         "name": r.name,
                         "severity": r.default_severity.as_str(),
                         "summary": r.summary,
+                        "example": {
+                            "extension": example.extension,
+                            "flagged": example.flagged,
+                            "fix": example.fix,
+                            "fixed": example.fixed,
+                            "files": files,
+                        },
                     })
                 })
                 .collect();
@@ -420,6 +433,7 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
                 println!("Default severity: {}", r.default_severity);
                 println!();
                 println!("{}", r.summary);
+                print_rule_example(&r.example());
             } else {
                 println!("{:<8} {:<24} {:<10} summary", "code", "name", "severity");
                 println!("{}", "-".repeat(78));
@@ -436,6 +450,33 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The worked example under a single rule's explanation.
+fn print_rule_example(example: &ry_checker::rules::RuleExample) {
+    let indented = |source: &str| {
+        for line in source.lines() {
+            if line.is_empty() {
+                println!();
+            } else {
+                println!("    {line}");
+            }
+        }
+    };
+    for (path, contents) in &example.support {
+        println!();
+        println!("With `{path}`:");
+        println!();
+        indented(contents);
+    }
+    println!();
+    println!("Example (`example.{}`):", example.extension);
+    println!();
+    indented(example.flagged);
+    println!();
+    println!("Fix: {}", example.fix);
+    println!();
+    indented(example.fixed);
 }
 
 fn run_explain_typeshed() -> Result<ExitCode> {

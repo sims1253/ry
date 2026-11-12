@@ -1,0 +1,18 @@
+fix: Pass a value that satisfies the declaration, or correct the declaration.
+--- ry.toml
+[annotations.typehint]
+adopt = true
+version = "0.1.0"
+paths = ["**/*.R"]
+--- flagged.R
+f <- function(x) {
+  #| x integer
+  x
+}
+f("bad")
+--- fixed.R
+f <- function(x) {
+  #| x integer
+  x
+}
+f(1L)

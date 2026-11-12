@@ -1,0 +1,12 @@
+fix: Define a method for the class, or call the generic on a value it supports.
+--- flagged.R
+describe <- function(x) UseMethod("describe")
+describe.circle <- function(x) "circle"
+shape <- structure(list(), class = "square")
+describe(shape)
+--- fixed.R
+describe <- function(x) UseMethod("describe")
+describe.circle <- function(x) "circle"
+describe.square <- function(x) "square"
+shape <- structure(list(), class = "square")
+describe(shape)

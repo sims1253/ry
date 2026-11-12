@@ -1,0 +1,7 @@
+fix: Supply every argument that has no default.
+--- flagged.R
+area <- function(width, height) width * height
+a <- area(width = 2)
+--- fixed.R
+area <- function(width, height) width * height
+a <- area(width = 2, height = 3)

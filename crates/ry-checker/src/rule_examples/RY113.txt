@@ -1,0 +1,7 @@
+fix: Delete the ignore comment that suppresses nothing.
+--- ry.toml
+warn = ["RY113"]
+--- flagged.R
+same <- 1L == 1L # ry: ignore[RY034]
+--- fixed.R
+same <- 1L == 1L

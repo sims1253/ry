@@ -1,0 +1,7 @@
+fix: Define the variable before it is used, or correct its spelling.
+--- flagged.R
+total <- 10
+print(totl)
+--- fixed.R
+total <- 10
+print(total)

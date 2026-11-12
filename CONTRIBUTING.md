@@ -60,6 +60,13 @@ extension activation, package sizes, and the historical dashboard.
   A pull request that raises the number fails the Known-gap budget check
   until a maintainer adds the `known-gap-increase` label. Removing a gap
   lowers the number; write the new count to the file.
+- Every rule also needs a worked example in
+  `crates/ry-checker/src/rule_examples/RYxxx.txt`, which `ry explain rule`
+  prints. The file starts with a `fix:` line, then holds files that each
+  start with a `--- <path>` line: `flagged.<ext>`, `fixed.<ext>`, and any
+  support files such as `ry.toml`. The e2e test `rule_examples` checks that
+  the flagged file reports only that rule and that the fixed file reports
+  nothing.
 - An oracle fixture can also check `ry dump-facts` against R. Add one or
   more `# oracle-facts: name ...` lines naming top-level bindings. The file
   must run without error, so tag it `# oracle: must-pass`. The facts oracle

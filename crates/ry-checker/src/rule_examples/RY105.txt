@@ -1,0 +1,11 @@
+fix: Test the value itself; the length of a reduction such as `sum()` is always one.
+--- flagged.R
+f <- function(s) {
+  n <- sum(is.na(s))
+  if (length(n) > 0) "some missing" else "none missing"
+}
+--- fixed.R
+f <- function(s) {
+  n <- sum(is.na(s))
+  if (n > 0) "some missing" else "none missing"
+}

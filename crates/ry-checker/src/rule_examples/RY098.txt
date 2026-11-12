@@ -1,0 +1,5 @@
+fix: Give the default a value that does not depend on the formal itself or on a local that may not be assigned yet.
+--- flagged.R
+f <- function(x = x) base::identity(x)
+--- fixed.R
+f <- function(x = 1) base::identity(x)

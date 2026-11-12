@@ -1,0 +1,6 @@
+fix: Test a value that is one `TRUE` or `FALSE`, such as `!is.na(x)`, instead of `NA`.
+--- flagged.R
+if (NA) print("yes")
+--- fixed.R
+x <- NA
+if (!is.na(x)) print("yes")

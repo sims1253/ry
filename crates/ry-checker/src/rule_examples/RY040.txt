@@ -1,0 +1,5 @@
+fix: Convert the string to a number with `as.numeric()`, or paste strings with `paste0()`.
+--- flagged.R
+x <- "a" + 1
+--- fixed.R
+x <- paste0("a", 1)

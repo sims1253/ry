@@ -1,0 +1,9 @@
+fix: Test the class with `inherits(x, "name")`.
+--- flagged.R
+f <- function(x) {
+  if (class(x) == "data.frame") nrow(x) else length(x)
+}
+--- fixed.R
+f <- function(x) {
+  if (inherits(x, "data.frame")) nrow(x) else length(x)
+}

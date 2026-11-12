@@ -1,0 +1,7 @@
+fix: Compare values that have an order, such as numbers or strings, not a function.
+--- flagged.R
+f <- function() 1L
+x <- f > 1L
+--- fixed.R
+f <- function() 1L
+x <- f() > 1L

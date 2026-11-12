@@ -15,6 +15,7 @@ mod parse_failures;
 mod reduce_e2e;
 mod related_locations;
 mod report_inputs;
+mod rule_examples;
 mod stdin_e2e;
 mod support;
 mod suppression_e2e;

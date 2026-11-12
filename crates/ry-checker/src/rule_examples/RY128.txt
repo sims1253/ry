@@ -1,0 +1,5 @@
+fix: Give `diag()` a dimension that is zero or more.
+--- flagged.R
+m <- diag(1, nrow = -1)
+--- fixed.R
+m <- diag(1, nrow = 2)

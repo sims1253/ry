@@ -1,0 +1,9 @@
+fix: Close the math call before the comparison, as in `abs(x) > y`.
+--- flagged.R
+x <- -3
+y <- 2
+big <- abs(x > y)
+--- fixed.R
+x <- -3
+y <- 2
+big <- abs(x) > y

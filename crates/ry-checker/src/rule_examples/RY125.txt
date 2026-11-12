@@ -1,0 +1,6 @@
+fix: Pass the data, not a function with the same name.
+--- flagged.R
+n <- nrow(utils::data)
+--- fixed.R
+d <- data.frame(x = 1:3)
+n <- nrow(d)

@@ -1,0 +1,16 @@
+fix: Give each declaration a formal name and a type.
+--- ry.toml
+[annotations.typehint]
+adopt = true
+version = "0.1.0"
+paths = ["**/*.R"]
+--- flagged.R
+invalid <- function(x) {
+  #| x
+  x
+}
+--- fixed.R
+valid <- function(x) {
+  #| x integer
+  x
+}

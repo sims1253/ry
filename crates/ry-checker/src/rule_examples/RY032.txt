@@ -1,0 +1,5 @@
+fix: Use `&` or `|` for vectors, or reduce each side to one value with `any()` or `all()`.
+--- flagged.R
+x <- c(TRUE, FALSE) && TRUE
+--- fixed.R
+x <- all(c(TRUE, FALSE)) && TRUE

@@ -1,0 +1,7 @@
+fix: Give the default a value that does not refer to the formal itself.
+--- flagged.R
+show <- function(x) 1L
+f <- function(n = n + 1) show(n)
+--- fixed.R
+show <- function(x) 1L
+f <- function(n = 1) show(n)

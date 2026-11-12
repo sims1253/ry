@@ -1,0 +1,6 @@
+fix: Use a typed alternative such as `dplyr::if_else()`, or handle an empty or all-`NA` test first.
+--- flagged.R
+a <- ifelse(logical(0), "yes", "no")
+--- fixed.R
+test <- logical(0)
+a <- if (length(test) == 0) character(0) else ifelse(test, "yes", "no")

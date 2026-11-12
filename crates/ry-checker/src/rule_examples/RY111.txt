@@ -1,0 +1,9 @@
+fix: Forward the caller's value, as in `na.rm = na.rm`.
+--- flagged.R
+f <- function(x, na.rm = FALSE) {
+  median(x, na.rm = TRUE)
+}
+--- fixed.R
+f <- function(x, na.rm = FALSE) {
+  median(x, na.rm = na.rm)
+}

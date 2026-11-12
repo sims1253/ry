@@ -1,0 +1,7 @@
+fix: Extract the element with `[[`, as in `identical(l[[1]], 1)`.
+--- flagged.R
+l <- list(1, 2)
+same <- identical(l[1], 1)
+--- fixed.R
+l <- list(1, 2)
+same <- identical(l[[1]], 1)

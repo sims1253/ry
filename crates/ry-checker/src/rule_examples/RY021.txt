@@ -1,0 +1,5 @@
+fix: Negate a logical value or a number, not a string.
+--- flagged.R
+x <- !"yes"
+--- fixed.R
+x <- !TRUE

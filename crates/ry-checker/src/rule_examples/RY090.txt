@@ -1,0 +1,7 @@
+fix: Use an argument name that the function has.
+--- flagged.R
+area <- function(width, height) width * height
+a <- area(2, 3, depth = 4)
+--- fixed.R
+area <- function(width, height) width * height
+a <- area(2, 3)

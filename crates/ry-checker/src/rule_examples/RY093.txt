@@ -1,0 +1,7 @@
+fix: Close `length()` before the comparison, as in `length(x) > 1`.
+--- flagged.R
+x <- c(1, 2)
+big <- length(x > 1)
+--- fixed.R
+x <- c(1, 2)
+big <- length(x) > 1

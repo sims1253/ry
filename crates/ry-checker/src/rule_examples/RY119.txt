@@ -1,0 +1,5 @@
+fix: Keep the value inside the integer range before `as.integer()`, or keep it as a double.
+--- flagged.R
+x <- as.integer(2147483648)
+--- fixed.R
+x <- as.integer(2147483647)

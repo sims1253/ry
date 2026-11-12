@@ -1,0 +1,7 @@
+fix: Test for missing values with `is.na(x)`.
+--- flagged.R
+x <- c(1, NA)
+missing <- x == NA
+--- fixed.R
+x <- c(1, NA)
+missing <- is.na(x)

@@ -1,0 +1,7 @@
+fix: Move the download into a function that the user calls.
+--- flagged.R
+season <- utils::download.file("https://example.invalid/season.csv", tempfile())
+--- fixed.R
+download_season <- function(path) {
+  utils::download.file("https://example.invalid/season.csv", path)
+}

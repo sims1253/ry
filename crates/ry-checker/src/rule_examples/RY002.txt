@@ -1,0 +1,7 @@
+fix: Reduce the condition to one value with `any()` or `all()`.
+--- flagged.R
+x <- c(TRUE, FALSE)
+if (x) print("yes")
+--- fixed.R
+x <- c(TRUE, FALSE)
+if (any(x)) print("yes")

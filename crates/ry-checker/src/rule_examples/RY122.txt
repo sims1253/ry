@@ -1,0 +1,5 @@
+fix: Compare the result with an independent expected value.
+--- flagged.R
+check <- function(x) testthat::expect_equal(round(x, 3), round(x, 3))
+--- fixed.R
+check <- function(x) testthat::expect_equal(round(x, 3), 1.235)

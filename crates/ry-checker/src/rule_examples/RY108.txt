@@ -1,0 +1,13 @@
+fix: Guard each use of the defaulted `to` with `missing(to)`.
+--- flagged.R
+seq.widget <- function(from = 1, to = 9, ...) {
+  seq.default(unclass(from), to, ...)
+}
+--- fixed.R
+seq.widget <- function(from = 1, to = 9, ...) {
+  if (missing(to)) {
+    seq.default(unclass(from), ...)
+  } else {
+    seq.default(unclass(from), to, ...)
+  }
+}

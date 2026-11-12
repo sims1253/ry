@@ -1,0 +1,11 @@
+fix: Close every R chunk fence, and keep each chunk's code complete.
+--- ry.toml
+[reports]
+enabled = true
+--- flagged.Rmd
+```{r}
+value <- 1L
+--- fixed.Rmd
+```{r}
+value <- 1L
+```

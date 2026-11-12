@@ -1,0 +1,7 @@
+fix: Write the pipe's right-hand side as a call, such as `x |> sqrt()`.
+--- flagged.R
+x <- 4
+y <- x |> sqrt
+--- fixed.R
+x <- 4
+y <- x |> sqrt()

@@ -1,0 +1,5 @@
+fix: Name a rule that exists in the ignore comment, or delete the comment.
+--- flagged.R
+x <- 1 # ry: ignore[RY999]
+--- fixed.R
+x <- 1

@@ -1,0 +1,5 @@
+fix: Access the namespace only on the branch where `requireNamespace()` returned `TRUE`.
+--- flagged.R
+page <- if (!requireNamespace("bslib", quietly = TRUE)) bslib::page_fluid else NULL
+--- fixed.R
+page <- if (requireNamespace("bslib", quietly = TRUE)) bslib::page_fluid else NULL

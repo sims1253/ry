@@ -1,0 +1,5 @@
+fix: Name the element with `=`, as in `list(a = 1)`.
+--- flagged.R
+l <- list(a <- 1, b = 2)
+--- fixed.R
+l <- list(a = 1, b = 2)

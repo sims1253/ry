@@ -1,0 +1,17 @@
+fix: Let one class's `chooseOpsMethod()` accept the other class, or define one method that handles both.
+--- flagged.R
+x <- structure(1L, class = "left")
+y <- structure(2L, class = "right")
+`+.left` <- function(e1, e2) 1L
+`+.right` <- function(e1, e2) 2L
+chooseOpsMethod.left <- function(...) FALSE
+chooseOpsMethod.right <- function(...) FALSE
+out <- x + y
+--- fixed.R
+x <- structure(1L, class = "left")
+y <- structure(2L, class = "right")
+`+.left` <- function(e1, e2) 1L
+`+.right` <- function(e1, e2) 2L
+chooseOpsMethod.left <- function(...) FALSE
+chooseOpsMethod.right <- function(...) TRUE
+out <- x + y

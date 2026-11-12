@@ -1,0 +1,7 @@
+fix: Convert the factor first, such as `as.numeric(as.character(f))`.
+--- flagged.R
+f <- factor(c("1", "2"))
+x <- f + 1
+--- fixed.R
+f <- factor(c("1", "2"))
+x <- as.numeric(as.character(f)) + 1

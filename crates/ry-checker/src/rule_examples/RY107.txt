@@ -1,0 +1,5 @@
+fix: Compare inside the call, as in `any(x == 0)`.
+--- flagged.R
+f <- function(x) if (any(x) == 0) "has a zero" else "no zeros"
+--- fixed.R
+f <- function(x) if (any(x == 0)) "has a zero" else "no zeros"

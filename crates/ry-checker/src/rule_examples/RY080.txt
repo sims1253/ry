@@ -1,0 +1,7 @@
+fix: Return one number from a `map_dbl()` callback, or use `map_chr()` for strings.
+--- flagged.R
+library(purrr)
+xs <- map_dbl(1:3, function(x) paste("n", x))
+--- fixed.R
+library(purrr)
+xs <- map_chr(1:3, function(x) paste("n", x))

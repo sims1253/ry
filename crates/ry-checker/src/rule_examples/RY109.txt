@@ -1,0 +1,7 @@
+fix: Give the default the value the function should use, not one that refers to the formal itself.
+--- flagged.R
+f <- function(n = n + 1) {
+  if (missing(n)) 0 else n
+}
+--- fixed.R
+f <- function(n = 0) n

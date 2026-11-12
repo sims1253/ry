@@ -1,0 +1,7 @@
+fix: Call a function, not the value that a variable holds.
+--- flagged.R
+x <- 42
+y <- x()
+--- fixed.R
+x <- function() 42
+y <- x()

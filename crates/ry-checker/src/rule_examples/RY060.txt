@@ -1,0 +1,7 @@
+fix: Use a column name the data frame has.
+--- flagged.R
+d <- data.frame(mpg = c(21, 22.8))
+m <- mean(d$mpgg)
+--- fixed.R
+d <- data.frame(mpg = c(21, 22.8))
+m <- mean(d$mpg)

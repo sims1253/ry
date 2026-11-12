@@ -1,0 +1,5 @@
+fix: Negate a number, not a string; convert with `as.numeric()` first if needed.
+--- flagged.R
+x <- -"5"
+--- fixed.R
+x <- -as.numeric("5")

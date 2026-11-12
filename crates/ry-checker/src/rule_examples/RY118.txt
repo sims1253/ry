@@ -1,0 +1,9 @@
+fix: Import a name that the module exports.
+--- modules/hello.R
+#' @export
+greet <- function() "hello"
+--- flagged.R
+box::use(./modules/hello[missing])
+--- fixed.R
+box::use(./modules/hello[greet])
+greet()

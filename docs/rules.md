@@ -5,7 +5,7 @@
 ## Rules
 
 Defaults can be overridden per-project; `ry explain rule RY040` prints the
-explanation for one rule.
+explanation for one rule, with an example that triggers it and the fixed code.
 
 | code  | name                     | severity | summary                                                                                                                                                                                                   |
 | :---- | :----------------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -1,0 +1,5 @@
+fix: Make the vector lengths match, or make one length a multiple of the other.
+--- flagged.R
+x <- c(1, 2, 3) + c(1, 2)
+--- fixed.R
+x <- c(1, 2, 3) + c(1, 2, 3)

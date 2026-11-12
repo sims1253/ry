@@ -1,0 +1,5 @@
+fix: Repeat a list instead, as in `rep(list(v), n)`.
+--- flagged.R
+x <- c(list(1), list(rep(2, 3)))
+--- fixed.R
+x <- c(list(1), rep(list(2), 3))

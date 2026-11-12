@@ -1,0 +1,7 @@
+fix: Index with only positive or only negative positions.
+--- flagged.R
+x <- 1:10
+y <- x[1:-1]
+--- fixed.R
+x <- 1:10
+y <- x[-1]

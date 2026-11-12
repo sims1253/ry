@@ -1,0 +1,12 @@
+fix: Put Fortran in the package's `src/` directory as a `.f` file, which R compiles and loads and ry does not check, and call it from R.
+--- flagged.R
+      subroutine hello(n)
+      integer n
+      if (n .gt. 0) then
+        write(*,*) n
+      end if
+      end
+--- fixed.R
+hello <- function(n) {
+  .Fortran("hello", n = as.integer(n))
+}

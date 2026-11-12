@@ -1,0 +1,13 @@
+fix: Require a nonempty input in the guard, as in `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`.
+--- flagged.R
+to_seconds <- function(seconds) {
+  if (is.numeric(seconds) || all(is.na(seconds))) {
+    sqrt(seconds)
+  }
+}
+--- fixed.R
+to_seconds <- function(seconds) {
+  if (is.numeric(seconds) || (length(seconds) > 0 && all(is.na(seconds)))) {
+    sqrt(seconds)
+  }
+}

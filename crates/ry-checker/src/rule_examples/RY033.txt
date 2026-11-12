@@ -1,0 +1,7 @@
+fix: Convert the string to a number before you compare it, such as `as.numeric(x) < 10`.
+--- flagged.R
+x <- "9"
+small <- x < 10
+--- fixed.R
+x <- "9"
+small <- as.numeric(x) < 10

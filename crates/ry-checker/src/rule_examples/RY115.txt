@@ -1,0 +1,17 @@
+fix: Declare only what ry supports, such as the class, and check the dimension in the body.
+--- ry.toml
+[annotations.typehint]
+adopt = true
+version = "0.1.0"
+paths = ["**/*.R"]
+--- flagged.R
+partial <- function(x) {
+  #| x integer dim(1L)
+  x
+}
+--- fixed.R
+partial <- function(x) {
+  #| x integer
+  stopifnot(length(x) == 1L, is.null(dim(x)) || identical(dim(x), 1L))
+  x
+}

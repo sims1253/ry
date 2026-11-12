@@ -1,0 +1,12 @@
+fix: Set `eval` to a literal `TRUE` or `FALSE` in the chunk options.
+--- ry.toml
+[reports]
+enabled = true
+--- flagged.Rmd
+```{r, eval=choose()}
+value <- 1L
+```
+--- fixed.Rmd
+```{r, eval=TRUE}
+value <- 1L
+```

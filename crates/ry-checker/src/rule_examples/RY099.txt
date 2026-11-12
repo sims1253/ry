@@ -1,0 +1,11 @@
+fix: Assign the value, such as `y <- y + 1`, or delete the expression.
+--- flagged.R
+f <- function(x, y) {
+  if (x) y + 1
+  y
+}
+--- fixed.R
+f <- function(x, y) {
+  if (x) y <- y + 1
+  y
+}

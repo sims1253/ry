@@ -1,0 +1,5 @@
+fix: Supply one value for each conversion in the format string.
+--- flagged.R
+s <- sprintf("%s is %d years old", "Ada")
+--- fixed.R
+s <- sprintf("%s is %d years old", "Ada", 36L)

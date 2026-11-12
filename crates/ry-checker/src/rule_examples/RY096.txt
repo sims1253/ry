@@ -1,0 +1,11 @@
+fix: Name a formal parameter of the enclosing function in `hasArg()`.
+--- flagged.R
+f <- function(x, verbose = FALSE) {
+  if (hasArg(quiet)) print("quiet")
+  x
+}
+--- fixed.R
+f <- function(x, verbose = FALSE) {
+  if (hasArg(verbose)) print("verbose")
+  x
+}

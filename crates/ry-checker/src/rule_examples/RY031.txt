@@ -1,0 +1,5 @@
+fix: Combine logical values, not strings.
+--- flagged.R
+x <- "a" & TRUE
+--- fixed.R
+x <- "a" == "a" & TRUE

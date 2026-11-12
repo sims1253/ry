@@ -689,7 +689,13 @@ pub(crate) fn guard_target(mut target: RType) -> RType {
         target.fn_sig = Some(Arc::new(sig));
     }
     if let Some(members) = &target.members {
-        target.members = Some(members.iter().cloned().map(guard_target).collect());
+        // Guarding can make two members' classes agree.
+        let members =
+            ry_core::types::merge_repeated_shapes(members.iter().cloned().map(guard_target));
+        if let [only] = members.as_slice() {
+            return only.clone();
+        }
+        target.members = Some(members.into());
     }
     if let Some(schema) = &target.columns {
         let mut schema = ColumnSchema::clone(schema);
@@ -806,7 +812,13 @@ pub(crate) fn refine_length_at_least(ty: &mut RType, min: usize) -> bool {
             refined_members.push(member);
         }
         if members_changed {
-            ty.members = Some(Arc::from(refined_members));
+            // A refined length can make two members' shapes agree.
+            let members = ry_core::types::merge_repeated_shapes(refined_members);
+            if let [only] = members.as_slice() {
+                *ty = only.clone();
+            } else {
+                ty.members = Some(Arc::from(members));
+            }
             changed = true;
         }
     }

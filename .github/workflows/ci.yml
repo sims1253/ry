@@ -5,11 +5,12 @@ on:
     branches: [main]
   pull_request:
 
-# A new push to a pull request cancels its older run. Runs on main are not
-# cancelled: every merged commit gets a complete run and saves the caches.
+# A new push to a pull request cancels its older run. Each push to main gets
+# its own group, so no main run is cancelled or replaced while pending: every
+# merged commit gets a complete run and saves the caches.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

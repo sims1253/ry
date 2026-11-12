@@ -930,3 +930,17 @@ expression: rows
       severity: error
 - case: the loop variable after a loop that may not run is quiet
   diagnostics: []
+- case: "a union stub return keeps its argument's length (#899)"
+  diagnostics:
+    - code: RY002
+      line: 1504
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+- case: "cumprod keeps its argument's length through a union return"
+  diagnostics:
+    - code: RY002
+      line: 1511
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+- case: a union stub return of a scalar argument stays quiet
+  diagnostics: []

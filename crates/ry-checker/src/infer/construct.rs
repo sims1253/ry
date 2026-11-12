@@ -988,12 +988,15 @@ impl Checker {
             }
             ReturnSpec::Concrete(c) => {
                 let mut integer_or_double = false;
+                let mut union_return = false;
                 let mode = if let Some(mode) = concrete_json_mode(&c.mode) {
                     mode
                 } else {
                     match JsonMode::parse(&c.mode) {
+                        // A union is built below, once the length is known.
                         Some(JsonMode::Union) => {
-                            return json_rtype_to_rtype(c);
+                            union_return = true;
+                            Mode::Opaque
                         }
                         // "double_or_int" follows the numeric data arguments.
                         // An `integer | double` result is built below, once
@@ -1083,6 +1086,9 @@ impl Checker {
                 .unwrap_or(length);
                 if integer_or_double {
                     return integer_or_double_type(length);
+                }
+                if union_return {
+                    return json_rtype_with_length(c, length);
                 }
                 let mut result = RType::new(mode, length);
                 if c.class.is_empty() && mode.is_unknown() {

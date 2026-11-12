@@ -452,7 +452,12 @@ pub(crate) fn json_length_to_length(spec: Option<JsonLength>) -> Length {
 }
 
 pub(crate) fn json_rtype_scalar(jt: &JsonRType) -> RType {
-    let length = json_length_to_length(JsonLength::parse(&jt.length));
+    json_rtype_with_length(jt, json_length_to_length(JsonLength::parse(&jt.length)))
+}
+
+/// `json_rtype_scalar` with a length the caller already resolved, such as
+/// a call's `arg0` length; a union gives it to every member.
+pub(crate) fn json_rtype_with_length(jt: &JsonRType, length: Length) -> RType {
     let scalar = |mode: Mode| {
         let class = if !jt.class.is_empty() {
             let refs: Vec<_> = jt.class.iter().map(String::as_str).collect();

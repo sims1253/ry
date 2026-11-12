@@ -33,6 +33,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- `round(x)`, `cumprod(x)`, `sqrt(x)` and the other base stubs that return
+  double or complex keep the length of `x` again, so `if (round(x) > 1)`
+  on a two-element `x` reports RY002 (#899).
 - Stop reporting RY000 for calls and subsets nested 43 to 49 deep, which
   GNU R parses. Argument and parameter lists no longer count toward ry's
   syntax nesting limit. Past the limit, a file within R's 49-bracket limit

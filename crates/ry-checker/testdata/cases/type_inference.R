@@ -1495,3 +1495,25 @@ last_match <- function(x) {
   for (i in seq_along(x)) if (x[[i]] > 0) break
   if (i == length(x)) "last" else switch(i, "first", "other")
 }
+
+## case: a union stub return keeps its argument's length (#899)
+# expect: RY002
+f <- function() {
+  x <- c(1.4, 2.6)
+  r <- round(x)
+  if (r > 1) "big"
+}
+
+## case: cumprod keeps its argument's length through a union return
+# expect: RY002
+f <- function() {
+  x <- c(1.4, 2.6)
+  if (cumprod(x) > 1) "big"
+}
+
+## case: a union stub return of a scalar argument stays quiet
+# no-diag
+f <- function() {
+  r <- round(1.4)
+  if (r > 1) "big"
+}

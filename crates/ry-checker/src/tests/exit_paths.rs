@@ -140,3 +140,17 @@ fn on_exit_writes_reach_return_paths_too() {
     let x = exit_type(&exits, "f", "x");
     assert!(admits(&x, Mode::Character), "{x:?}");
 }
+
+/// `return()` inside `evalq()` or `local(envir = environment())` leaves
+/// only the `eval` call, so the function keeps running (#897).
+#[test]
+fn returns_inside_same_frame_evaluators_do_not_end_the_function() {
+    let exits = function_exits(
+        "f <- function() { x <- 1L; local({ y <- \"a\"; return(y); NULL }, envir = environment()); x <- TRUE; x }\n\
+         g <- function() { x <- 1L; evalq({ return(\"a\") }); x <- TRUE; x }\n",
+    );
+    for function in ["f", "g"] {
+        let x = exit_type(&exits, function, "x");
+        assert_eq!(x.mode, Mode::Logical, "{function}: {x:?}");
+    }
+}

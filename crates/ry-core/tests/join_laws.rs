@@ -94,12 +94,15 @@ fn decorated() -> BoxedStrategy<RType> {
     .boxed()
 }
 
-/// Any type `join` can produce, including unions built by joining leaves.
+/// Any type `join` can produce, including unions built by joining leaves,
+/// and unions built directly, which may repeat a member's shape.
 fn rtype() -> BoxedStrategy<RType> {
     prop_oneof![
         3 => decorated(),
         1 => prop::collection::vec(decorated(), 2..5)
             .prop_map(|ts| ts.into_iter().reduce(RType::join).unwrap()),
+        1 => prop::collection::vec(decorated(), 2..4)
+            .prop_map(|ts| RType::union(Arc::from(ts))),
     ]
     .boxed()
 }

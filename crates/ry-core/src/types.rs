@@ -756,8 +756,7 @@ impl PartialEq for RType {
             && *value_facts == other.value_facts
             && match (members, &other.members) {
                 (Some(left), Some(right)) => {
-                    Arc::ptr_eq(left, right)
-                        || (left.len() == right.len() && left.iter().all(|m| right.contains(m)))
+                    Arc::ptr_eq(left, right) || pair_members_by(left, right, RType::eq).is_some()
                 }
                 (None, None) => true,
                 _ => false,
@@ -765,16 +764,33 @@ impl PartialEq for RType {
     }
 }
 
-/// For each member of `left`, the index of the member of `right` with the
-/// same shape. `union_of` merges members of the same shape, so a match is
-/// unique. `None` when the member lists do not pair up.
-fn pair_members(left: &[RType], right: &[RType]) -> Option<Vec<usize>> {
+/// For each member of `left`, the index of a distinct member of `right`
+/// that `matches` it, or `None` when the lists do not pair up one to one.
+/// `union_of` merges members of the same shape, but a union built another
+/// way can repeat one, so each right-hand member is used at most once.
+/// `matches` is an equivalence, so a greedy match finds a pairing whenever
+/// one exists.
+fn pair_members_by(
+    left: &[RType],
+    right: &[RType],
+    matches: impl Fn(&RType, &RType) -> bool,
+) -> Option<Vec<usize>> {
     if left.len() != right.len() {
         return None;
     }
+    let mut used = vec![false; right.len()];
     left.iter()
-        .map(|member| right.iter().position(|other| member.same_shape(other)))
+        .map(|member| {
+            let index = (0..right.len()).find(|&i| !used[i] && matches(member, &right[i]))?;
+            used[index] = true;
+            Some(index)
+        })
         .collect()
+}
+
+/// [`pair_members_by`] on shape, for `same_shape` and `merge_same_shape`.
+fn pair_members(left: &[RType], right: &[RType]) -> Option<Vec<usize>> {
+    pair_members_by(left, right, RType::same_shape)
 }
 
 /// Maximum number of distinct members in a union. Beyond this, `join`
@@ -1525,6 +1541,39 @@ impl RType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn double_with(value: f64) -> RType {
+        RType::scalar(Mode::Double).with_value_facts(ValueFacts::exact_number(value))
+    }
+
+    #[test]
+    fn union_equality_pairs_repeated_members_one_to_one() {
+        let double = RType::scalar(Mode::Double);
+        let character = RType::scalar(Mode::Character);
+        let repeated = RType::union(Arc::from(vec![double.clone(), double.clone()]));
+        let mixed = RType::union(Arc::from(vec![double, character]));
+        assert_ne!(repeated, mixed);
+        assert_ne!(mixed, repeated);
+    }
+
+    #[test]
+    fn join_with_repeated_union_shapes_is_commutative() {
+        let repeated = RType::union(Arc::from(vec![double_with(1.0), double_with(2.0)]));
+        let mixed = RType::union(Arc::from(vec![
+            double_with(3.0),
+            RType::scalar(Mode::Character),
+        ]));
+        let forward = repeated.clone().join(mixed.clone());
+        let reverse = mixed.join(repeated);
+        assert_eq!(forward, reverse);
+        assert!(
+            forward
+                .members
+                .as_ref()
+                .is_some_and(|members| members.iter().any(|m| m.mode == Mode::Character)),
+            "{forward}"
+        );
+    }
 
     #[test]
     fn arithmetic_operator_modes_and_empty_lengths() {

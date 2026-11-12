@@ -9,7 +9,9 @@ name: Known-gap budget
 # cannot be quietly retagged as a gap.
 #
 # This is its own workflow because it must rerun when a label changes, and
-# CI should not rebuild for that.
+# CI should not rebuild for that. For the same reason ci.yml's `Check` job
+# cannot wait for it, so the ruleset requires `Known-gap budget` by name
+# beside `Check`.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]

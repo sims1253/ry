@@ -112,7 +112,7 @@ jobs:
       - name: Run OpenCodeReview
         id: ocr
         continue-on-error: true
-        uses: alibaba/open-code-review@abb7abcd5c5196fa0278dc87db85780fa269562f # v1.13.5
+        uses: alibaba/open-code-review@891df1b63f380845d882a289a67a6e36c331120c # v1.13.6
         # Keep in sync with the retry step's inputs.
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
@@ -139,7 +139,7 @@ jobs:
       - name: Run OpenCodeReview (retry)
         id: ocr-retry
         if: success() && steps.ocr.outcome == 'failure'
-        uses: alibaba/open-code-review@abb7abcd5c5196fa0278dc87db85780fa269562f # v1.13.5
+        uses: alibaba/open-code-review@891df1b63f380845d882a289a67a6e36c331120c # v1.13.6
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}

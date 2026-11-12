@@ -542,10 +542,10 @@ fn tag_label(tag: &Tag) -> &'static str {
     }
 }
 
-/// The committed number of `known-gap` fixtures. The known-gap budget
-/// workflow fails a pull request that raises it, unless a maintainer adds
-/// the `known-gap-increase` label, so a failing fixture is not quietly
-/// retagged as a gap.
+/// Path to the file that holds the committed number of `known-gap` fixtures.
+/// The known-gap budget workflow fails a pull request that raises the
+/// number, unless a maintainer adds the `known-gap-increase` label, so a
+/// failing fixture is not quietly retagged as a gap.
 const KNOWN_GAP_BUDGET: &str = "tests/oracle-known-gaps.txt";
 
 /// Keeps the committed budget equal to the fixtures, so the budget cannot

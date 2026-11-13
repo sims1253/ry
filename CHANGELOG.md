@@ -54,6 +54,10 @@ All notable changes to ry are documented in this file.
   callbacks over 30 s. The existing three-level cap on nested closure
   signatures now also applies to literals assigned or passed to a call
   inside another literal (#893).
+- A nest of four or more callbacks keeps its result type again, so
+  `v <- sapply(1L, function(a) ... sapply(1L, function(d) "x")); v + 1L`
+  reports RY040. Each callback's diagnostic walk now supplies its return
+  type, so the closure-depth cap no longer applies to it (#896).
 - Report RY000 for syntax GNU R's `parse()` rejects but tree-sitter
   accepts: repeated formals (`function(x, x)`), two expressions on one
   line (`fjkdsfa 2`), a top-level dangling `else`, a `_` placeholder

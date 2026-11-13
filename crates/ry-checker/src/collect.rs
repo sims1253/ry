@@ -1219,16 +1219,7 @@ impl Checker {
         // return collection enabled. The discarding flag is set by the
         // caller (refine_fn_return runs inside the fixpoint which sets
         // discarding=true at the run_fixpoint entry).
-        self.walk_block(body_clone, &mut scope, Some(&mut returns));
-        // Trailing expression of a braced body is the implicit return.
-        // A trailing `Stmt::FunctionDef` is the implicit return value
-        // for the `function() { function() { 1L } }` shape;
-        // `trailing_return_type` handles both forms and attaches an
-        // inferred `fn_sig` when the trailing expression is itself a
-        // function literal (the closure-factory pattern).
-        if let Some(t) = self.trailing_return_type(body_clone, &mut scope, 0) {
-            returns.push(t);
-        }
+        self.walk_body_returns(body_clone, &mut scope, &mut returns, 0);
 
         // Fold the collected return types without an UNKNOWN identity:
         // join() treats Opaque as absorbing.

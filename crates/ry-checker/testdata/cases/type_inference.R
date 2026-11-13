@@ -1517,3 +1517,10 @@ f <- function() {
   r <- round(1.4)
   if (r > 1) "big"
 }
+
+## case: a deep callback nest keeps its return type
+# expect: RY040
+# Each callback level's type comes from its one diagnostic walk, so the
+# closure-depth cap does not drop the fourth level (#896).
+v <- sapply(1L, function(a) sapply(1L, function(b) sapply(1L, function(c) sapply(1L, function(d) "x"))))
+v + 1L

@@ -803,12 +803,17 @@ impl Checker {
     ///     (then/else); bindings leak into subsequent statements.
     ///   * Loop bodies are walked once (not to fixpoint).
     ///   * Indexed assignment (`x[i] <- v`) does not update the scope.
+    ///
+    /// Returns the value of a bare expression statement other than an
+    /// exit call, so a body's trailing expression need not be inferred
+    /// twice (#896). The caller checks `scope.unreachable` for an
+    /// expression that cannot finish.
     pub(crate) fn walk_stmt(
         &mut self,
         s: &Stmt,
         scope: &mut Scope,
         returns: Option<&mut Vec<RType>>,
-    ) {
+    ) -> Option<RType> {
         // Statement and expression walks recurse once per `else if` arm
         // and per nesting level.
         ry_core::stack::grow(|| self.walk_stmt_inner(s, scope, returns))
@@ -819,7 +824,7 @@ impl Checker {
         s: &Stmt,
         scope: &mut Scope,
         mut returns: Option<&mut Vec<RType>>,
-    ) {
+    ) -> Option<RType> {
         if scope.unreachable {
             // Function bodies remain independent analysis units even when
             // their definition is textually located in dead code. Walk the
@@ -837,7 +842,7 @@ impl Checker {
                 self.walk_stmt(s, scope, returns);
                 scope.unreachable = true;
             }
-            return;
+            return None;
         }
         match s {
             Stmt::Assign { target, value, .. } => {
@@ -1010,7 +1015,7 @@ impl Checker {
                     if let Some((pattern, value)) = pattern {
                         self.infer(value, scope);
                         bind_destructure_pattern(pattern, scope);
-                        return;
+                        return None;
                     }
                 }
                 // Detect `return(...)` / `invisible(...)` calls and collect
@@ -1040,7 +1045,7 @@ impl Checker {
                                 self.record_return_path(scope);
                                 scope.unreachable = true;
                             }
-                            return;
+                            return None;
                         }
                     }
                 }
@@ -1050,7 +1055,7 @@ impl Checker {
                 // like `x <- v` does (guard kill).
                 self.check_vacuous_all_stopifnot(e, scope);
                 self.note_vacuous_guard_assign_rebind(e, scope);
-                self.infer(e, scope);
+                return Some(self.infer(e, scope));
             }
             Stmt::If {
                 cond, then, else_, ..
@@ -1080,7 +1085,7 @@ impl Checker {
                         else_.as_deref(),
                         returns,
                     );
-                    return;
+                    return None;
                 }
                 self.walk_journal_if(
                     scope,
@@ -1170,6 +1175,7 @@ impl Checker {
                 scope.unreachable = true;
             }
         }
+        None
     }
 
     /// Model the enclosing-scope type updates a function definition's
@@ -2866,20 +2872,44 @@ impl Checker {
         // are walked without splitting the scope (v1 approximation).
         let mut returns: Vec<RType> = Vec::new();
         let prev_depth = std::mem::replace(&mut self.closure_depth, depth + 1);
-        self.walk_block(body, &mut scope, Some(&mut returns));
-        // The trailing expression -- or a bare trailing function
-        // literal, the closure-factory pattern -- is the implicit
-        // return.
-        if let Some(t) = self.trailing_return_type(body, &mut scope, depth + 1) {
-            returns.push(t);
-        }
+        self.walk_body_returns(body, &mut scope, &mut returns, depth + 1);
         self.closure_depth = prev_depth;
         self.discarding = prev_discarding;
-        if returns.is_empty() {
-            return None;
+        known_join(returns)
+    }
+
+    /// Walk a function body, collecting its explicit `return(...)` /
+    /// `invisible(...)` types and then its implicit return (see
+    /// [`Checker::trailing_return_type`]) into `returns`.
+    ///
+    /// A trailing bare expression's value comes from its statement walk
+    /// instead of a second inference, which doubled the work per level of
+    /// nested callbacks and would repeat a diagnostic walk's reports
+    /// (#896).
+    pub(crate) fn walk_body_returns(
+        &mut self,
+        body: &[Stmt],
+        scope: &mut Scope,
+        returns: &mut Vec<RType>,
+        depth: usize,
+    ) {
+        #[cfg(test)]
+        {
+            self.block_walks += 1;
         }
-        let joined = join_all(returns.into_iter());
-        (!joined.mode.is_unknown()).then_some(joined)
+        let mut tail = None;
+        self.walk_block_with(body, |checker, statement, last| {
+            let value = checker.walk_stmt(statement, scope, Some(&mut *returns));
+            if last {
+                tail = value;
+            }
+        });
+        let implicit = match body.last() {
+            // An exit call's value is already in `returns`.
+            Some(Stmt::Expr(_)) => tail.filter(|_| !scope.unreachable),
+            _ => self.trailing_return_type(body, scope, depth),
+        };
+        returns.extend(implicit);
     }
 
     /// Extract the implicit return type of a function body's trailing
@@ -4999,4 +5029,14 @@ impl<'a> IfArm<'a> {
 enum IfWalk<'r> {
     Statement(Option<&'r mut Vec<RType>>),
     Value,
+}
+
+/// The join of a body's collected return types, or `None` when nothing
+/// contributes or the join is unknown.
+pub(crate) fn known_join(returns: Vec<RType>) -> Option<RType> {
+    if returns.is_empty() {
+        return None;
+    }
+    let joined = join_all(returns.into_iter());
+    (!joined.mode.is_unknown()).then_some(joined)
 }

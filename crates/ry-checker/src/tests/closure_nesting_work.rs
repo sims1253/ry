@@ -17,7 +17,7 @@ type Shape = fn(usize) -> String;
 /// timing anything.
 #[test]
 fn nested_closure_work_grows_linearly_with_depth() {
-    let shapes: [(&str, Shape, usize); 7] = [
+    let shapes: [(&str, Shape, usize); 8] = [
         (
             "assigned",
             |n| format!("{}1{}", "f <- function() { ".repeat(n), " }".repeat(n)),
@@ -83,6 +83,17 @@ fn nested_closure_work_grows_linearly_with_depth() {
             },
             2,
         ),
+        (
+            "sapply with if tails",
+            |n| {
+                format!(
+                    "{}1{}",
+                    "sapply(x, function(i) if (i) sapply(x, function(j) ".repeat(n),
+                    ") else 2)".repeat(n)
+                )
+            },
+            2,
+        ),
     ];
     for (name, shape, step) in shapes {
         let walks = [1, 2, 3].map(|k| block_walks(&shape(k * step)));
@@ -98,4 +109,18 @@ fn nested_closure_work_grows_linearly_with_depth() {
             3 * step
         );
     }
+}
+
+/// #896: a callback's trailing expression is inferred once, so callbacks
+/// need no depth cap and a deep nest keeps its return type.
+#[test]
+fn deep_callback_nest_keeps_return_type() {
+    let diags = check(
+        "v <- sapply(1L, function(a) sapply(1L, function(b) sapply(1L, function(c) sapply(1L, function(d) \"x\"))))\n\
+         v + 1L\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY040"),
+        "expected RY040 for character + integer, got {diags:?}"
+    );
 }

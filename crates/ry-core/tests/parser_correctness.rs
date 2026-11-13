@@ -1039,6 +1039,8 @@ fn r_parse_rejections_match_base_r() {
         format!("{{ {}}}", "if (a) 1; ".repeat(80)),
         format!("{{\n{}}}", "if (a) 1\n".repeat(80)),
         format!("{{\n{}}}", "if (a) 1 # ; c\n".repeat(80)),
+        // `parse(file = ...)` reads a lone CR as a line end.
+        format!("{{{}}}", "if (a) 1\r".repeat(48)),
         format!("f({}1)", "if (a) 1, ".repeat(80)),
         format!("{{{}}}", "if (a) {{ if (b) 1 }}\n".repeat(80)),
     ];

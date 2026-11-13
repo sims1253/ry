@@ -1596,7 +1596,8 @@ impl ContextStack {
         let text = &src[node.byte_range()];
         let ends_if = punctuation && matches!(text, ")" | "]" | "}" | "]]" | "," | "else");
         let mut newline = false;
-        for line in src[self.previous_end..node.start_byte()].split_inclusive('\n') {
+        // `parse(file = ...)` reads a lone CR as a line end too.
+        for line in src[self.previous_end..node.start_byte()].split_inclusive(['\n', '\r']) {
             // A gap holds no strings, so `#` starts a comment.
             let code = line.split('#').next().unwrap_or_default();
             for _ in code.matches(';') {
@@ -1605,7 +1606,7 @@ impl ContextStack {
                 }
                 self.end_if();
             }
-            newline |= line.ends_with('\n');
+            newline |= line.ends_with(['\n', '\r']);
         }
         // R drops a pending `if` itself before these tokens.
         if newline && !ends_if {

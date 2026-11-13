@@ -61,6 +61,11 @@ All notable changes to ry are documented in this file.
   (`'\q'`, `"\0"`), an exponent without digits (`1e`), and more than 49
   nested brackets. Two expressions on one line, a dangling `else`, and a
   misplaced `_` no longer also report RY010 on the misread tree (#841).
+- Report RY000 for three more inputs GNU R's `parse()` rejects: an unknown,
+  NUL, or `\u` escape inside a backticked name (`` `a\qb` ``), an octal
+  escape above `\377` (`"\400"`), and `if`s nested inside brackets past
+  R's lexer context stack, such as 25 nested `if (a) {` blocks in a
+  function body (#841).
 - Stop reporting RY000 for a native-pipe call to a special function that
   passes the `_` placeholder, such as `` x |> `+`(e1 = _, e2 = 1) ``,
   which R accepts.

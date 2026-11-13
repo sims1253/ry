@@ -372,3 +372,7 @@ expression: rows
       line: 831
       message: "variable `unbound_value` is not bound in this scope"
       severity: warning
+- case: "load() inside a returning local(envir = environment()) opens the search path (#897)"
+  diagnostics: []
+- case: "a function bound in a returning local(envir = environment()) hides the base stub (#897)"
+  diagnostics: []

@@ -110,6 +110,9 @@ All notable changes to ry are documented in this file.
   frame, and `on.exit(x <- v)` widens `x` in the function's scope-exit
   snapshot. `rm(x)` exports `x` as unknown rather than removing it, so a
   later read stays free of RY010 when other code rebinds the name (#867).
+- A `return()` inside `local(..., envir = environment())` no longer ends
+  the enclosing function's scope-exit facts. In GNU R it returns from the
+  `eval` call only, and the function keeps running (#897).
 ### Fixed
 
 - `sum(c(TRUE, FALSE))`, `sum(1:3)`, `abs(TRUE)`, `max(TRUE)` and

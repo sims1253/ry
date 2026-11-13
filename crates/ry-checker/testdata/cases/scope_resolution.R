@@ -830,3 +830,17 @@ f <- function() {
   x %<~% 1
   unbound_value
 }
+
+## case: load() inside a returning local(envir = environment()) opens the search path (#897)
+# no-diag
+f <- function(path) {
+  local({ load(path); return(NULL) }, envir = environment())
+  loaded_value
+}
+
+## case: a function bound in a returning local(envir = environment()) hides the base stub (#897)
+# no-diag
+f <- function() {
+  local({ length <- function(x) list(n = 1L); return(NULL) }, envir = environment())
+  length("a")$n + 1L
+}

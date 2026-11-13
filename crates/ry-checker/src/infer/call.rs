@@ -834,23 +834,9 @@ impl Checker {
             SpecialCallProvenance::Ordinary => return None,
             SpecialCallProvenance::Unknown | SpecialCallProvenance::AmbientUncertainty => {
                 // The callee may force arguments in the caller or evaluate
-                // them in a child. Only names written by the arguments lose
-                // their caller-side value facts.
-                let mut child = scope.function_execution_scope();
-                let mark = child.begin_snapshot();
-                for argument in args {
-                    self.infer(&argument.value, &mut child);
-                }
-                let delta = child.finish_snapshot(mark, Default::default());
-                scope.uncertainty.effects |= delta.uncertainty.effects;
-                if delta.data_mask_env_unknown {
-                    scope.invalidate_data_mask_env();
-                }
-                for name in delta.changed.into_keys() {
-                    scope.insert(name.clone(), RType::unknown());
-                    scope.possible_block_writes.insert(name);
-                }
-                return Some(RType::unknown());
+                // them in a child.
+                let arguments = args.iter().map(|argument| &argument.value);
+                return Some(self.infer_writes_opaquely(arguments, true, scope));
             }
             SpecialCallProvenance::Proven => {}
         }
@@ -869,6 +855,12 @@ impl Checker {
                     && self.resolves_to_base(&name, scope)));
             self.infer(value, scope);
             if caller_environment {
+                // `return()` here leaves only the `eval` behind `local()`
+                // (#897): the function goes on, so the return is neither
+                // its exit nor the end of its reachable code.
+                if calls_return(block) {
+                    return Some(self.infer_writes_opaquely([block], false, scope));
+                }
                 return Some(self.infer(block, scope));
             }
             // An explicit environment can have unrelated bindings and parents.
@@ -887,6 +879,38 @@ impl Checker {
         // collector prunes.
         index::superassignment_writes_in_expr(block).apply(scope);
         Some(result)
+    }
+
+    /// Walk `expressions` in a child frame. Only the names they write lose
+    /// their caller-side value facts. With `unproven_callee`, the callee may
+    /// not run them in the caller at all, so each write is only a possible
+    /// binding that cannot hide a same-named stub (#722).
+    fn infer_writes_opaquely<'e>(
+        &mut self,
+        expressions: impl IntoIterator<Item = &'e Expr>,
+        unproven_callee: bool,
+        scope: &mut Scope,
+    ) -> RType {
+        let mut child = scope.function_execution_scope();
+        let mark = child.begin_snapshot();
+        for expression in expressions {
+            self.infer(expression, &mut child);
+        }
+        // `finish_snapshot` restores the flag, and `load()` may have set it.
+        let search_path_unknown = child.search_path_unknown;
+        let delta = child.finish_snapshot(mark, Default::default());
+        scope.uncertainty.effects |= delta.uncertainty.effects;
+        scope.search_path_unknown |= search_path_unknown;
+        if delta.data_mask_env_unknown {
+            scope.invalidate_data_mask_env();
+        }
+        for name in delta.changed.into_keys() {
+            scope.insert(name.clone(), RType::unknown());
+            if unproven_callee {
+                scope.possible_block_writes.insert(name);
+            }
+        }
+        RType::unknown()
     }
 
     /// testthat's block verbs — `test_that(desc, code)` plus the
@@ -4062,4 +4086,23 @@ fn assertion_is_provenanced(signature: &FunctionSig, assertion: &AssertionSpec) 
                     .iter()
                     .any(|param| param.name == *fingerprint)
             })
+}
+
+/// Whether `expression` calls `return()` outside a nested function.
+fn calls_return(expression: &Expr) -> bool {
+    let policy = Walk {
+        fn_bodies: false,
+        ..Walk::ALL
+    };
+    walk_expr(expression, policy, |node, _| match node {
+        AstNode::Stmt(Stmt::Return { .. }) => ControlFlow::Break(()),
+        AstNode::Expr(Expr::Call { func, .. })
+            if ident_name(func)
+                .is_some_and(|name| crate::semantic_lists::bare_name(name) == "return") =>
+        {
+            ControlFlow::Break(())
+        }
+        _ => ControlFlow::Continue(Descend::Into),
+    })
+    .is_break()
 }

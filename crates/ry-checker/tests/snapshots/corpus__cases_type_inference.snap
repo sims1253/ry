@@ -944,3 +944,9 @@ expression: rows
       severity: warning
 - case: a union stub return of a scalar argument stays quiet
   diagnostics: []
+- case: a deep callback nest keeps its return type
+  diagnostics:
+    - code: RY040
+      line: 1526
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error

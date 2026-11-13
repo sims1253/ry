@@ -127,10 +127,15 @@ impl Checker {
             None
         };
         let forwarded_dots = args.iter().any(|argument| self.is_forwarded_dots(argument));
-        // Diagnostics only: a discarding walk would emit nothing from it.
-        if !self.discarding {
-            self.walk_callback_for_diagnostics(signature, args, arg_types, scope);
-        }
+        // A discarding walk would emit nothing from it. Its return type
+        // stands in for a second, discarding walk of the same literal,
+        // which made each level of a callback nest walk all deeper levels
+        // again (#896).
+        let walked_return = if self.discarding {
+            None
+        } else {
+            self.walk_callback_for_diagnostics(signature, args, arg_types, scope)
+        };
         // A fold's initializer describes only the first invocation. Later
         // accumulators are callback results, and zero iterations return the
         // initializer/input directly. Neither one invocation nor an input
@@ -163,6 +168,7 @@ impl Checker {
             scope,
             span,
             simplify,
+            walked_return,
         ))
     }
 
@@ -183,6 +189,7 @@ impl Checker {
         scope: &Scope,
         span: Span,
         simplify: Option<bool>,
+        walked_return: Option<Option<RType>>,
     ) -> RType {
         let inputs = self.higher_order_input_types(spec, arg_types, argument_match);
         let callback_runs = !inputs.is_empty()
@@ -192,9 +199,13 @@ impl Checker {
         let callback_types = inputs.iter().map(RType::element).collect::<Vec<_>>();
         let callback = argument_bound_to_formal(args, argument_match, spec.callback_position)
             .map(|argument| &argument.value);
-        let callback_return = callback
-            .filter(|_| callback_runs)
-            .and_then(|callback| self.callback_return_type(callback, &callback_types, scope));
+        let callback_return =
+            callback
+                .filter(|_| callback_runs)
+                .and_then(|callback| match walked_return {
+                    Some(walked) => walked,
+                    None => self.callback_return_type(callback, &callback_types, scope),
+                });
         if let Some(target) = spec
             .callback_return_mode
             .as_deref()
@@ -657,22 +668,20 @@ impl Checker {
     /// For each callback (inline anonymous function literal), we build
     /// a scope with the callback's params bound to the element types
     /// the higher-order function will pass, then walk the body's
-    /// statements via `walk_block` (which emits diagnostics). Named
-    /// callbacks (user-fn, typeshed) don't need this: their bodies are
-    /// walked during the user-fn fixpoint or are built-in.
+    /// statements via `walk_body_returns` (which emits diagnostics) and
+    /// return `Some` of the literal's return type. Named callbacks
+    /// (user-fn, typeshed) don't need this: their bodies are walked
+    /// during the user-fn fixpoint or are built-in.
     fn walk_callback_for_diagnostics(
         &mut self,
         signature: &FunctionSig,
         args: &[Arg],
         arg_types: &[RType],
         scope: &mut Scope,
-    ) {
-        let spec = match signature.higher_order.as_ref() {
-            Some(spec) => spec,
-            None => return,
-        };
+    ) -> Option<Option<RType>> {
+        let spec = signature.higher_order.as_ref()?;
         if matches!(spec.result.kind, HigherOrderResultKind::CallbackIdentity) {
-            return;
+            return None;
         }
         let argument_match = match_params(&signature.params, args);
         let inputs = if spec.callback_args == [CallbackArg::AccumulatorAndElement] {
@@ -685,13 +694,10 @@ impl Checker {
                 matches!(ty.length, Length::Zero | Length::Known(0)) || ty.mode == Mode::Function
             })
         {
-            return;
+            return None;
         }
         let elem_types = inputs.iter().map(RType::element).collect::<Vec<_>>();
-        let cb = match argument_bound_to_formal(args, &argument_match, spec.callback_position) {
-            Some(argument) => &argument.value,
-            None => return,
-        };
+        let cb = &argument_bound_to_formal(args, &argument_match, spec.callback_position)?.value;
         // Look through a `purrr::in_parallel(.f)` wrapper so the inner
         // function's body is walked (in_parallel is type-transparent).
         let cb = self.unwrap_callback_identity(cb);
@@ -701,8 +707,11 @@ impl Checker {
                 let t = elem_types.get(i).cloned().unwrap_or(RType::unknown());
                 fn_scope.insert(p.name.clone(), t);
             }
-            self.walk_block(body, &mut fn_scope, None);
+            let mut returns = Vec::new();
+            self.walk_body_returns(body, &mut fn_scope, &mut returns, 0);
+            return Some(known_join(returns));
         }
+        None
     }
 
     /// Try S3 dispatch for a known generic. Returns `Some(rt)` if a

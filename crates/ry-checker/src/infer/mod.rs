@@ -1561,7 +1561,7 @@ impl Checker {
     /// and does not qualify. A stub that omits `na` has not claimed
     /// the value is NA-free, so it does not qualify either.
     ///
-    /// `sum` declares a `double_or_int` return, so its count idiom
+    /// `sum` declares an `input_mode` return, so its count idiom
     /// (`if (sum(x > 0))`) is recognized by argument shape instead: a
     /// logical-typed name, a comparison, or an `is.*` predicate.
     /// Negation (`if (!length(x))`) is out of scope: it is typed through

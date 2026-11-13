@@ -94,10 +94,10 @@ use ry_core::Span;
 use ry_core::ast::*;
 use ry_core::types::{ClassVector, ColumnSchema, FunctionSignature, Length, Mode, RType};
 use ry_typeshed::{
-    AssertionProvenanceKind, AssertionSpec, CallbackArg, ConditionalScopeEffect,
+    AssertionProvenanceKind, AssertionSpec, AtomicMode, CallbackArg, ConditionalScopeEffect,
     DefaultCurrentScope, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
-    InjectionMode, JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot,
-    ReturnSpec, SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages,
+    InjectionMode, JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnModeSpec,
+    ReturnSlot, ReturnSpec, SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages,
     load_base_cached, package_has_injects, package_has_s3_methods, package_stub,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};

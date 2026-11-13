@@ -18,6 +18,14 @@ All notable changes to ry are documented in this file.
   and `colnames()` may be `NULL`, `dim()`, `nrow()` and `ncol()` make no
   claim, `table()`, `proc.time()`, `ordered()`, `interaction()` and
   `dist()` declare their classes, and more stubs allow `NA` (#866).
+- Typeshed stubs can declare `return_mode: {"kind": "input_mode", ...}`:
+  the result mode follows the data arguments' mode through a table, as
+  in R. The vendored base stubs use it for `sum()`, `abs()`, `max()`,
+  `range()`, `pmax()` and seven more, so `sum()` of complex is complex,
+  `max("a", "b")` is character, and `max(integer(0))` is double.
+  `pmax()` of logical data makes no claim, since R returns logical for
+  one argument and integer for two. The undefined `double_or_int` mode
+  is gone (sims1253/r-typeshed#125, #866).
 - The release workflow now starts each release binary on the runner type
   that built it, and a binary that fails blocks the release: `ry --version`
   must report the workspace version and `ry check` must report RY040 on a

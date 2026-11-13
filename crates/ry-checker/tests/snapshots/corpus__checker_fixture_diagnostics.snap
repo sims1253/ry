@@ -2867,6 +2867,16 @@ expression: snapshots
         start: 74
   fixture: ry020_unary_minus.R
 - diagnostics:
+    - code: RY020
+      message: "cannot apply unary `+` to `character`"
+      severity: error
+      span:
+        column: 5
+        end: 84
+        line: 2
+        start: 80
+  fixture: ry020_unary_plus.R
+- diagnostics:
     - code: RY021
       message: "cannot apply `!` to `character`"
       severity: error

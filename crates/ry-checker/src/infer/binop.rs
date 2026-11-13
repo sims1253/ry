@@ -468,10 +468,7 @@ impl Checker {
         result_mode: Mode,
         scope: &Scope,
     ) -> Option<ClassVector> {
-        let symbol = match op {
-            UnaryOpKind::Neg => "-",
-            UnaryOpKind::Not => "!",
-        };
+        let symbol = op.symbol();
         if result_mode.is_unknown() {
             return None;
         }
@@ -497,10 +494,7 @@ impl Checker {
         op: UnaryOpKind,
         operand: &RType,
     ) -> Option<RType> {
-        let symbol = match op {
-            UnaryOpKind::Neg => "-",
-            UnaryOpKind::Not => "!",
-        };
+        let symbol = op.symbol();
         self.s3_dispatch_on_operand(symbol, &[operand], operand)
     }
 

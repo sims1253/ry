@@ -366,3 +366,52 @@ fn unary_ops_with_a_base_method_export_an_unknown_class() {
         assert!(!result.class.export_known(), "{source}: {result:?}");
     }
 }
+
+#[test]
+fn unary_plus_follows_the_unary_minus_rule() {
+    // R's unary `+` is an arithmetic primitive with `Ops` dispatch (#891):
+    // logical becomes integer, the class stays only when the mode stays.
+    let foo = ClassVector::single("foo");
+    for (expr, mode, class) in [
+        ("+TRUE", Mode::Integer, ClassVector::empty()),
+        (
+            "+structure(TRUE, class = 'foo')",
+            Mode::Integer,
+            ClassVector::empty(),
+        ),
+        ("+structure(1, class = 'foo')", Mode::Double, foo.clone()),
+        ("+1", Mode::Double, ClassVector::empty()),
+    ] {
+        let source = format!("out <- {expr}");
+        let (diagnostics, scope) = check_with_scope(&source);
+        let result = scope.get("out").unwrap();
+        assert_eq!((result.mode, &result.class), (mode, &class), "{source}");
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+    // A method decides the result: `Ops.factor` warns and returns `NA`,
+    // and neither a project `Ops.qux` nor `Ops.Date` exports the operand's
+    // type.
+    let (diagnostics, scope) = check_with_scope("out <- +factor('a')");
+    assert_eq!(scope.get("out").unwrap().mode, Mode::Logical);
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY042"),
+        "{diagnostics:?}"
+    );
+    let (_, scope) = check_with_scope(
+        "Ops.qux <- function(e1, e2) 'custom'\nout <- +structure(1, class = 'qux')",
+    );
+    let result = scope.get("out").unwrap();
+    assert!(
+        result.mode != Mode::Double && !result.class.export_known(),
+        "{result:?}"
+    );
+    let (_, scope) = check_with_scope("out <- +Sys.Date()");
+    assert!(!scope.get("out").unwrap().class.export_known());
+    let (diagnostics, _) = check_with_scope("out <- +'a'");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "RY020" && d.message == "cannot apply unary `+` to `character`"),
+        "{diagnostics:?}"
+    );
+}

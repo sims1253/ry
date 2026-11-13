@@ -33,8 +33,9 @@ pub enum Mode {
     /// attach a class), so an environment's class is never proven empty.
     Environment,
     /// A symbol or call: `is.language()` minus expression vectors, including
-    /// formulas. One variant on purpose: the parser drops `(` and unary `+`,
-    /// so syntax cannot always tell `typeof()` "symbol" from "language".
+    /// formulas. One variant on purpose: the parser drops `(` and `+` over a
+    /// numeric literal, so syntax cannot always tell `typeof()` "symbol" from
+    /// "language".
     Language,
     /// Inference gave up: the value may be any R value. Ask the predicates
     /// below instead of matching this variant.

@@ -95,8 +95,8 @@ fn unary_call_callee(expr: &Expr) -> Option<(&str, &Expr)> {
 /// The value of a numeric literal, with a leading unary minus folded so
 /// `-1` reads as the value -1. Only a literal operand folds: R's unary
 /// minus binds looser than `^`, so `-2^2` is `-(2^2)` and stays opaque.
-/// Unary `+` needs no case here — the parser drops it entirely, so `+2`
-/// lowers to the bare `Integer`/`Double` literal.
+/// Unary `+` needs no case here: the parser folds it over a numeric
+/// literal, so `+2` lowers to the bare `Integer`/`Double` literal.
 pub(crate) fn numeric_literal(expr: &Expr) -> Option<f64> {
     match expr {
         Expr::Integer(value, _) => Some(*value as f64),
@@ -739,10 +739,7 @@ impl Checker {
     }
 
     fn scalar_call_unary_operator_is_base(&self, op: UnaryOpKind, scope: &Scope) -> bool {
-        let symbol = match op {
-            UnaryOpKind::Neg => "-",
-            UnaryOpKind::Not => "!",
-        };
+        let symbol = op.symbol();
         self.scalar_call_operator_is_base(symbol, scope)
     }
 

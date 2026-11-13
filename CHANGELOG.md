@@ -56,6 +56,10 @@ All notable changes to ry are documented in this file.
   and drop the class. `dump-facts` reports the class as unknown where a
   base `Ops` method decides it (`-Sys.Date()`, `!factor("a")`), and
   `!` on a raw vector is raw (#890).
+- Unary `+` follows the same rule instead of returning its operand
+  unchanged: `+TRUE` is an integer, `+factor("a")` warns (RY042), an
+  `Ops` method decides `+x` for a classed `x`, and `+"a"` reports RY020
+  (#891).
 - Check nested function literals in time linear in their depth. Each
   level used to multiply the work by 2 to 5, so 20 nested
   `f <- function() { ... }` levels took 5 s and 12 nested `lapply()`

@@ -1638,10 +1638,7 @@ impl Checker {
                 op, expr: inner, ..
             } => {
                 let mode = self.proven_na_scalar_mode_at(inner, scope, depth + 1)?;
-                let symbol = match op {
-                    UnaryOpKind::Not => "!",
-                    UnaryOpKind::Neg => "-",
-                };
+                let symbol = op.symbol();
                 if scope.uncertainty.ops_environment
                     || ops_chooser::operator_rebound(self, symbol, scope)
                 {
@@ -1653,7 +1650,7 @@ impl Checker {
                     {
                         Some(Mode::Logical)
                     }
-                    UnaryOpKind::Neg
+                    UnaryOpKind::Neg | UnaryOpKind::Pos
                         if matches!(
                             mode,
                             Mode::Logical | Mode::Integer | Mode::Double | Mode::Complex
@@ -4632,10 +4629,7 @@ impl Checker {
                 )
             }
             Expr::UnaryOp { op, expr, span } => {
-                let symbol = match op {
-                    UnaryOpKind::Neg => "-",
-                    UnaryOpKind::Not => "!",
-                };
+                let symbol = op.symbol();
                 let masked = self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope);
                 if !self.resolves_to_base(symbol, scope) || masked {
                     // Unary lookup is executable too. A masked operator may
@@ -4678,11 +4672,11 @@ impl Checker {
                 if let Some(dispatched) = self.try_s3_unary_dispatch(*op, &t) {
                     return dispatched;
                 }
-                if matches!(op, UnaryOpKind::Neg) && t.class.contains("factor") {
+                if !matches!(op, UnaryOpKind::Not) && t.class.contains("factor") {
                     return self.infer_factor_arithmetic(&t, None, *span);
                 }
                 match op {
-                    UnaryOpKind::Neg => {
+                    UnaryOpKind::Neg | UnaryOpKind::Pos => {
                         if matches!(
                             t.mode,
                             Mode::Character | Mode::Raw | Mode::List | Mode::Function
@@ -4692,16 +4686,13 @@ impl Checker {
                             // drop (issue #367). Receivers that are provably
                             // base objects still error, and the diagnostic is
                             // unaffected outside subscripts.
-                            if !select_subscript_form(
-                                scope.select_subscript.as_ref(),
-                                UnaryOpKind::Neg,
-                                t.mode,
-                            ) {
+                            if !select_subscript_form(scope.select_subscript.as_ref(), *op, t.mode)
+                            {
                                 self.emit(
                                     Severity::Error,
                                     *span,
                                     "RY020",
-                                    format!("cannot apply unary `-` to `{}`", t.mode),
+                                    format!("cannot apply unary `{symbol}` to `{}`", t.mode),
                                 );
                             }
                             RType::unknown()
@@ -4715,13 +4706,15 @@ impl Checker {
                             };
                             let mut result = RType::new(mode, t.length);
                             result.value_facts = t.value_facts;
-                            result.value_facts.numeric_bounds =
-                                t.value_facts.numeric_bounds.map(|(lo, hi)| {
-                                    (
-                                        (-f64::from_bits(hi)).to_bits(),
-                                        (-f64::from_bits(lo)).to_bits(),
-                                    )
-                                });
+                            if matches!(op, UnaryOpKind::Neg) {
+                                result.value_facts.numeric_bounds =
+                                    t.value_facts.numeric_bounds.map(|(lo, hi)| {
+                                        (
+                                            (-f64::from_bits(hi)).to_bits(),
+                                            (-f64::from_bits(lo)).to_bits(),
+                                        )
+                                    });
+                            }
                             if let Some(class) = self.unary_fallback_class(*op, &t, mode, scope) {
                                 result.class = class;
                             }

@@ -134,8 +134,6 @@ All notable changes to ry are documented in this file.
 - A `return()` inside `local(..., envir = environment())` no longer ends
   the enclosing function's scope-exit facts. In GNU R it returns from the
   `eval` call only, and the function keeps running (#897).
-### Fixed
-
 - `sum(c(TRUE, FALSE))`, `sum(1:3)`, `abs(TRUE)`, `max(TRUE)` and
   `seq(1, 10)` are integer, as in R; all were double. A `double_or_int`
   return follows every data argument: any double makes it double, and

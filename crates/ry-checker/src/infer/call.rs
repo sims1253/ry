@@ -835,7 +835,8 @@ impl Checker {
             SpecialCallProvenance::Unknown | SpecialCallProvenance::AmbientUncertainty => {
                 // The callee may force arguments in the caller or evaluate
                 // them in a child.
-                return Some(self.infer_writes_opaquely(args.iter().map(|a| &a.value), scope));
+                let arguments = args.iter().map(|argument| &argument.value);
+                return Some(self.infer_writes_opaquely(arguments, true, scope));
             }
             SpecialCallProvenance::Proven => {}
         }
@@ -858,7 +859,7 @@ impl Checker {
                 // (#897): the function goes on, so the return is neither
                 // its exit nor the end of its reachable code.
                 if calls_return(block) {
-                    return Some(self.infer_writes_opaquely([block], scope));
+                    return Some(self.infer_writes_opaquely([block], false, scope));
                 }
                 return Some(self.infer(block, scope));
             }
@@ -881,10 +882,13 @@ impl Checker {
     }
 
     /// Walk `expressions` in a child frame. Only the names they write lose
-    /// their caller-side value facts.
+    /// their caller-side value facts. With `unproven_callee`, the callee may
+    /// not run them in the caller at all, so each write is only a possible
+    /// binding that cannot hide a same-named stub (#722).
     fn infer_writes_opaquely<'e>(
         &mut self,
         expressions: impl IntoIterator<Item = &'e Expr>,
+        unproven_callee: bool,
         scope: &mut Scope,
     ) -> RType {
         let mut child = scope.function_execution_scope();
@@ -892,14 +896,19 @@ impl Checker {
         for expression in expressions {
             self.infer(expression, &mut child);
         }
+        // `finish_snapshot` restores the flag, and `load()` may have set it.
+        let search_path_unknown = child.search_path_unknown;
         let delta = child.finish_snapshot(mark, Default::default());
         scope.uncertainty.effects |= delta.uncertainty.effects;
+        scope.search_path_unknown |= search_path_unknown;
         if delta.data_mask_env_unknown {
             scope.invalidate_data_mask_env();
         }
         for name in delta.changed.into_keys() {
             scope.insert(name.clone(), RType::unknown());
-            scope.possible_block_writes.insert(name);
+            if unproven_callee {
+                scope.possible_block_writes.insert(name);
+            }
         }
         RType::unknown()
     }

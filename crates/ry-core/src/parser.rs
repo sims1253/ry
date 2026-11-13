@@ -632,7 +632,7 @@ impl RParser {
         let span = self.span(n);
         let op = match op_text.as_str() {
             "-" => UnaryOpKind::Neg,
-            "+" => return Some(expr),
+            "+" => UnaryOpKind::Pos,
             "!" => UnaryOpKind::Not,
             _ => return Some(Expr::Unknown(span)),
         };

@@ -582,7 +582,19 @@ impl BinOpKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOpKind {
     Neg,
+    /// Unary `+`: an arithmetic primitive with `Ops` dispatch, not a no-op.
+    Pos,
     Not,
+}
+
+impl UnaryOpKind {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Neg => "-",
+            Self::Pos => "+",
+            Self::Not => "!",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

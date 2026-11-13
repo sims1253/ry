@@ -388,7 +388,7 @@ expression: rows
   diagnostics:
     - code: RY107
       line: 487
-      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > 2)`"
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > +2)`"
       severity: warning
 - case: "RY107: plus over a parameter is silent"
   diagnostics: []

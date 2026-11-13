@@ -52,7 +52,7 @@ fn quoted_language(args: &[Arg]) -> Option<RType> {
         return None;
     }
     let length = match &arg.value {
-        // The parser drops `(` and unary `+`, which build calls: only an
+        // The parser drops `(`, which builds a call: only an
         // argument spelled as the bare symbol is proven length one.
         Expr::Ident { span, .. } if arg.name.is_none() && arg.span == *span => Length::One,
         Expr::Ident { .. }

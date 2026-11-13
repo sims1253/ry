@@ -632,6 +632,10 @@ impl RParser {
         let span = self.span(n);
         let op = match op_text.as_str() {
             "-" => UnaryOpKind::Neg,
+            // `+` over a numeric literal is that literal: same value and
+            // type, and a classless literal never dispatches `Ops`. Folding
+            // it keeps every literal proof `2` has (`x[+2]`, `switch(+2L)`).
+            "+" if matches!(expr, Expr::Integer(..) | Expr::Double(..)) => return Some(expr),
             "+" => UnaryOpKind::Pos,
             "!" => UnaryOpKind::Not,
             _ => return Some(Expr::Unknown(span)),
@@ -2671,6 +2675,35 @@ mod tests {
                 );
             }
             other => panic!("expected UnaryOp(Neg, Double), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unary_plus_folds_only_over_numeric_literals() {
+        // `+2L` is the literal 2L, but `+TRUE` and `+x` coerce or dispatch
+        // in R, so they keep the operator (#891).
+        let f = parse("+2L\n+2.5\n+TRUE\n+x\n");
+        assert!(
+            matches!(f.stmts[0], Stmt::Expr(Expr::Integer(2, _))),
+            "{:?}",
+            f.stmts[0]
+        );
+        assert!(
+            matches!(f.stmts[1], Stmt::Expr(Expr::Double(..))),
+            "{:?}",
+            f.stmts[1]
+        );
+        for stmt in &f.stmts[2..] {
+            assert!(
+                matches!(
+                    stmt,
+                    Stmt::Expr(Expr::UnaryOp {
+                        op: UnaryOpKind::Pos,
+                        ..
+                    })
+                ),
+                "{stmt:?}"
+            );
         }
     }
 

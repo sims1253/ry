@@ -318,7 +318,7 @@ if (length(sum(1L)) == 1) 1
 
 ## case: RY105: plus-spelled positive bound is silent
 # no-diag
-# A literal under unary `+` folds, so `+2` is the bound 2.
+# The parser folds unary `+` over a literal, so `+2` is the bound 2.
 if (length(sum(1L)) > +2) 1
 
 ## case: RY105: plus-spelled zero bound
@@ -483,7 +483,7 @@ f <- function(x) if (any(x) > 1 - 1) 1
 
 ## case: RY107: plus-spelled literal bound
 # expect: RY107
-# A literal under unary `+` folds, so `> +2` is the same comparison as `> 2`.
+# The parser folds unary `+` over a literal, so `> +2` is `> 2`.
 f <- function(x) if (any(x) > +2) 1
 
 ## case: RY107: plus over a parameter is silent

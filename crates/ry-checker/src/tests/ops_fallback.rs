@@ -407,4 +407,11 @@ fn unary_plus_follows_the_unary_minus_rule() {
     );
     let (_, scope) = check_with_scope("out <- +Sys.Date()");
     assert!(!scope.get("out").unwrap().class.export_known());
+    let (diagnostics, _) = check_with_scope("out <- +'a'");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "RY020" && d.message == "cannot apply unary `+` to `character`"),
+        "{diagnostics:?}"
+    );
 }

@@ -92,10 +92,11 @@ fn unary_call_callee(expr: &Expr) -> Option<(&str, &Expr)> {
     Some((name, &args[0].value))
 }
 
-/// The value of a numeric literal, with a leading unary sign folded so
-/// `-1` reads as the value -1 and `+2` as 2. Only a literal operand folds:
-/// R's unary minus binds looser than `^`, so `-2^2` is `-(2^2)` and stays
-/// opaque.
+/// The value of a numeric literal, with a leading unary minus folded so
+/// `-1` reads as the value -1. Only a literal operand folds: R's unary
+/// minus binds looser than `^`, so `-2^2` is `-(2^2)` and stays opaque.
+/// Unary `+` needs no case here: the parser folds it over a numeric
+/// literal, so `+2` lowers to the bare `Integer`/`Double` literal.
 pub(crate) fn numeric_literal(expr: &Expr) -> Option<f64> {
     match expr {
         Expr::Integer(value, _) => Some(*value as f64),
@@ -105,11 +106,6 @@ pub(crate) fn numeric_literal(expr: &Expr) -> Option<f64> {
             expr,
             ..
         } => numeric_literal(expr).map(|value| -value),
-        Expr::UnaryOp {
-            op: UnaryOpKind::Pos,
-            expr,
-            ..
-        } => numeric_literal(expr),
         _ => None,
     }
 }

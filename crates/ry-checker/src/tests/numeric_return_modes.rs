@@ -25,47 +25,86 @@ const DOUBLE: &[Mode] = &[Mode::Double];
 const INTEGER_OR_DOUBLE: &[Mode] = &[Mode::Double, Mode::Integer];
 const UNKNOWN: &[Mode] = &[Mode::Opaque];
 
-/// `double_or_int` returns follow every data argument, checked against
-/// GNU R 4.6.1 (`testdata/oracle/double_or_int_and_seq_modes.R`). Before
-/// #866, logical input and anything `...` absorbed ahead of `na.rm`
-/// (`sum`) read as double, and `max("a", "b")` claimed double.
+const COMPLEX: &[Mode] = &[Mode::Complex];
+const CHARACTER: &[Mode] = &[Mode::Character];
+
+/// `input_mode` returns follow the data arguments' mode, one row per
+/// stub and one column per input mode, checked against GNU R 4.6.2
+/// (`testdata/oracle/input_mode_and_seq_modes.R`). Cells where R errors
+/// leave the result unknown. Before #866, logical input read as double;
+/// before r-typeshed#125, `sum(1i)` read as double, `max("a")` as
+/// unknown, and `pmax(c(TRUE, FALSE))` as integer (R: logical, but
+/// `pmax(TRUE, FALSE)` is integer, so the rule makes no claim).
 #[test]
-fn double_or_int_follows_the_data_arguments() {
+fn input_mode_follows_each_input_mode() {
+    let inputs = [
+        "c(TRUE, FALSE)",
+        "1:2",
+        "c(1.5, 2)",
+        "complex(real = 1:2, imaginary = 1)",
+        "c(\"1\", \"2\")",
+    ];
+    for (call, row) in [
+        ("sum", [INTEGER, INTEGER, DOUBLE, COMPLEX, UNKNOWN]),
+        ("cumsum", [INTEGER, INTEGER, DOUBLE, COMPLEX, DOUBLE]),
+        ("diff", [INTEGER, INTEGER, DOUBLE, COMPLEX, UNKNOWN]),
+        ("abs", [INTEGER, INTEGER, DOUBLE, DOUBLE, UNKNOWN]),
+        ("cummax", [INTEGER, INTEGER, DOUBLE, UNKNOWN, DOUBLE]),
+        ("cummin", [INTEGER, INTEGER, DOUBLE, UNKNOWN, DOUBLE]),
+        ("max", [INTEGER, INTEGER, DOUBLE, UNKNOWN, CHARACTER]),
+        ("min", [INTEGER, INTEGER, DOUBLE, UNKNOWN, CHARACTER]),
+        ("range", [INTEGER, INTEGER, DOUBLE, UNKNOWN, CHARACTER]),
+        ("pmax", [UNKNOWN, INTEGER, DOUBLE, UNKNOWN, CHARACTER]),
+        ("pmin", [UNKNOWN, INTEGER, DOUBLE, UNKNOWN, CHARACTER]),
+        ("rowsum", [UNKNOWN, INTEGER, DOUBLE, UNKNOWN, UNKNOWN]),
+    ] {
+        for (input, expected) in inputs.iter().zip(row) {
+            let src = if call == "rowsum" {
+                format!("x <- rowsum({input}, c(1, 1))")
+            } else {
+                format!("x <- {call}({input})")
+            };
+            assert_eq!(mode_of(&src), expected, "`{src}`");
+        }
+    }
+}
+
+/// The data join on R's coercion ladder and skip `na.rm`; empty data
+/// makes `max`, `min` and `range` double, as their `-Inf`/`Inf` needs.
+#[test]
+fn input_mode_joins_the_data_arguments() {
     for (src, expected) in [
-        ("x <- sum(c(TRUE, FALSE))", INTEGER),
-        ("x <- sum(1:3)", INTEGER),
         ("x <- sum(1:3, na.rm = TRUE)", INTEGER),
-        ("x <- abs(TRUE)", INTEGER),
-        ("x <- max(TRUE)", INTEGER),
-        ("x <- cumsum(c(TRUE, FALSE))", INTEGER),
-        ("x <- max(c(TRUE, NA), na.rm = TRUE)", INTEGER),
-        ("x <- sum(1.5)", DOUBLE),
         ("x <- max(1L, 2.5)", DOUBLE),
         ("x <- max(2.5, 1L)", DOUBLE),
-        // R: character for max/min/range, an error for sum and abs.
-        ("x <- max(\"a\", \"b\")", UNKNOWN),
-        ("x <- min(\"a\")", UNKNOWN),
-        ("x <- range(c(\"a\", \"b\"))", UNKNOWN),
-        ("x <- max(1.5, \"a\")", UNKNOWN),
+        ("x <- max(TRUE, \"a\")", CHARACTER),
+        ("x <- sum(TRUE, complex(real = 1, imaginary = 1))", COMPLEX),
+        ("x <- pmax(TRUE, 2L)", INTEGER),
+        ("x <- max(1.5, \"a\")", CHARACTER),
+        ("x <- sum(1L, \"a\")", UNKNOWN),
+        // R: `max(integer(0))` is `-Inf`, `max(character(0))` is character.
+        ("x <- max(integer(0))", DOUBLE),
+        ("x <- range(logical(0))", DOUBLE),
+        ("x <- max(seq(length.out = 0))", DOUBLE),
+        ("x <- min(seq_len(0))", DOUBLE),
+        ("x <- max(character(0))", CHARACTER),
+        ("x <- max(integer(0), 1L)", INTEGER),
+        ("x <- sum(integer(0))", INTEGER),
+        ("x <- max()", DOUBLE),
+        // Data that may be empty, or all `NA` under `na.rm = TRUE`.
+        ("x <- max(c(TRUE, NA), na.rm = TRUE)", INTEGER_OR_DOUBLE),
+        ("x <- max(1:2, na.rm = FALSE)", INTEGER),
+        ("x <- max(seq_len(runif(1)))", INTEGER_OR_DOUBLE),
+        ("x <- min(c(1.5, NA), na.rm = TRUE)", DOUBLE),
+        // ry does not type the `1i` literal, so the call is unknown, not
+        // double. An unknown input does not reach the rule.
+        ("x <- sum(1+1i)", UNKNOWN),
+        ("y <- list(1)[[1]]\nx <- sum(y, NULL)", UNKNOWN),
         // `integer | double` input leaves both open.
         ("n <- runif(1)\nx <- sum(1L, seq(1, n))", INTEGER_OR_DOUBLE),
         ("n <- runif(1)\nx <- sum(seq(1, n), 2.5)", DOUBLE),
     ] {
         assert_eq!(mode_of(src), expected, "`{src}`");
-    }
-}
-
-/// Complex input is complex for `sum` but double for `abs`, so a value
-/// typed complex leaves the result mode unknown rather than double.
-#[test]
-fn double_or_int_leaves_complex_input_unknown() {
-    let prefix = "z <- complex(real = 1, imaginary = 1)\n";
-    for call in ["sum(z)", "abs(z)", "max(z, 1L)"] {
-        assert_eq!(
-            mode_of(&format!("{prefix}x <- {call}")),
-            UNKNOWN,
-            "`{call}`"
-        );
     }
 }
 

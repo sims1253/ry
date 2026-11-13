@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.36",
+  "version": "0.0.37",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2668,10 +2668,11 @@
         "x"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "arg0",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "complex": "double"}}
     },
     "acos": {
       "params": [
@@ -3431,20 +3432,22 @@
         "x"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "arg0",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "double"}}
     },
     "cummin": {
       "params": [
         "x"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "arg0",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "double"}}
     },
     "cumprod": {
       "params": [
@@ -3465,10 +3468,11 @@
         "x"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "arg0",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "complex": "complex", "character": "double"}}
     },
     "cut": {
       "params": [
@@ -3683,10 +3687,11 @@
         "x"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "unknown",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "complex": "complex"}}
     },
     "diff.ts": {
       "params": [
@@ -5270,10 +5275,11 @@
         "..."
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "1",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "character"}, "empty": "double"}
     },
     "mcnemar.test": {
       "params": [
@@ -5366,10 +5372,11 @@
         "..."
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "1",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "character"}, "empty": "double"}
     },
     "missing": {
       "params": [
@@ -5964,20 +5971,22 @@
         "..."
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "unknown",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"integer": "integer", "double": "double", "character": "character"}}
     },
     "pmin": {
       "params": [
         "..."
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "unknown",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"integer": "integer", "double": "double", "character": "character"}}
     },
     "pnorm": {
       "params": [
@@ -6346,10 +6355,11 @@
         "..."
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "2",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "character"}, "empty": "double"}
     },
     "rank": {
       "params": [
@@ -6788,10 +6798,11 @@
         "x"
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "unknown",
         "na": false
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"integer": "integer", "double": "double"}}
     },
     "rpois": {
       "params": [
@@ -7475,10 +7486,11 @@
         }
       ],
       "return": {
-        "mode": "double_or_int",
+        "mode": "opaque",
         "length": "1",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"logical": "integer", "integer": "integer", "double": "double", "complex": "complex"}}
     },
     "summary": {
       "params": [

@@ -57,6 +57,16 @@
       "params": ["test", "yes", "no"],
       "return": {"mode": "yes_or_no", "length": "test", "na": true},
       "return_mode": {"kind": "test_template", "test": "test", "values": ["yes", "no"]}
+    },
+    "input_mode_like": {
+      "params": ["...", "na.rm"],
+      "return": {"mode": "opaque", "length": "1", "na": true},
+      "return_mode": {
+        "kind": "input_mode",
+        "params": ["..."],
+        "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "character"},
+        "empty": "double"
+      }
     }
   }
 }

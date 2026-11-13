@@ -132,6 +132,29 @@ pub enum ReturnModeSpec {
     /// is all-`NA` (no position is overwritten), and otherwise the mode
     /// join of `values`.
     TestTemplate { test: String, values: Vec<String> },
+    /// The result mode follows the data arguments' mode (`sum`, `abs`,
+    /// `max`): the data join on R's coercion ladder, and `modes` maps the
+    /// joined mode to the result mode. A joined mode missing from `modes`
+    /// leaves the result unknown (R errors or the mode depends on
+    /// values). `empty` replaces an `integer` result when the data may
+    /// supply no element, as `max(integer(0))` is double.
+    InputMode {
+        params: Vec<String>,
+        modes: std::collections::BTreeMap<AtomicMode, AtomicMode>,
+        #[serde(default)]
+        empty: Option<AtomicMode>,
+    },
+}
+
+/// An atomic vector mode, declared in the order of R's coercion ladder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AtomicMode {
+    Logical,
+    Integer,
+    Double,
+    Complex,
+    Character,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -196,7 +219,6 @@ pub enum JsonMode {
     Character,
     Complex,
     Double,
-    DoubleOrInt,
     Function,
     Integer,
     List,
@@ -216,7 +238,6 @@ impl JsonMode {
             "character" => Self::Character,
             "complex" => Self::Complex,
             "double" => Self::Double,
-            "double_or_int" => Self::DoubleOrInt,
             "function" => Self::Function,
             "integer" => Self::Integer,
             "list" => Self::List,
@@ -1302,26 +1323,54 @@ fn validate_function_semantics(
             &effect.current_scope_when.param,
         );
     }
-    if let Some(mode) = &signature.return_mode {
-        let ReturnModeSpec::TestTemplate { test, values } = mode;
-        validate_param(report, "return_mode.test", test);
-        if values.is_empty() {
-            validation_error(
-                report,
-                path,
-                format!("{location}.return_mode.values: must not be empty"),
-            );
+    match &signature.return_mode {
+        Some(ReturnModeSpec::TestTemplate { test, values }) => {
+            validate_param(report, "return_mode.test", test);
+            if values.is_empty() {
+                validation_error(
+                    report,
+                    path,
+                    format!("{location}.return_mode.values: must not be empty"),
+                );
+            }
+            if values.contains(test) {
+                validation_error(
+                    report,
+                    path,
+                    format!("{location}.return_mode: test must not also be a value"),
+                );
+            }
+            for param in values {
+                validate_param(report, "return_mode.values", param);
+            }
         }
-        if values.contains(test) {
-            validation_error(
-                report,
-                path,
-                format!("{location}.return_mode: test must not also be a value"),
-            );
+        Some(ReturnModeSpec::InputMode { params, modes, .. }) => {
+            if params.is_empty() {
+                validation_error(
+                    report,
+                    path,
+                    format!("{location}.return_mode.params: must not be empty"),
+                );
+            }
+            for (index, param) in params.iter().enumerate() {
+                if params[..index].contains(param) {
+                    validation_error(
+                        report,
+                        path,
+                        format!("{location}.return_mode.params: duplicate parameter `{param}`"),
+                    );
+                }
+                validate_param(report, "return_mode.params", param);
+            }
+            if modes.is_empty() {
+                validation_error(
+                    report,
+                    path,
+                    format!("{location}.return_mode.modes: must not be empty"),
+                );
+            }
         }
-        for param in values {
-            validate_param(report, "return_mode.values", param);
-        }
+        None => {}
     }
     if let Some(length) = &signature.return_length {
         let has_duplicates = |params: &[String]| {
@@ -1800,6 +1849,31 @@ mod tests {
             (
                 "return_mode",
                 json!({"kind": "unsupported", "test": "test", "values": ["yes", "no"]}),
+                "unknown variant",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "input_mode", "params": [], "modes": {"integer": "integer"}}),
+                "must not be empty",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "input_mode", "params": ["x", "x"], "modes": {"integer": "integer"}}),
+                "duplicate parameter `x`",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "input_mode", "params": ["missing"], "modes": {"integer": "integer"}}),
+                "unknown parameter `missing`",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "input_mode", "params": ["x"], "modes": {}}),
+                "must not be empty",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "input_mode", "params": ["x"], "modes": {"integer": "list"}}),
                 "unknown variant",
             ),
         ] {

@@ -987,9 +987,24 @@ impl Checker {
                 }
             }
             ReturnSpec::Concrete(c) => {
-                let mut integer_or_double = false;
+                // An `input_mode` rule with several possible result modes
+                // builds its union below, once the length is known.
+                let mut input_modes = Vec::new();
                 let mut union_return = false;
-                let mode = if let Some(mode) = concrete_json_mode(&c.mode) {
+                let mode = if let Some(ReturnModeSpec::InputMode {
+                    params,
+                    modes,
+                    empty,
+                }) = &sig.return_mode
+                {
+                    let data = input_mode_data(sig, params, args, arg_types);
+                    input_modes = input_mode_result(modes, *empty, &data, na_rm_may_drop(args))
+                        .unwrap_or_default();
+                    match input_modes.as_slice() {
+                        [mode] => *mode,
+                        _ => Mode::Opaque,
+                    }
+                } else if let Some(mode) = concrete_json_mode(&c.mode) {
                     mode
                 } else {
                     match JsonMode::parse(&c.mode) {
@@ -997,22 +1012,6 @@ impl Checker {
                         Some(JsonMode::Union) => {
                             union_return = true;
                             Mode::Opaque
-                        }
-                        // "double_or_int" follows the numeric data arguments.
-                        // An `integer | double` result is built below, once
-                        // the length is known.
-                        Some(JsonMode::DoubleOrInt) => {
-                            match double_or_int_mode(&double_or_int_inputs(
-                                sig, args, arg_types, &first,
-                            )) {
-                                NumericMode::Integer => Mode::Integer,
-                                NumericMode::Double => Mode::Double,
-                                NumericMode::IntegerOrDouble => {
-                                    integer_or_double = true;
-                                    Mode::Double
-                                }
-                                NumericMode::Unknown => Mode::Opaque,
-                            }
                         }
                         // "arg0" as a mode spec: use the first param's mode.
                         Some(JsonMode::Arg0) => first.mode,
@@ -1084,8 +1083,12 @@ impl Checker {
                     arg_types,
                 )
                 .unwrap_or(length);
-                if integer_or_double {
-                    return integer_or_double_type(length);
+                if input_modes.len() > 1 {
+                    let members: Vec<RType> = input_modes
+                        .into_iter()
+                        .map(|mode| RType::new(mode, length))
+                        .collect();
+                    return RType::union(Arc::from(members));
                 }
                 if union_return {
                     return json_rtype_with_length(c, length);
@@ -1262,70 +1265,114 @@ fn integer_or_double_type(length: Length) -> RType {
     ]))
 }
 
-/// The data arguments a `double_or_int` return follows: everything `...`
-/// absorbs when the signature leads with it (`sum(..., na.rm)`, `max(...)`),
-/// else the first formal. `na.rm` is a formal of every dots-led member in
-/// R even where the stub omits it, so it never counts as data.
-fn double_or_int_inputs(
+/// The data arguments an `input_mode` rule reads: those bound to a listed
+/// formal, and for a listed `...` everything it absorbs. `na.rm` is a
+/// formal of every dots-led member in R even where the stub omits it, so
+/// it never counts as data. Without call arguments (callback inference)
+/// the types bind positionally.
+fn input_mode_data(
     sig: &FunctionSig,
+    params: &[String],
     args: &[Arg],
     arg_types: &[RType],
-    first: &RType,
 ) -> Vec<RType> {
-    if sig.params.first().is_none_or(|param| param.name != "...") {
-        return vec![first.clone()];
-    }
+    let listed = |formal: &str| params.iter().any(|param| param == formal);
     if args.is_empty() {
-        return arg_types.to_vec();
+        if listed("...") {
+            return arg_types.to_vec();
+        }
+        return sig
+            .params
+            .iter()
+            .zip(arg_types)
+            .filter(|(param, _)| listed(&param.name))
+            .map(|(_, ty)| ty.clone())
+            .collect();
     }
     // `...` never binds a formal of its own: what it absorbs is unbound.
     let bindings = match_params(&sig.params, args);
     args.iter()
         .zip(arg_types)
         .zip(&bindings.param_for_arg)
-        .filter(|((arg, _), formal)| formal.is_none() && arg.name.as_deref() != Some("na.rm"))
+        .filter(|((arg, _), formal)| match formal {
+            Some(index) => listed(&sig.params[*index].name),
+            None => listed("...") && arg.name.as_deref() != Some("na.rm"),
+        })
         .map(|((_, ty), _)| ty.clone())
         .collect()
 }
 
-/// Resolve a `double_or_int` return from its data arguments. R keeps
-/// integer storage when every input is logical or integer
-/// (`sum(c(TRUE, FALSE))`, `abs(TRUE)` and `max(TRUE)` are integer) and
-/// widens to double once any input is double. Character and complex input
-/// keeps neither mode (`max("a")` is character, `sum(1i)` is complex), and
-/// the members disagree on it (`abs(1i)` is double), so an input of any
-/// other known mode leaves the result mode unknown.
-fn double_or_int_mode(inputs: &[RType]) -> NumericMode {
-    let mut all_integer = true;
-    let mut any_double = false;
-    for input in inputs {
+/// Whether an `na.rm` argument may drop every element: anything but an
+/// absent or literal `FALSE` `na.rm`.
+fn na_rm_may_drop(args: &[Arg]) -> bool {
+    args.iter().any(|arg| {
+        arg.name.as_deref() == Some("na.rm") && !matches!(arg.value, Expr::Logical(false, _))
+    })
+}
+
+/// Resolve an `input_mode` rule to its possible result modes, or `None`
+/// when the result mode is unknown. The data join on R's coercion ladder
+/// (`max(TRUE, "a")` is character), so with union inputs the joined mode
+/// can be any member at or above the highest input's lowest member. Any
+/// other input mode, such as unknown, `NULL` or a list, leaves the result
+/// unknown.
+fn input_mode_result(
+    modes: &std::collections::BTreeMap<AtomicMode, AtomicMode>,
+    empty: Option<AtomicMode>,
+    data: &[RType],
+    na_rm_may_drop: bool,
+) -> Option<Vec<Mode>> {
+    let mut floor = AtomicMode::Logical;
+    let mut possible = std::collections::BTreeSet::from([AtomicMode::Logical]);
+    for input in data {
         let members: &[RType] = match (&input.mode, &input.members) {
             (Mode::Union, Some(members)) => members,
             _ => std::slice::from_ref(input),
         };
-        let mut can_be_integer = false;
-        let mut can_be_double = false;
+        let mut lowest = AtomicMode::Character;
         for member in members {
-            match member.mode {
-                Mode::Logical | Mode::Integer => can_be_integer = true,
-                // An unproven input keeps the historical double
-                // approximation: it still proves the result atomic, which
-                // `mean(x)$value` (RY061) relies on.
-                Mode::Double => can_be_double = true,
-                mode if mode.is_unknown() => can_be_double = true,
-                _ => return NumericMode::Unknown,
+            let mode = match member.mode {
+                Mode::Logical => AtomicMode::Logical,
+                Mode::Integer => AtomicMode::Integer,
+                Mode::Double => AtomicMode::Double,
+                Mode::Complex => AtomicMode::Complex,
+                Mode::Character => AtomicMode::Character,
+                _ => return None,
+            };
+            possible.insert(mode);
+            lowest = lowest.min(mode);
+        }
+        floor = floor.max(lowest);
+    }
+    let all_empty = data.iter().all(|ty| ty.length.exact() == Some(0));
+    let may_be_empty = na_rm_may_drop || data.iter().all(|ty| ty.length.min_possible() == 0);
+    let mut result = std::collections::BTreeSet::new();
+    for joined in possible.into_iter().filter(|mode| *mode >= floor) {
+        let mode = *modes.get(&joined)?;
+        match empty {
+            Some(empty) if mode == AtomicMode::Integer && all_empty => {
+                result.insert(empty);
+            }
+            Some(empty) if mode == AtomicMode::Integer && may_be_empty => {
+                result.extend([mode, empty]);
+            }
+            _ => {
+                result.insert(mode);
             }
         }
-        any_double |= !can_be_integer;
-        all_integer &= !can_be_double;
     }
-    if inputs.is_empty() || any_double {
-        NumericMode::Double
-    } else if all_integer {
-        NumericMode::Integer
-    } else {
-        NumericMode::IntegerOrDouble
-    }
+    Some(
+        result
+            .into_iter()
+            .map(|mode| match mode {
+                AtomicMode::Logical => Mode::Logical,
+                AtomicMode::Integer => Mode::Integer,
+                AtomicMode::Double => Mode::Double,
+                AtomicMode::Complex => Mode::Complex,
+                AtomicMode::Character => Mode::Character,
+            })
+            .collect(),
+    )
 }
 
 pub(crate) fn semantic_return_length(

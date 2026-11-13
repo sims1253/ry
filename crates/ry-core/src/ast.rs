@@ -57,8 +57,8 @@ pub struct SourceFile {
     /// `x |> z[.]` or `x |> { ... }` parse here but error in R. The
     /// others (#841) are repeated formals, expressions not separated by
     /// a newline or `;`, a dangling `else`, a misplaced `_` placeholder,
-    /// unrecognized or NUL string escapes, an exponent without digits,
-    /// and nesting past R's 50-slot context stack. Like
+    /// escapes R rejects in strings and backticked names, an exponent
+    /// without digits, and nesting past R's 50-slot context stack. Like
     /// [`SourceFile::parse_errors`], the checker surfaces these as
     /// `RY000`; unlike parse errors the region lowers normally, so
     /// the two lists are kept separate and consumers counting broken

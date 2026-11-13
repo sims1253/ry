@@ -1368,13 +1368,14 @@ fn collect_syntax_violations(
     let mut out = Vec::new();
     let mut pipe_rhs = Vec::new();
     let mut placeholders = Vec::new();
-    let mut brackets = 0_usize;
-    // R stops at its first overflow, so report once per outermost bracket.
-    let mut overflow_reported = false;
-    // Pre-order walk in source order, which the bracket count depends on.
+    let mut context = ContextStack::default();
+    // Pre-order walk in source order, which the context stack depends on.
     let mut cursor = root.walk();
     'walk: loop {
         let node = cursor.node();
+        if context.feed(node, src) {
+            out.push(violation(node, context_stack_overflow()));
+        }
         if node.kind() == "binary_operator"
             && text_opt(node.child_by_field_name("operator"), src).as_deref() == Some("|>")
             && let Some(rhs) = node.child_by_field_name("rhs")
@@ -1397,6 +1398,7 @@ fn collect_syntax_violations(
                         placeholders.push(misparse(node, message));
                     }
                 }
+                name if name.starts_with('`') => out.extend(backtick_escape_violation(node, src)),
                 _ => {}
             },
             "escape_sequence" => {
@@ -1413,29 +1415,6 @@ fn collect_syntax_violations(
                             "syntax error: unexpected input: exponent of `{literal}` has no digits"
                         ),
                     ));
-                }
-            }
-            // R's lexer keeps a fixed 50-slot context stack: every `(`,
-            // `[`, and `{` pushes one entry (`[[` two) and an `if` inside
-            // brackets may push more, so 50 open brackets always overflow
-            // it. Counting brackets alone never exceeds R's real depth.
-            "(" | "[" | "{" | "[[" | ")" | "]" | "}" | "]]" if !node.is_named() => {
-                let before = brackets;
-                brackets = match node.kind() {
-                    "[[" => brackets + 2,
-                    "]]" => brackets.saturating_sub(2),
-                    ")" | "]" | "}" => brackets.saturating_sub(1),
-                    _ => brackets + 1,
-                };
-                if brackets == 0 {
-                    overflow_reported = false;
-                }
-                if !overflow_reported
-                    && before < R_CONTEXT_STACK_SIZE
-                    && brackets >= R_CONTEXT_STACK_SIZE
-                {
-                    overflow_reported = true;
-                    out.push(violation(node, context_stack_overflow()));
                 }
             }
             _ => {}
@@ -1491,7 +1470,15 @@ fn escape_violation(escape: &str) -> Option<String> {
         'n' | 'r' | 't' | 'b' | 'a' | 'f' | 'v' | '\\' | '\'' | '"' | '`' | ' ' | '\n' | '\r' => {
             return None;
         }
-        '0'..='7' => u32::from_str_radix(body, 8).ok()?,
+        '0'..='7' => {
+            let value = u32::from_str_radix(body, 8).ok()?;
+            if value > 0o377 {
+                return Some(format!(
+                    "syntax error: \\{value:o} exceeds maximum allowed octal value \\377"
+                ));
+            }
+            value
+        }
         'x' | 'u' | 'U' => u32::from_str_radix(body[1..].trim_matches(['{', '}']), 16).ok()?,
         _ => {
             return Some(format!(
@@ -1500,6 +1487,57 @@ fn escape_violation(escape: &str) -> Option<String> {
         }
     };
     (digits == 0).then(|| "syntax error: nul character not allowed".to_string())
+}
+
+/// The first escape R's lexer rejects in a backticked name. R reads the
+/// name with its string escapes, except that `\u` and `\U` are errors;
+/// tree-sitter takes the whole name as one token and checks none of them.
+fn backtick_escape_violation(name: Node, src: &str) -> Option<crate::ast::SyntaxViolation> {
+    let text = &src[name.byte_range()];
+    let body = text.strip_prefix('`')?.strip_suffix('`')?;
+    let mut rest = body;
+    while let Some(at) = rest.find('\\') {
+        let escape = &rest[at..];
+        let mut chars = escape[1..].chars();
+        let first = chars.next()?;
+        let len = match first {
+            '0'..='7' | 'x' => {
+                let digit = |c: &char| match first {
+                    'x' => c.is_ascii_hexdigit(),
+                    _ => matches!(c, '0'..='7'),
+                };
+                2 + chars.take(2).take_while(digit).count()
+            }
+            _ => 1 + first.len_utf8(),
+        };
+        let message = match first {
+            'u' => Some("syntax error: \\uxxxx sequences not supported inside backticks".into()),
+            'U' => {
+                Some("syntax error: \\Uxxxxxxxx sequences not supported inside backticks".into())
+            }
+            'x' if len == 2 => {
+                Some("syntax error: '\\x' used without hex digits in character string".into())
+            }
+            _ => escape_violation(&escape[..len]),
+        };
+        let offset = body.len() - rest.len() + at + 1;
+        if let Some(message) = message {
+            let start = name.start_byte() + offset;
+            let before = &text[..offset];
+            let line = name.start_position().row + before.matches('\n').count();
+            let col = match before.rfind('\n') {
+                Some(newline) => offset - newline - 1,
+                None => name.start_position().column + offset,
+            };
+            return Some(crate::ast::SyntaxViolation {
+                span: Span::new(start, start + len, line, col),
+                message,
+                misparsed: false,
+            });
+        }
+        rest = &rest[at + len..];
+    }
+    None
 }
 
 /// Whether a decimal numeric literal ends its exponent without digits
@@ -1520,9 +1558,113 @@ fn exponent_without_digits(literal: &str) -> bool {
 /// R's `CONTEXTSTACK_SIZE` (gram.y); one slot holds the stack's base.
 const R_CONTEXT_STACK_SIZE: usize = 50;
 
+/// A lower bound on R's lexer context stack (gram.y `contextstack`), fed
+/// the file's tokens in source order. Every `(`, `[`, and `{` takes a
+/// slot (`[[` two), and so does an `if` while a bracket or another
+/// pending `if` is on top. A closing bracket drops the pending `if`s
+/// above its opener; `else`, `,`, `;`, and a newline each drop one.
+/// R keeps the `if` across a newline after an operator or an `if`
+/// condition, but ry always drops it there, so this stack is never
+/// deeper than R's and its overflow is always R's.
+#[derive(Default)]
+struct ContextStack {
+    slots: Vec<u8>,
+    /// End of the previous token; the gap before the next one holds the
+    /// newlines and `;` the CST does not keep as nodes.
+    previous_end: usize,
+    /// Inside a string token, whose children are not R tokens.
+    string_end: usize,
+    /// R stops at its first overflow, so report once per outermost bracket.
+    overflowed: bool,
+}
+
+impl ContextStack {
+    /// Feed `node` if it is an R token; whether it overflows R's stack.
+    fn feed(&mut self, node: Node, src: &str) -> bool {
+        let is_token = node.kind() == "string"
+            || (node.child_count() == 0
+                && node.kind() != "comment"
+                && !node.byte_range().is_empty());
+        if !is_token || node.start_byte() < self.string_end {
+            return false;
+        }
+        if node.kind() == "string" {
+            self.string_end = node.end_byte();
+        }
+        // Brackets, keywords, and commas; names and literals only end a gap.
+        let punctuation = !node.is_named() || node.kind() == "comma";
+        let text = &src[node.byte_range()];
+        let ends_if = punctuation && matches!(text, ")" | "]" | "}" | "]]" | "," | "else");
+        let mut newline = false;
+        // `parse(file = ...)` reads a lone CR as a line end too.
+        for line in src[self.previous_end..node.start_byte()].split_inclusive(['\n', '\r']) {
+            // A gap holds no strings, so `#` starts a comment.
+            let code = line.split('#').next().unwrap_or_default();
+            for _ in code.matches(';') {
+                if std::mem::take(&mut newline) {
+                    self.end_if();
+                }
+                self.end_if();
+            }
+            newline |= line.ends_with(['\n', '\r']);
+        }
+        // R drops a pending `if` itself before these tokens.
+        if newline && !ends_if {
+            self.end_if();
+        }
+        self.previous_end = node.end_byte();
+        if !punctuation {
+            return false;
+        }
+        let overflow = match text {
+            "(" | "[" | "{" => self.push(text.as_bytes()[0]),
+            "[[" => self.push(b'[') | self.push(b'['),
+            "if" if matches!(self.slots.last(), Some(b'(' | b'[' | b'{' | b'i')) => self.push(b'i'),
+            ")" | "]" | "}" => {
+                self.close();
+                false
+            }
+            "]]" => {
+                self.close();
+                self.close();
+                false
+            }
+            "," | "else" => {
+                self.end_if();
+                false
+            }
+            _ => false,
+        };
+        if self.slots.is_empty() {
+            self.overflowed = false;
+        }
+        let report = overflow && !self.overflowed;
+        self.overflowed |= overflow;
+        report
+    }
+
+    fn push(&mut self, slot: u8) -> bool {
+        self.slots.push(slot);
+        self.slots.len() == R_CONTEXT_STACK_SIZE
+    }
+
+    fn end_if(&mut self) {
+        if self.slots.last() == Some(&b'i') {
+            self.slots.pop();
+        }
+    }
+
+    fn close(&mut self) {
+        while self.slots.last() == Some(&b'i') {
+            self.slots.pop();
+        }
+        self.slots.pop();
+    }
+}
+
 fn context_stack_overflow() -> String {
     format!(
-        "syntax error: contextstack overflow: R's parser allows at most {} nested brackets",
+        "syntax error: contextstack overflow: R's parser nests at most {} brackets and pending `if`s",
         R_CONTEXT_STACK_SIZE - 1
     )
 }
@@ -1990,7 +2132,7 @@ mod tests {
                 // Past the cap, more than 49 open brackets is invalid R too
                 // (`contextstack overflow`); anything else is valid R that ry
                 // does not analyze (#887).
-                let overflow = "syntax error: contextstack overflow: R's parser allows at most 49 nested brackets";
+                let overflow = "syntax error: contextstack overflow: R's parser nests at most 49 brackets and pending `if`s";
                 let limit = "source exceeds ry's syntax nesting limit of 128";
                 for (source, invalid_r) in [
                     (format!("{}1", "-".repeat(512)), false),

@@ -786,8 +786,7 @@ fn native_pipe_placeholder_discipline_matches_base_r() {
 fn r_parse_rejections_match_base_r() {
     let deep =
         |open: &str, close: &str, n: usize| format!("x <- {}1{}", open.repeat(n), close.repeat(n));
-    let overflow =
-        "syntax error: contextstack overflow: R's parser allows at most 49 nested brackets";
+    let overflow = "syntax error: contextstack overflow: R's parser nests at most 49 brackets and pending `if`s";
     let rejected: Vec<(String, &str, bool)> = vec![
         (
             "function(x, x) 1".into(),
@@ -910,6 +909,83 @@ fn r_parse_rejections_match_base_r() {
             overflow,
             false,
         ),
+        // A pending `if` inside brackets takes a slot of its own until an
+        // `else`, `;`, `,`, newline, or closing bracket ends it, and the
+        // condition's `(` sits on top of it.
+        (
+            format!(
+                "f <- function() {{\n{}1\n{}}}",
+                "if (a) {\n".repeat(25),
+                "}\n".repeat(25)
+            ),
+            overflow,
+            false,
+        ),
+        (format!("{{{}1}}", "if (a) ".repeat(48)), overflow, false),
+        (format!("f({}1)", "if (a) ".repeat(48)), overflow, false),
+        // R lexes a backticked name with the string escapes, but without
+        // `\u` and `\U`; tree-sitter takes the whole name as one token.
+        (
+            "`a\\qb` <- 1".into(),
+            "syntax error: '\\q' is an unrecognized escape in character string",
+            false,
+        ),
+        (
+            "f(`a\\q` = 1)".into(),
+            "syntax error: '\\q' is an unrecognized escape in character string",
+            false,
+        ),
+        (
+            "function(`a\\q`) 1".into(),
+            "syntax error: '\\q' is an unrecognized escape in character string",
+            false,
+        ),
+        (
+            "`a\\8`".into(),
+            "syntax error: '\\8' is an unrecognized escape in character string",
+            false,
+        ),
+        (
+            "x$`a\\0b`".into(),
+            "syntax error: nul character not allowed",
+            false,
+        ),
+        (
+            "`a\\x00`".into(),
+            "syntax error: nul character not allowed",
+            false,
+        ),
+        (
+            "`a\\xg`".into(),
+            "syntax error: '\\x' used without hex digits in character string",
+            false,
+        ),
+        (
+            "`a\\u0041`".into(),
+            "syntax error: \\uxxxx sequences not supported inside backticks",
+            false,
+        ),
+        (
+            "`a\\U0041`".into(),
+            "syntax error: \\Uxxxxxxxx sequences not supported inside backticks",
+            false,
+        ),
+        // An octal escape holds one byte.
+        (
+            "x <- \"\\400\"".into(),
+            "syntax error: \\400 exceeds maximum allowed octal value \\377",
+            false,
+        ),
+        (
+            "x <- '\\777'".into(),
+            "syntax error: \\777 exceeds maximum allowed octal value \\377",
+            false,
+        ),
+        (
+            "`\\400`".into(),
+            "syntax error: \\400 exceeds maximum allowed octal value \\377",
+            false,
+        ),
     ];
     for (source, message, misparsed) in &rejected {
         let file = parse(source);
@@ -946,6 +1022,27 @@ fn r_parse_rejections_match_base_r() {
         deep("(", ")", 49),
         deep("x[[", "]]", 24),
         format!("{}1{}", "(1) + ".repeat(60), ""),
+        "`a\\nb`".into(),
+        "`a\\101\\x41\\`\\ \\\\`".into(),
+        "`a\\\nb`".into(),
+        "`\\x7f\\177`".into(),
+        "x <- \"\\377\\0377\"".into(),
+        // Each `else`, `;`, `,`, or newline ends a pending `if`.
+        format!(
+            "f <- function() {{\n{}1\n{}}}",
+            "if (a) {\n".repeat(24),
+            "}\n".repeat(24)
+        ),
+        format!("{{{}1}}", "if (a) ".repeat(47)),
+        format!("f({}1)", "if (a) ".repeat(47)),
+        format!("{{ {}1 }}", "if (a) 1 else ".repeat(80)),
+        format!("{{ {}}}", "if (a) 1; ".repeat(80)),
+        format!("{{\n{}}}", "if (a) 1\n".repeat(80)),
+        format!("{{\n{}}}", "if (a) 1 # ; c\n".repeat(80)),
+        // `parse(file = ...)` reads a lone CR as a line end.
+        format!("{{{}}}", "if (a) 1\r".repeat(48)),
+        format!("f({}1)", "if (a) 1, ".repeat(80)),
+        format!("{{{}}}", "if (a) {{ if (b) 1 }}\n".repeat(80)),
     ];
     for source in &accepted {
         let file = parse(source);

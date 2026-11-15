@@ -41,6 +41,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Callbacks over a value that may be `NULL`, such as
+  `lapply(names(x), function(col) if (col == "a") 1)`, no longer report
+  RY001: `NULL` has no elements, so the callback argument is a scalar
+  string, not a possibly empty one.
 - `round(x)`, `cumprod(x)`, `sqrt(x)` and the other base stubs that return
   double or complex keep the length of `x` again, so `if (round(x) > 1)`
   on a two-element `x` reports RY002 (#899).

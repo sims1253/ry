@@ -144,6 +144,15 @@ fn ordinary_character_callback_elements_still_have_scalar_length() {
 }
 
 #[test]
+fn nullable_callback_inputs_have_no_null_elements() {
+    let diags = check("f <- function(x) lapply(names(x), function(col) if (col == 'a') 1)");
+    assert!(diags.iter().all(|d| d.code != "RY001"), "{diags:?}");
+
+    let diags = check("f <- function(x) Filter(function(col) length(col) > 0L, names(x))");
+    assert!(diags.iter().any(|d| d.code == "RY105"), "{diags:?}");
+}
+
+#[test]
 fn indexed_sort_does_not_borrow_input_vector_shape() {
     for function in ["sort.int", "sort"] {
         let source = format!("x <- {function}(c(2,1),method='quick',index.return=TRUE); x$ix; x$x");

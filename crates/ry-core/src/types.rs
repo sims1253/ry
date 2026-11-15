@@ -1228,13 +1228,15 @@ impl RType {
             _ if (!self.class.known || self.class.guarded) && self.may_be_factor_storage() => {
                 RType::unknown()
             }
+            // `NULL` has no elements, so a `NULL` member contributes nothing:
+            // the elements of `names(x)` (`character | NULL`) are strings.
             Mode::Union => match self.members.as_ref() {
-                Some(ms) => {
-                    let elems: Vec<RType> = ms.iter().map(|m| m.element()).collect();
-                    let mut iter = elems.into_iter();
-                    let first = iter.next().unwrap_or_else(RType::unknown);
-                    iter.fold(first, |acc, t| acc.join(t))
-                }
+                Some(ms) => ms
+                    .iter()
+                    .filter(|m| m.mode != Mode::Null)
+                    .map(RType::element)
+                    .reduce(RType::join)
+                    .unwrap_or_else(|| RType::new(Mode::Null, Length::Zero)),
                 None => RType::unknown(),
             },
             _ => {

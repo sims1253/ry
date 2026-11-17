@@ -1200,14 +1200,19 @@ impl RType {
     /// for it, so only an integer or double whose class is unknown, or only
     /// guarded, may be a factor and claims no element mode (#861).
     ///
-    /// For a `Mode::Union`, the element type is the union of each member's
-    /// element type. Distributing -- rather than passing
+    /// `NULL` has no elements: neither a `for` body nor a callback ever
+    /// runs over one, so a `NULL` claims nothing (unknown) and a `NULL`
+    /// union member contributes nothing -- the elements of `names(x)`
+    /// (`character | NULL`) are length-1 strings.
+    ///
+    /// For a `Mode::Union`, the element type is the union of each non-NULL
+    /// member's element type. Distributing -- rather than passing
     /// `Mode::Union` through the `_` arm and building a malformed union
     /// with `members: None` -- is what stops `for (x in if(...) TRUE else
     /// 1L) { if (x) ... }` from reporting `union[]` as the condition.
     pub fn element(&self) -> RType {
         match self.mode {
-            Mode::Null => RType::new(Mode::Null, Length::Zero),
+            Mode::Null => RType::unknown(),
             m if m.is_unknown_or_non_vector() => RType::unknown(),
             Mode::List => {
                 // `[[`-style element extraction from a list yields the
@@ -1229,12 +1234,12 @@ impl RType {
                 RType::unknown()
             }
             Mode::Union => match self.members.as_ref() {
-                Some(ms) => {
-                    let elems: Vec<RType> = ms.iter().map(|m| m.element()).collect();
-                    let mut iter = elems.into_iter();
-                    let first = iter.next().unwrap_or_else(RType::unknown);
-                    iter.fold(first, |acc, t| acc.join(t))
-                }
+                Some(ms) => ms
+                    .iter()
+                    .filter(|m| m.mode != Mode::Null)
+                    .map(RType::element)
+                    .reduce(RType::join)
+                    .unwrap_or_else(RType::unknown),
                 None => RType::unknown(),
             },
             _ => {
@@ -1988,6 +1993,25 @@ mod tests {
         assert_eq!(members.len(), 2);
         assert!(members.iter().any(|m| m.mode == Mode::Integer));
         assert!(members.iter().any(|m| m.mode == Mode::Logical));
+    }
+
+    #[test]
+    fn element_ignores_null_union_members() {
+        // `names(x)` is `character | NULL`; iterating it yields strings.
+        // NULL itself has no elements, so it claims nothing.
+        let chr = RType::new(Mode::Character, Length::Unknown);
+        let null = RType::new(Mode::Null, Length::Zero);
+        for t in [
+            chr.clone(),
+            RType::scalar(Mode::Integer).join(RType::scalar(Mode::Logical)),
+        ] {
+            let nullable = t.clone().join(null.clone());
+            assert!(nullable.members.is_some(), "{nullable}");
+            assert_eq!(nullable.element(), t.element(), "{nullable}");
+        }
+        assert!(null.element().mode.is_unknown());
+        let only_null = RType::union(std::sync::Arc::from(vec![null.clone(), null]));
+        assert!(only_null.element().mode.is_unknown(), "{only_null}");
     }
 
     #[test]

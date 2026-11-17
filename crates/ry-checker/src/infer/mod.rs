@@ -1102,12 +1102,8 @@ impl Checker {
             } => {
                 let iter_t = self.infer(iter, scope);
                 let mut inner = scope.clone();
-                // The body never runs over NULL (`for (v in NULL)`), so a
-                // NULL member says nothing about the loop variable.
-                let element = narrow_away_from_null(&iter_t)
-                    .as_ref()
-                    .unwrap_or(&iter_t)
-                    .element();
+                // `element()` drops NULL: the body never runs over it.
+                let element = iter_t.element();
                 // The loop variable is a real assignment, not the
                 // loop-carried widening below. Its exact old identity is
                 // gone, but an uncertain/function value can shadow a flat

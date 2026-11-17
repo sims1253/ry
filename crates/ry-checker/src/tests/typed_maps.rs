@@ -144,6 +144,34 @@ fn ordinary_character_callback_elements_still_have_scalar_length() {
 }
 
 #[test]
+fn nullable_callback_inputs_have_no_null_elements() {
+    // Every iteration path reads elements through `RType::element`, and a
+    // NULL input never reaches the callback or loop body.
+    for source in [
+        "f <- function(x) lapply(names(x), function(col) if (col == 'a') 1)",
+        "f <- function(x) sapply(names(x), function(col) if (col == 'a') 1)",
+        "f <- function(x) vapply(names(x), function(col) if (col == 'a') 1 else 0, numeric(1))",
+        "f <- function(x, y) Map(function(a, b) if (a == b) 1, names(x), names(y))",
+        "f <- function(x) mapply(function(a) if (a == 'a') 1, names(x))",
+        "f <- function(x) Filter(function(col) if (col == 'a') TRUE else FALSE, names(x))",
+        "f <- function(x) Reduce(function(acc, col) if (col == 'a') acc else acc + 1, names(x), 0)",
+        "f <- function(x) purrr::map(names(x), function(col) if (col == 'a') 1)",
+        "f <- function(x) lapply(colnames(x), function(col) if (col == 'a') 1)",
+        "f <- function(x) for (col in names(x)) if (col == 'a') 1",
+        "for (v in NULL) if (v) 1",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY001"),
+            "{source}: {diags:?}"
+        );
+    }
+
+    let diags = check("f <- function(x) Filter(function(col) length(col) > 0L, names(x))");
+    assert!(diags.iter().any(|d| d.code == "RY105"), "{diags:?}");
+}
+
+#[test]
 fn indexed_sort_does_not_borrow_input_vector_shape() {
     for function in ["sort.int", "sort"] {
         let source = format!("x <- {function}(c(2,1),method='quick',index.return=TRUE); x$ix; x$x");

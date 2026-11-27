@@ -39,7 +39,18 @@ mock.module("vscode-languageclient/node", () => ({
   },
 }));
 
-const { startServer } = await import("../common/server");
+const { DOCUMENT_SELECTOR, startServer } = await import("../common/server");
+
+describe("document selectors", () => {
+  it("registers only supported file and untitled schemes", () => {
+    const schemes = DOCUMENT_SELECTOR.map((filter) =>
+      typeof filter === "string" ? filter : filter.scheme,
+    );
+    expect(schemes).toEqual(["file", "untitled", "file"]);
+    expect(schemes).not.toContain("vscode-notebook");
+    expect(schemes).not.toContain("vscode-notebook-cell");
+  });
+});
 
 describe("server start failure", () => {
   it("names the binary and reason, and disposes the client", async () => {

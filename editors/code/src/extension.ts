@@ -64,9 +64,11 @@ export function deactivate(): Promise<void> {
     clearImmediate(bootImmediate);
     bootImmediate = null;
   }
-  return runtimePromise == null
+  const active = runtimePromise;
+  runtimePromise = null;
+  return active == null
     ? Promise.resolve()
-    : runtimePromise.then(
+    : active.then(
         (instance) => instance.shutdown(),
         // A failed runtime load leaves nothing to shut down.
         () => {},

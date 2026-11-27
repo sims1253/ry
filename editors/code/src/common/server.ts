@@ -15,6 +15,18 @@ import {
 } from "./settings";
 
 /**
+ * Document selectors supported by `ry-lsp`. Notebook cells are omitted until
+ * the server models cross-cell notebook scope (#931).
+ */
+export const DOCUMENT_SELECTOR: NonNullable<
+  LanguageClientOptions["documentSelector"]
+> = [
+  { scheme: "file", language: "r" },
+  { scheme: "untitled", language: "r" },
+  { scheme: "file", pattern: "**/{ry.toml}" },
+];
+
+/**
  * Construct and start the language server client.
  *
  * `binaryPath` must be pre-resolved by the caller via
@@ -49,13 +61,7 @@ export async function startServer(
 
   const clientOptions: LanguageClientOptions = {
     // Register the server for R documents (and ry.toml).
-    documentSelector: [
-      { scheme: "file", language: "r" },
-      { scheme: "untitled", language: "r" },
-      { scheme: "vscode-notebook", language: "r" },
-      { scheme: "vscode-notebook-cell", language: "r" },
-      { scheme: "file", pattern: "**/{ry.toml}" },
-    ],
+    documentSelector: DOCUMENT_SELECTOR,
     outputChannel,
     traceOutputChannel,
     revealOutputChannelOn: RevealOutputChannelOn.Never,

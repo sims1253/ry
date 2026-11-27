@@ -1513,7 +1513,6 @@ version = "0.12.0"
 dependencies = [
  "clap",
  "clap_complete",
- "libc",
  "miette",
  "rayon",
  "ry-checker",

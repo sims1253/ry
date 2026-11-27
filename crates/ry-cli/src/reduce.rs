@@ -55,20 +55,20 @@ pub(crate) fn run_reduce(args: ReduceArgs) -> Result<ExitCode> {
         .find(|(line, _, _)| args.line.is_none_or(|wanted| *line == wanted));
     let Some((line, _, message)) = target else {
         let place = args.line.map_or_default(|line| format!(" on line {line}"));
-        eprintln!(
+        crate::eprintln_safe!(
             "ry reduce: {} reports no {}{place}",
             args.file.display(),
             oracle.code
         );
         return Ok(ExitCode::FAILURE);
     };
-    eprintln!(
+    crate::eprintln_safe!(
         "ry reduce: keeping {} at line {line}: {message}",
         oracle.code
     );
     oracle.message = message.clone();
     if oracle.rscript && !oracle.runs_in_r(&source)? {
-        eprintln!(
+        crate::eprintln_safe!(
             "ry reduce: Rscript fails on {}; --rscript needs a file that runs",
             args.file.display()
         );
@@ -76,7 +76,7 @@ pub(crate) fn run_reduce(args: ReduceArgs) -> Result<ExitCode> {
     }
 
     let reduced = reduce(source.clone(), &mut |candidate| oracle.keeps(candidate))?;
-    eprintln!(
+    crate::eprintln_safe!(
         "ry reduce: {} to {} lines in {} checks",
         source.lines().count(),
         reduced.lines().count(),
@@ -85,7 +85,7 @@ pub(crate) fn run_reduce(args: ReduceArgs) -> Result<ExitCode> {
     match &args.output {
         Some(path) => std::fs::write(path, &reduced)
             .map_err(|error| miette!("cannot write {}: {error}", path.display()))?,
-        None => print!("{reduced}"),
+        None => crate::output::write_stdout(&reduced)?,
     }
     Ok(ExitCode::SUCCESS)
 }

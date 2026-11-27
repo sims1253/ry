@@ -593,6 +593,55 @@ fn closed_stdout_does_not_panic() {
         assert!(!stderr.contains("panicked"), "{format}: {stderr}");
         assert_ne!(output.code(), Some(101), "{format}: {stderr}");
     }
+
+    // Batch subcommands and clap `--help` / `--version` also route through
+    // the broken-pipe-safe output seam (#920).
+    for args in [
+        vec!["version"],
+        vec!["--version"],
+        vec!["--help"],
+        vec!["explain", "rule"],
+        vec!["explain", "typeshed"],
+        vec!["dump-facts", temp.path().to_str().unwrap()],
+        vec!["dump-types", temp.path().to_str().unwrap()],
+        vec!["generate-shell-completion", "bash"],
+    ] {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let output = CliOutput(child.wait_with_output().unwrap());
+        let stderr = output.stderr();
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert_ne!(output.code(), Some(101), "{args:?}: {stderr}");
+    }
+
+    // Closed stderr must not panic either, and invalid CLI flags keep a
+    // non-zero exit status even when stderr is closed.
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--exit-zero", "--statistics"])
+        .arg(temp.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stderr.take());
+    let status = child.wait().unwrap();
+    assert_ne!(status.code(), Some(101));
+
+    let mut bad_child = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        .arg("--not-an-option")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(bad_child.stderr.take());
+    let bad_status = bad_child.wait().unwrap();
+    assert!(!bad_status.success());
+    assert_ne!(bad_status.code(), Some(101));
 }
 
 #[test]

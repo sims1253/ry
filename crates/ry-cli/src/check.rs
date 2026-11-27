@@ -123,7 +123,7 @@ pub(crate) fn run_check(
                 Ok(value) => Some(value),
                 Err(error) if baseline_from_cli => return Err(error),
                 Err(error) => {
-                    eprintln!("ry: warning: {error}");
+                    crate::eprintln_safe!("ry: warning: {error}");
                     None
                 }
             },
@@ -143,11 +143,8 @@ pub(crate) fn run_check(
     let color_choice = color;
     let color = color.enabled(format);
     // An early exit still needs a complete machine-readable report.
-    let print_empty_report = || {
-        print!(
-            "{}",
-            render_diagnostics(&[], format, &HashMap::new(), color)
-        )
+    let print_empty_report = || -> Result<()> {
+        crate::output::write_stdout(&render_diagnostics(&[], format, &HashMap::new(), color))
     };
     let filter = ry_checker::filter_from_config(&cfg);
     let user_stubs = load_user_stubs(&cfg.typeshed);
@@ -169,9 +166,9 @@ pub(crate) fn run_check(
     let missing: Vec<&PathBuf> = search_roots.iter().filter(|root| !root.exists()).collect();
     if !missing.is_empty() {
         for root in &missing {
-            eprintln!("ry: {}: no such file or directory", root.display());
+            crate::eprintln_safe!("ry: {}: no such file or directory", root.display());
         }
-        print_empty_report();
+        print_empty_report()?;
         return Ok(discovery_exit_code(&cfg));
     }
 
@@ -196,11 +193,11 @@ pub(crate) fn run_check(
                 cfg.index.max_file_bytes,
             )?
             else {
-                print_empty_report();
+                print_empty_report()?;
                 return Ok(discovery_exit_code(&cfg));
             };
             if explain_files {
-                eprintln!("ry: include {} (stdin overlay)", overlay.path.display());
+                crate::eprintln_safe!("ry: include {} (stdin overlay)", overlay.path.display());
             }
             Some(overlay)
         }
@@ -214,14 +211,14 @@ pub(crate) fn run_check(
     // watch mode: an unreadable root is a discovery failure, not a quiet
     // empty set.
     if all_paths.is_empty() && !(watch && scan.read_errors.is_empty()) {
-        print_empty_report();
+        print_empty_report()?;
         if scan.read_errors.is_empty() {
             let roots = search_roots
                 .iter()
                 .map(|root| root.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            eprintln!("ry: no .R / .r files found in {roots}");
+            crate::eprintln_safe!("ry: no .R / .r files found in {roots}");
             return Ok(ExitCode::SUCCESS);
         }
         // Nothing was discovered because the walk could not read a root;
@@ -284,11 +281,11 @@ pub(crate) fn run_check(
         return Ok(result.exit_code(state.config()));
     }
     if !state.format().is_human() {
-        eprintln!("ry: --watch requires the full or concise output format");
+        crate::eprintln_safe!("ry: --watch requires the full or concise output format");
         return Ok(ExitCode::FAILURE);
     }
 
-    eprintln!(
+    crate::eprintln_safe!(
         "ry: watching {} file(s) for changes (Ctrl+C to stop)...",
         all_paths.len()
     );
@@ -322,7 +319,7 @@ pub(crate) fn run_check(
         // A root that stopped being readable dropped files out of the set.
         report_read_errors(&current.read_errors);
         // Clear the screen with ANSI escapes instead of spawning `clear`.
-        eprint!("\x1b[2J\x1b[H");
+        crate::eprint_safe!("\x1b[2J\x1b[H");
         let result = run_check_once(&all_paths, None, &state.check_context(min_confidence))?;
         result.print_summary(state.format(), statistics);
     }
@@ -476,7 +473,7 @@ impl WatchState {
                     Some(format) => {
                         if self.config_broken {
                             self.config_broken = false;
-                            eprintln!("ry: ry.toml parses again; reloaded configuration");
+                            crate::eprintln_safe!("ry: ry.toml parses again; reloaded configuration");
                         }
                         self.config_root = root;
                         self.cfg = cfg;
@@ -506,7 +503,10 @@ impl WatchState {
                 Ok(value) => {
                     if self.baseline_broken {
                         self.baseline_broken = false;
-                        eprintln!("ry: baseline {} loads again; reloaded", path.display());
+                        crate::eprintln_safe!(
+                            "ry: baseline {} loads again; reloaded",
+                            path.display()
+                        );
                     }
                     self.baseline = Some(value);
                 }
@@ -515,15 +515,17 @@ impl WatchState {
                     // report, so test for the missing file directly.
                     if !path.exists() && !self.baseline_from_cli {
                         if self.baseline.take().is_some() {
-                            eprintln!("ry: warning: {error}");
+                            crate::eprintln_safe!("ry: warning: {error}");
                         }
                         self.baseline_broken = false;
                     } else if !self.baseline_broken {
                         self.baseline_broken = true;
                         if self.baseline_from_cli {
-                            eprintln!("ry: warning: {error}; keeping the previous baseline");
+                            crate::eprintln_safe!(
+                                "ry: warning: {error}; keeping the previous baseline"
+                            );
                         } else {
-                            eprintln!("ry: warning: {error}");
+                            crate::eprintln_safe!("ry: warning: {error}");
                         }
                     }
                 }
@@ -538,7 +540,7 @@ impl WatchState {
     fn warn_config_broken(&mut self, error: &str) {
         if !self.config_broken {
             self.config_broken = true;
-            eprintln!("ry: warning: {error}; keeping the last good configuration");
+            crate::eprintln_safe!("ry: warning: {error}; keeping the last good configuration");
         }
     }
 }
@@ -711,11 +713,11 @@ impl CheckResult {
             }
             let mut rows: Vec<_> = counts.into_iter().collect();
             rows.sort_by_key(|(_, (n, _))| std::cmp::Reverse(*n));
-            eprintln!("ry: statistics ({} unique rule(s))", rows.len());
+            crate::eprintln_safe!("ry: statistics ({} unique rule(s))", rows.len());
             for (code, (n, sev)) in rows {
-                eprintln!("  {code:<6} {n:>4}  {sev}");
+                crate::eprintln_safe!("  {code:<6} {n:>4}  {sev}");
             }
-            eprintln!(
+            crate::eprintln_safe!(
                 "ry: checked {} file(s), {} diagnostic(s)",
                 self.file_count,
                 self.diagnostics.len()
@@ -724,9 +726,11 @@ impl CheckResult {
             return;
         }
         let (errors, warnings) = self.counts();
-        eprintln!(
+        crate::eprintln_safe!(
             "ry: checked {} file(s), {} error(s), {} warning(s)",
-            self.file_count, errors, warnings
+            self.file_count,
+            errors,
+            warnings
         );
         self.print_degraded();
     }
@@ -755,14 +759,14 @@ impl CheckResult {
         if self.degraded.is_empty() {
             return;
         }
-        eprintln!(
+        crate::eprintln_safe!(
             "ry: {} degraded scope(s) — serialized inventory unavailable; RY010 precision may be reduced:",
             self.degraded.len()
         );
         for note in &self.degraded {
-            eprintln!("  - {note}");
+            crate::eprintln_safe!("  - {note}");
         }
-        eprintln!(
+        crate::eprintln_safe!(
             "ry: inspect the listed files; raise `max-serialized-bytes` only for decoded-byte limit failures"
         );
     }
@@ -808,13 +812,15 @@ fn report_check_parse_failure(
     error: &pipeline::ParseError,
 ) -> ry_checker::Diagnostic {
     match error {
-        pipeline::ParseError::Read(error) => eprintln!("ry: {}: {}", path.display(), error),
+        pipeline::ParseError::Read(error) => {
+            crate::eprintln_safe!("ry: {}: {}", path.display(), error)
+        }
         pipeline::ParseError::Parse {
             error: error @ ry_core::ParseError::NestingLimit { .. },
             ..
-        } => eprintln!("ry: {}: {}", path.display(), error),
+        } => crate::eprintln_safe!("ry: {}: {}", path.display(), error),
         pipeline::ParseError::Parse { error, .. } => {
-            eprintln!("ry: {}: parse error: {}", path.display(), error)
+            crate::eprintln_safe!("ry: {}: parse error: {}", path.display(), error)
         }
     }
     ry_checker::frontend::parse_failure(&path.to_string_lossy(), error)
@@ -962,7 +968,7 @@ fn run_check_once(
         // Diagnostics go to stdout (matches ruff/ty): `ry check > log`
         // captures the diagnostics, while the summary line and watch-
         // mode chrome go to stderr.
-        print!("{}", rendered);
+        crate::output::write_stdout(&rendered)?;
     }
 
     Ok(CheckResult {
@@ -1056,20 +1062,20 @@ pub(crate) fn report_truncation(report: &ry_workspace::TruncationReport, root: &
         return;
     }
     if report.max_files_hit {
-        eprintln!(
+        crate::eprintln_safe!(
             "ry: warning: file count cap (index.max-files) reached at {}; additional R files were not discovered",
             root.display()
         );
     }
     for (path, size) in &report.oversized_files {
-        eprintln!(
+        crate::eprintln_safe!(
             "ry: warning: {} ({} bytes) exceeds the per-file size cap (index.max-file-bytes) and was not discovered",
             path.display(),
             size
         );
     }
     for dir in &report.depth_pruned_dirs {
-        eprintln!(
+        crate::eprintln_safe!(
             "ry: warning: directory depth cap (index.max-depth) reached at {}; files below {} were not discovered",
             root.display(),
             dir.display()
@@ -1107,13 +1113,13 @@ fn rescan(
             ry_workspace::discover_r_files(root, config_root, cfg, cfg.check_test_fixtures);
         if explain {
             for file in &result.files {
-                eprintln!("ry: include {}", file.display());
+                crate::eprintln_safe!("ry: include {}", file.display());
             }
             for (path, reason) in &result.skipped.entries {
-                eprintln!("ry: skip {} ({reason})", path.display());
+                crate::eprintln_safe!("ry: skip {} ({reason})", path.display());
             }
             if result.skipped.omitted > 0 {
-                eprintln!(
+                crate::eprintln_safe!(
                     "ry: {} more skipped paths omitted from explanation",
                     result.skipped.omitted
                 );
@@ -1157,11 +1163,11 @@ fn read_stdin_overlay(
         .take(limit.saturating_add(1))
         .read_to_end(&mut bytes);
     if let Err(error) = read {
-        eprintln!("ry: stdin for {}: {error}", logical.display());
+        crate::eprintln_safe!("ry: stdin for {}: {error}", logical.display());
         return Ok(None);
     }
     if bytes.len() as u64 > limit {
-        eprintln!(
+        crate::eprintln_safe!(
             "ry: stdin for {} exceeds index.max-file-bytes ({limit} bytes)",
             logical.display()
         );
@@ -1244,7 +1250,7 @@ fn overlay_path_for_roots(
 /// <error>`), on stderr so machine-readable stdout stays clean.
 fn report_read_errors(read_errors: &[(PathBuf, String)]) {
     for (path, error) in read_errors {
-        eprintln!("ry: {}: {error}", path.display());
+        crate::eprintln_safe!("ry: {}: {error}", path.display());
     }
 }
 

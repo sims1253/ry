@@ -526,10 +526,7 @@ pub(crate) fn run_dump_facts(
         result["annotation_snapshot_kind"] = json!("adopted_source_records");
         result["capabilities"]["annotation_records"] = json!("typehint_0.1.0_static_subset");
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&result).into_diagnostic()?
-    );
+    crate::output::writeln_stdout(&serde_json::to_string_pretty(&result).into_diagnostic()?)?;
     Ok(ExitCode::SUCCESS)
 }
 

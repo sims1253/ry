@@ -90,7 +90,7 @@ pub(crate) fn load_user_stubs(
 ) -> Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>> {
     let loaded = ry_workspace::load_stub_dirs(dirs);
     for warning in loaded.warnings {
-        eprintln!("ry: warning: {warning}");
+        crate::eprintln_safe!("ry: warning: {warning}");
     }
     Arc::new(loaded.stubs)
 }
@@ -116,7 +116,7 @@ pub(crate) fn discover_config(
         }
         Ok(None) => Ok((None, config::Config::default())),
         Err(e) => {
-            eprintln!("ry: {}", e);
+            crate::eprintln_safe!("ry: {}", e);
             Err(ExitCode::FAILURE)
         }
     }
@@ -158,7 +158,7 @@ fn size_rayon_pool() {
             .map_or(8, std::num::NonZeroUsize::get)
             .min(12);
         if let Err(error) = ThreadPoolBuilder::new().num_threads(workers).build_global() {
-            eprintln!("ry: warning: could not size the thread pool: {error}");
+            crate::eprintln_safe!("ry: warning: could not size the thread pool: {error}");
         }
     });
 }

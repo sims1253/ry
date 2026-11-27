@@ -102,7 +102,11 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Unit tests
-        run: bun test src/test/binary.test.ts src/test/errors.test.ts
+        # Bun module mocks are process-wide, so the runtime test, which
+        # mocks the server module that errors.test.ts imports, runs alone.
+        run: |
+          bun test src/test/binary.test.ts src/test/errors.test.ts
+          bun test src/test/runtime.test.ts
 
       - name: Package the built binary
         run: |

@@ -46,6 +46,7 @@ fn check_package_diagnostics(namespace: &str, source: &str) -> Vec<ry_checker::D
     project.set_package_facts(context.package_facts);
     project.set_imported_from(context.imported_bindings);
     project.set_external_s3_methods(context.s3_methods);
+    project.set_external_s3_method_functions(context.s3_method_functions);
     project
         .check()
         .into_iter()
@@ -215,4 +216,66 @@ fn distrusted_guard_names_the_length_method() {
         );
         assert!(warning.related.is_empty(), "{:?}", warning.related);
     }
+}
+
+#[test]
+fn three_arg_s3_method_custom_function_is_recognized_for_guards_and_dispatch() {
+    // A storage-length `length.widget` next to a lying `widget_len` registered
+    // via 3-arg `S3method(length, widget, widget_len)` must disable the guard (#925).
+    let diags = check_package_diagnostics(
+        "S3method(length, widget, widget_len)\n",
+        &format!(
+            "length.widget <- function(x) length(unclass(x))\n\
+             widget_len <- function(x) 1L\n\
+             {GUARD_SOURCE}"
+        ),
+    );
+    let [warning] = &diags[..] else {
+        panic!("expected RY032 naming widget_len, got {diags:?}");
+    };
+    assert_eq!(warning.code, "RY032");
+    assert!(
+        warning.message.contains("`widget_len` may report 1"),
+        "{}",
+        warning.message
+    );
+
+    // 3-arg `S3method(print, coverage, print_coverage)` gives `print_coverage`
+    // S3 dispatch context (no RY010 on `.Class` / `.Generic`) and resolves
+    // `print(x)` return type via `print_coverage`.
+    let dispatch_diags = check_package_diagnostics(
+        "S3method(print, coverage, print_coverage)\n",
+        "print_coverage <- function(x, ...) {\n\
+           g <- .Generic\n\
+           paste0(g, '!')\n\
+         }\n\
+         f <- function() {\n\
+           x <- structure(list(), class = 'coverage')\n\
+           print(x) + 1L\n\
+         }\n",
+    );
+    assert!(
+        !dispatch_diags.iter().any(|d| d.code == "RY010"),
+        "print_coverage must receive S3 dispatch context: {dispatch_diags:?}"
+    );
+    assert!(
+        dispatch_diags.iter().any(|d| d.code == "RY040"),
+        "print(x) must infer character return from print_coverage: {dispatch_diags:?}"
+    );
+
+    // When 3-arg `S3method(print, widget, remote_print)` names a function not
+    // defined in the checked sources, `print(x)` must NOT fall back to a
+    // coexisting `print.widget` definition.
+    let no_fallback_diags = check_package_diagnostics(
+        "S3method(print, widget, remote_print)\n",
+        "print.widget <- function(x, ...) 'wrong'\n\
+         f <- function() {\n\
+           x <- structure(list(), class = 'widget')\n\
+           print(x) + 1L\n\
+         }\n",
+    );
+    assert!(
+        !no_fallback_diags.iter().any(|d| d.code == "RY040"),
+        "unavailable custom S3method target must stay unknown, not fall back to print.widget: {no_fallback_diags:?}"
+    );
 }

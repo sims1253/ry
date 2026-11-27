@@ -1276,7 +1276,12 @@ impl Checker {
             .keys()
             .chain(&self.external_s3_methods)
             .filter(|(generic, _)| generic == "length")
-            .map(|(_, class)| format!("length.{class}"));
+            .map(|(_, class)| {
+                self.external_s3_method_functions
+                    .get(&("length".to_string(), class.clone()))
+                    .cloned()
+                    .unwrap_or_else(|| format!("length.{class}"))
+            });
         let defined: std::collections::BTreeSet<String> = functions
             .names()
             .filter(method)

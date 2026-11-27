@@ -361,6 +361,8 @@ impl IndexWriter {
                     let path = change.uri.path();
                     path.ends_with("DESCRIPTION")
                         || path.ends_with("NAMESPACE")
+                        || path.ends_with("uvr.toml")
+                        || path.ends_with("uvr.lock")
                         || change.uri.to_file_path().is_ok_and(|path| {
                             path.parent().and_then(Path::file_name)
                                 == Some(std::ffi::OsStr::new("src"))

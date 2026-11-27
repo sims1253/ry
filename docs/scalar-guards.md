@@ -53,10 +53,10 @@ guard honored ([#701](https://github.com/sims1253/ry/issues/701)). Any other
 `length.*` method, a registered or imported one ry cannot read, and a
 `NextMethod()` body all still disable the guard, and the RY032 message names
 the first such method with a note at its definition. `NAMESPACE`'s
-three-argument `S3method(length, cls, fun)` is read as `length.cls`, so a
-storage-length `length.cls` next to a lying `fun` registered that way is
-missed. A storage-length method still disables the stricter `stopifnot` and
-`if` scalar facts below.
+three-argument `S3method(length, cls, fun)` preserves the custom function name
+`fun`, so a lying `fun` registered that way disables the guard even when a
+storage-length `length.cls` also exists. A storage-length method still disables
+the stricter `stopifnot` and `if` scalar facts below.
 
 ## Scalar facts from `stopifnot`
 

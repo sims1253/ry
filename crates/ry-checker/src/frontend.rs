@@ -17,6 +17,7 @@ pub fn set_workspace_context(project: &mut Project, workspace: ry_workspace::Wor
     project.set_package_facts(workspace.package_facts);
     project.set_imported_from(workspace.imported_bindings);
     project.set_external_s3_methods(workspace.s3_methods);
+    project.set_external_s3_method_functions(workspace.s3_method_functions);
     project.set_load_bindings(workspace.load_bindings);
 }
 

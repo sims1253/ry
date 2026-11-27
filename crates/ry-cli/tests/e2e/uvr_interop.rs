@@ -88,33 +88,36 @@ impl UvrFixture {
         command
     }
 
-    fn diagnostics(&self, library: &Path) -> Vec<Value> {
-        let output = self
-            .command()
-            .args(["check", "--output-format", "json"])
-            .arg(&self.project)
-            .env("R_LIBS", library)
-            .output()
-            .unwrap();
+    fn diagnostics(&self, library: Option<&Path>) -> Vec<Value> {
+        let mut cmd = self.command();
+        cmd.args(["check", "--output-format", "json"])
+            .arg(&self.project);
+        if let Some(library) = library {
+            cmd.env("R_LIBS", library);
+        }
+        let output = cmd.output().unwrap();
         assert!(output.status.success(), "{output:?}");
         serde_json::from_slice(&output.stdout).unwrap()
     }
 
-    fn facts(&self, library: &Path) -> Value {
-        let output = self
-            .command()
-            .args(["dump-facts", "--format", "json"])
-            .arg(&self.project)
-            .env("R_LIBS", library)
-            .output()
-            .unwrap();
+    fn facts(&self, library: Option<&Path>) -> Value {
+        let mut cmd = self.command();
+        cmd.args(["dump-facts", "--format", "json"])
+            .arg(&self.project);
+        if let Some(library) = library {
+            cmd.env("R_LIBS", library);
+        }
+        let output = cmd.output().unwrap();
         assert!(output.status.success(), "{output:?}");
         serde_json::from_slice(&output.stdout).unwrap()
     }
 
-    fn lsp_diagnostics(&self, library: &Path) -> Vec<Value> {
+    fn lsp_diagnostics(&self, library: Option<&Path>) -> Vec<Value> {
         let mut command = self.command();
-        command.arg("server").env("R_LIBS", library);
+        command.arg("server");
+        if let Some(library) = library {
+            command.env("R_LIBS", library);
+        }
         JsonRpcProcess::spawn(&mut command)
             .unwrap()
             .open_and_publish(&self.project, &file_uri(&self.source()).unwrap(), SOURCE)
@@ -125,26 +128,20 @@ impl UvrFixture {
 #[test]
 fn cli_reads_uvr_metadata_without_attaching_or_scanning_the_library() {
     let fixture = UvrFixture::new();
-    let installed = fixture.diagnostics(&fixture.library);
-    assert_eq!(unbound_names(&installed), ["uvr_not_exported"]);
+    // Auto-discovers `.uvr/library` when `uvr.toml`/`uvr.lock` is present (#812).
+    let auto_discovered = fixture.diagnostics(None);
+    assert_eq!(unbound_names(&auto_discovered), ["uvr_not_exported"]);
     assert!(
-        installed
+        auto_discovered
             .iter()
             .all(|item| { item["path"].as_str() == Some(fixture.source().to_str().unwrap()) })
     );
 
-    let missing = fixture.diagnostics(&fixture.project.join("missing library"));
-    assert_eq!(unbound_names(&missing), ["uvr_export", "uvr_not_exported"]);
-    let installed_facts = fixture.facts(&fixture.library);
-    let missing_facts = fixture.facts(&fixture.project.join("missing library"));
-    assert_eq!(
-        installed_facts["files"][0]["source_hash"],
-        missing_facts["files"][0]["source_hash"]
-    );
-    assert_ne!(
-        installed_facts["files"][0]["context_id"], missing_facts["files"][0]["context_id"],
-        "installed NAMESPACE inventory must change the consumed context"
-    );
+    // Explicit `R_LIBS` continues to work too.
+    let installed = fixture.diagnostics(Some(&fixture.library));
+    assert_eq!(unbound_names(&installed), ["uvr_not_exported"]);
+
+    let installed_facts = fixture.facts(None);
     assert!(
         installed_facts["files"]
             .as_array()
@@ -153,19 +150,37 @@ fn cli_reads_uvr_metadata_without_attaching_or_scanning_the_library() {
             .all(|file| { !file["path"].as_str().unwrap().contains(".uvr/library") })
     );
 
+    // Removing `.uvr/library` drops the discovered package and changes context_id.
+    fs::remove_dir_all(&fixture.library).unwrap();
+    let missing = fixture.diagnostics(None);
+    assert_eq!(unbound_names(&missing), ["uvr_export", "uvr_not_exported"]);
+    let missing_facts = fixture.facts(None);
+    assert_eq!(
+        installed_facts["files"][0]["source_hash"],
+        missing_facts["files"][0]["source_hash"]
+    );
+    assert_ne!(
+        installed_facts["files"][0]["context_id"], missing_facts["files"][0]["context_id"],
+        "installed NAMESPACE inventory must change the consumed context"
+    );
+
     // uvr.toml and uvr.lock alone do not attach the installed package.
+    install_namespace(&fixture.library, PACKAGE, "uvr_export");
     fs::write(fixture.project.join("NAMESPACE"), "").unwrap();
-    let unattached = fixture.diagnostics(&fixture.library);
+    let unattached = fixture.diagnostics(None);
     assert_eq!(unbound_names(&unattached), unbound_names(&missing));
 }
 
 #[test]
 fn lsp_reads_the_environment_at_launch_like_the_cli() {
     let fixture = UvrFixture::new();
-    let installed = fixture.lsp_diagnostics(&fixture.library);
-    let missing = fixture.lsp_diagnostics(&fixture.project.join("missing library"));
-    assert_eq!(unbound_names(&installed), ["uvr_not_exported"]);
-    let mut missing = unbound_names(&missing);
+    // LSP auto-discovers `.uvr/library` without R_LIBS (#812).
+    let auto_discovered = fixture.lsp_diagnostics(None);
+    assert_eq!(unbound_names(&auto_discovered), ["uvr_not_exported"]);
+
+    // Without `.uvr/library`, both names are unbound.
+    fs::remove_dir_all(&fixture.library).unwrap();
+    let mut missing = unbound_names(&fixture.lsp_diagnostics(None));
     missing.sort_unstable();
     assert_eq!(missing, ["uvr_export", "uvr_not_exported"]);
 }

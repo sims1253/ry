@@ -61,6 +61,7 @@ pub struct Project {
     package_facts: HashMap<String, ry_workspace::PackageFacts>,
     imported_from: HashMap<String, HashMap<String, String>>,
     external_s3_methods: HashMap<String, HashSet<(String, String)>>,
+    external_s3_method_functions: HashMap<String, HashMap<(String, String), String>>,
     load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
     /// Paths open in an editor. A box module at such a path that this
@@ -443,6 +444,15 @@ impl Project {
         }
     }
 
+    pub fn set_external_s3_method_functions(
+        &mut self,
+        functions: HashMap<String, HashMap<(String, String), String>>,
+    ) {
+        if set_if_changed(&mut self.external_s3_method_functions, functions) {
+            self.mark_all_dirty();
+        }
+    }
+
     pub fn set_load_bindings(
         &mut self,
         bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
@@ -585,6 +595,12 @@ impl Project {
                 .values()
                 .flatten()
                 .cloned()
+                .collect(),
+        );
+        refiner.set_external_s3_method_functions(
+            self.external_s3_method_functions
+                .values()
+                .flat_map(|map| map.iter().map(|(k, v)| (k.clone(), v.clone())))
                 .collect(),
         );
         refiner.refinement_dependencies = Some(HashMap::new());
@@ -939,6 +955,12 @@ impl Project {
                     .set_imported_from(self.imported_from.get(path).cloned().unwrap_or_default());
                 emitter.set_external_s3_methods(
                     self.external_s3_methods
+                        .get(path)
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+                emitter.set_external_s3_method_functions(
+                    self.external_s3_method_functions
                         .get(path)
                         .cloned()
                         .unwrap_or_default(),

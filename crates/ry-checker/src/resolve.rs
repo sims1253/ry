@@ -186,13 +186,10 @@ impl Checker {
                 let base = BASE_DATABASE_PACKAGES
                     .contains(&pkg)
                     .then_some((self.typeshed.as_ref(), SchemaProvider::Base));
-                // Only a user stub named after a standard package tells
-                // these orders apart.
-                let exact = if lookup == StubLookup::Schema {
-                    [package(pkg), base]
-                } else {
-                    [base, package(pkg)]
-                };
+                // Package-specific stubs (including user overrides for
+                // standard packages like `stats` or `utils`) take precedence
+                // over the shared embedded base database (#924).
+                let exact = [package(pkg), base];
                 (member, exact, false)
             }
             None => {

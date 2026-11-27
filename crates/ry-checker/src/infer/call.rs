@@ -226,6 +226,43 @@ impl Checker {
         }
     }
 
+    /// Whether an atomic constructor call (`c`, `list`, `data.frame`, `t`,
+    /// `as.data.frame`) resolves to base rather than a qualified external
+    /// package (`otherpkg::t`), a project/lexical helper, or an import from
+    /// another package (#924). Unlike `error_wrapper_recognized`, user base
+    /// stubs do not disable base constructors.
+    fn base_constructor_recognized(
+        &self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        scope: &Scope,
+    ) -> bool {
+        if let Some((pkg, _)) = crate::resolve::split_qualified(semantic_name) {
+            return pkg == "base"
+                && !matches!(func, Expr::String(_, _))
+                && name == semantic_name
+                && !self.literal_bindings_may_be_shadowed(
+                    ["::", "`::`", ":::", "`:::`"],
+                    &HashSet::new(),
+                    scope,
+                );
+        }
+        if name != semantic_name {
+            return false;
+        }
+        !scope.is_parameter(semantic_name)
+            && scope.lexical_definition(semantic_name).is_none()
+            && !self.fn_table.functions.binds(semantic_name)
+            && self
+                .imported_from
+                .get(semantic_name)
+                .is_none_or(|imported| imported == "base")
+            && !scope
+                .get(semantic_name)
+                .is_some_and(|ty| ty.fn_sig.is_some() || ty.mode.may_be_function())
+    }
+
     /// Discard declaration-only exact identities after evaluating an
     /// expression whose binding effects cannot be excluded. This extra
     /// invalidation runs only when an adopted contract is selected.
@@ -450,8 +487,19 @@ impl Checker {
         }
 
         // `tryCatch(expr, ..., handler = fun)`: the join of the main
-        // expression and all handler return types.
-        if semantic_name == "tryCatch" {
+        // expression and all handler return types. Guarded by base provenance
+        // so `base::tryCatch(...)` is recognized and local/project/otherpkg
+        // definitions are not hijacked (#924).
+        if lookup_name == "tryCatch"
+            && self.error_wrapper_recognized(
+                &name,
+                func,
+                &semantic_name,
+                &lookup_name,
+                "base",
+                scope,
+            )
+        {
             return self.infer_trycatch_call(args, scope);
         }
 
@@ -548,6 +596,20 @@ impl Checker {
             return t;
         }
 
+        // A qualified call (`pkg::fun(...)` / `pkg:::fun(...)`) executes
+        // through the `::` / `:::` operator. If those operators may be
+        // shadowed in scope, neither base constructors nor package stubs
+        // describe the result (#924).
+        if semantic_name.contains("::")
+            && self.literal_bindings_may_be_shadowed(
+                ["::", "`::`", ":::", "`:::`"],
+                &HashSet::new(),
+                scope,
+            )
+        {
+            return RType::unknown();
+        }
+
         // No lexical callable won. A bare typed package value is a
         // non-function call, not a zero-argument function signature --
         // but only when no function of that name is reachable anywhere
@@ -565,15 +627,13 @@ impl Checker {
             return self.emit_symbol_not_callable(&name, value_type.mode, span);
         }
 
-        // The atomic-constructor stage: `c`, `list`, `data.frame`, `t`,
-        // `as.data.frame`.
-        if let Some(t) = self.infer_atomic_constructor_call(&lookup_name, args, &call.arg_types) {
-            return t;
-        }
-
-        // Class dispatch must run before the higher-order, FnTable, and
-        // typeshed stages below: a method's inferred return type wins over
-        // the generic's stub.
+        // S4 dispatch runs before constructors so an explicit `setMethod`
+        // wins over any base fast path. Non-generic base constructors
+        // (`list`, `data.frame`) run before user S3 dispatch because they do
+        // not dispatch S3 methods (`list.foo` must never hijack `list(x)`),
+        // while S3-generic constructors (`c`, `t`, `as.data.frame`) run after
+        // user S3 dispatch so `t.foo` / `c.foo` / `as.data.frame.foo` win
+        // over base's fast path (#924).
         let instances: Vec<bool> = args
             .iter()
             .map(|argument| self.is_proven_new_call(&argument.value, scope))
@@ -596,12 +656,29 @@ impl Checker {
             S4Selection::NoCandidate => {}
         }
 
+        let base_constructor_ok = call.head.user_function().is_none()
+            && self.base_constructor_recognized(&name, func, &semantic_name, scope);
+
+        if base_constructor_ok
+            && let Some(t) =
+                self.infer_non_generic_constructor_call(&lookup_name, args, &call.arg_types)
+        {
+            return t;
+        }
+
         if let Some(rt) = call
             .arg_types
             .first()
             .and_then(|first| self.user_s3_dispatch_return(&lookup_name, first))
         {
             return rt;
+        }
+
+        if base_constructor_ok
+            && let Some(t) =
+                self.infer_generic_constructor_call(&lookup_name, args, &call.arg_types)
+        {
+            return t;
         }
 
         // S3 dispatch: when a known generic is called with a classed

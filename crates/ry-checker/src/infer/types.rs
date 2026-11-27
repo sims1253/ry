@@ -241,8 +241,21 @@ pub(crate) fn standalone_check_provably_rejects(actual: &RType, expected: &RType
         }
     }
 
+    fn length_bounds(length: Length) -> (usize, Option<usize>) {
+        match length {
+            Length::Zero => (0, Some(0)),
+            Length::One => (1, Some(1)),
+            Length::Known(n) => (n, Some(n)),
+            Length::Nonempty => (1, None),
+            Length::AtLeast(n) => (n, None),
+            Length::Unknown => (0, None),
+        }
+    }
+
     fn lengths_overlap(actual: Length, expected: Length) -> bool {
-        actual == Length::Unknown || expected == Length::Unknown || actual == expected
+        let (min_a, max_a) = length_bounds(actual);
+        let (min_b, max_b) = length_bounds(expected);
+        max_b.is_none_or(|upper| min_a <= upper) && max_a.is_none_or(|upper| min_b <= upper)
     }
 
     fn classes_overlap(actual: &RType, expected: &RType) -> bool {
@@ -310,35 +323,40 @@ pub(crate) fn literal_callee_mode(e: &Expr) -> Option<Mode> {
 }
 
 /// Compute the longest known length among a slice of argument types.
-/// Used by `paste` / `paste0` / `sprintf` which return a character
-/// vector whose length is the longest of the input vectors (R recycles
-/// shorter args to match). Returns `Length::Unknown` if any arg has an
-/// unknown length; a proven-nonempty arg keeps the maximum nonempty.
+/// Used by `paste` / `paste0` / `sprintf` / `data.frame` which recycle
+/// shorter inputs to the longest argument length. Tracks exact interval
+/// bounds `[min, max]` so zero-length inputs stay zero and known lower
+/// bounds survive `Unknown` / `Nonempty` peers (#923).
 pub(crate) fn longest_arg_length(arg_types: &[RType]) -> Length {
-    let mut max: Length = Length::One;
+    if arg_types.is_empty() {
+        return Length::Zero;
+    }
+    let mut min_len: usize = 0;
+    let mut max_len: Option<usize> = Some(0);
     for t in arg_types {
-        max = match (max, t.length) {
-            (Length::Zero, x) | (x, Length::Zero) => x,
-            (Length::One, x) | (x, Length::One) => x,
-            (Length::Known(a), Length::Known(b)) => Length::Known(a.max(b)),
-            (Length::AtLeast(a), Length::AtLeast(b)) => Length::AtLeast(a.max(b)),
-            (Length::AtLeast(a), Length::Known(b)) | (Length::Known(b), Length::AtLeast(a)) => {
-                Length::AtLeast(a.max(b))
-            }
-            // max(>= a, anything) keeps the >= a lower bound: a
-            // possibly-empty operand cannot pull the maximum down.
-            (Length::AtLeast(a), Length::Nonempty | Length::Unknown)
-            | (Length::Nonempty | Length::Unknown, Length::AtLeast(a)) => Length::AtLeast(a),
-            (Length::Nonempty, Length::Known(_))
-            | (Length::Known(_), Length::Nonempty)
-            | (Length::Nonempty, Length::Nonempty) => Length::Nonempty,
-            (Length::Nonempty, Length::Unknown) | (Length::Unknown, Length::Nonempty) => {
-                Length::Nonempty
-            }
-            _ => return Length::Unknown,
+        let (lo, hi) = match t.length {
+            Length::Zero => (0, Some(0)),
+            Length::One => (1, Some(1)),
+            Length::Known(n) => (n, Some(n)),
+            Length::Nonempty => (1, None),
+            Length::AtLeast(n) => (n, None),
+            Length::Unknown => (0, None),
+        };
+        min_len = min_len.max(lo);
+        max_len = match (max_len, hi) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            _ => None,
         };
     }
-    max
+    match (min_len, max_len) {
+        (0, Some(0)) => Length::Zero,
+        (1, Some(1)) => Length::One,
+        (n, Some(m)) if n == m => Length::Known(n),
+        (0, None) => Length::Unknown,
+        (1, None) => Length::Nonempty,
+        (n, None) => Length::AtLeast(n),
+        (n, Some(_)) => Length::AtLeast(n),
+    }
 }
 
 /// Build a `ColumnSchema` from a `list(...)` / `data.frame(...)` argument

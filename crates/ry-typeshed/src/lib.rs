@@ -1614,7 +1614,8 @@ fn validate_function_semantics(
                 if !all_zero_ok
                     || !any_zero_ok
                     || !has_zero_rule
-                    || (spec.any_value_zero.is_some() && spec.recycle0.is_some())
+                    || (spec.any_value_zero.is_some()
+                        && (spec.recycle0.is_some() || spec.all_values_zero.is_some()))
                 {
                     validation_error(
                         report,
@@ -2382,6 +2383,10 @@ mod tests {
             assert!(
                 typeshed.s3_methods.is_empty() || package_has_s3_methods(name),
                 "{name}: declares s3_methods but the prefilter misses it"
+            );
+            assert!(
+                !typeshed.partial || package_is_partial(&BTreeMap::new(), name),
+                "{name}: declares partial but the prefilter misses it"
             );
         }
         // Pin the current inventory so a data change that flips a

@@ -162,8 +162,55 @@ fn range_finite_control_is_not_data_and_may_drop() {
             "flag <- runif(1) > 0.5\nx <- range(1L, finite = flag)",
             INTEGER_OR_DOUBLE,
         ),
+        // `max()`/`min()` do not have a `finite` control, so `finite = FALSE`
+        // is a logical data argument (R returns integer, not double).
+        ("x <- max(integer(0), finite = FALSE)", INTEGER),
+        ("x <- min(integer(0), finite = FALSE)", INTEGER),
     ] {
         assert_eq!(mode_of(src), expected, "`{src}`");
+    }
+}
+
+/// Positional and unique-partial formal matches on declared `drop_controls`
+/// trigger the empty-fallback widening just like exact named controls.
+#[test]
+fn input_mode_drop_controls_match_positional_and_partial_formals() {
+    let stub = r#"{
+        "schema_version": "2",
+        "package": "dropctrlpkg",
+        "version": "0.0.1",
+        "functions": {
+            "custom_max": {
+                "params": ["x", {"name": "remove", "default": true}],
+                "return": {"mode": "opaque", "length": "1", "na": true},
+                "return_mode": {
+                    "kind": "input_mode",
+                    "params": ["x"],
+                    "modes": {"integer": "integer", "double": "double"},
+                    "empty": "double",
+                    "drop_controls": ["remove"]
+                }
+            }
+        }
+    }"#;
+    for (src, expected) in [
+        ("x <- dropctrlpkg::custom_max(1L, FALSE)", INTEGER),
+        (
+            "x <- dropctrlpkg::custom_max(NA_integer_, TRUE)",
+            INTEGER_OR_DOUBLE,
+        ),
+        (
+            "x <- dropctrlpkg::custom_max(NA_integer_, rem = TRUE)",
+            INTEGER_OR_DOUBLE,
+        ),
+        (
+            "x <- dropctrlpkg::custom_max(NA_integer_, remove = FALSE)",
+            INTEGER,
+        ),
+    ] {
+        let (diagnostics, scope) = check_with_stubs(src, &[("dropctrlpkg.json", stub)]);
+        assert!(diagnostics.is_empty(), "`{src}`: {diagnostics:?}");
+        assert_eq!(modes(scope.get("x").unwrap()), expected, "`{src}`");
     }
 }
 
@@ -194,14 +241,11 @@ fn input_mode_multi_mode_outcome_supports_sum_integer_overflow() {
             }
         }
     }"#;
-    let (diagnostics_fn, _) = (
-        |src: &str| {
-            let (diagnostics, scope) = check_with_stubs(src, &[("overflowpkg.json", stub)]);
-            assert!(diagnostics.is_empty(), "`{src}`: {diagnostics:?}");
-            modes(scope.get("x").unwrap())
-        },
-        (),
-    );
+    let diagnostics_fn = |src: &str| {
+        let (diagnostics, scope) = check_with_stubs(src, &[("overflowpkg.json", stub)]);
+        assert!(diagnostics.is_empty(), "`{src}`: {diagnostics:?}");
+        modes(scope.get("x").unwrap())
+    };
 
     for (src, expected) in [
         ("x <- overflowpkg::sum_overflow(TRUE, FALSE)", INTEGER),

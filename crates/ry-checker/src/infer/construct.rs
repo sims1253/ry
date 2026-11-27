@@ -998,19 +998,19 @@ impl Checker {
                     drop_controls,
                 }) = &sig.return_mode
                 {
-                    let data = input_mode_data(
-                        sig,
-                        params,
-                        drop_controls,
-                        empty.is_some(),
-                        args,
-                        arg_types,
-                    );
+                    // Legacy vendored `range` (length "2" with empty fallback,
+                    // before r-typeshed 0.7.0 adds explicit `drop_controls`)
+                    // treats `finite` as a drop control; `min`/`max` (length
+                    // "1") treat `finite = ...` as ordinary data.
+                    let legacy_finite =
+                        drop_controls.is_empty() && empty.is_some() && c.length == "2";
+                    let data =
+                        input_mode_data(sig, params, drop_controls, legacy_finite, args, arg_types);
                     input_modes = input_mode_result(
                         modes,
                         *empty,
                         &data,
-                        input_mode_may_drop(args, drop_controls, empty.is_some()),
+                        input_mode_may_drop(sig, drop_controls, legacy_finite, args),
                     )
                     .unwrap_or_default();
                     match input_modes.as_slice() {
@@ -1282,13 +1282,9 @@ fn integer_or_double_type(length: Length) -> RType {
 /// not literal `FALSE`, able to drop elements from the input). `na.rm` is a
 /// formal of every dots-led Summary member; `finite` is a formal of
 /// `range.default` (handled via `...` on the `range` generic).
-fn is_input_mode_drop_control(
-    name: &str,
-    drop_controls: &[String],
-    has_empty_fallback: bool,
-) -> bool {
+fn is_input_mode_drop_control(name: &str, drop_controls: &[String], legacy_finite: bool) -> bool {
     name == "na.rm"
-        || (has_empty_fallback && name == "finite")
+        || (legacy_finite && name == "finite")
         || drop_controls.iter().any(|control| control == name)
 }
 
@@ -1300,7 +1296,7 @@ fn input_mode_data(
     sig: &FunctionSig,
     params: &[String],
     drop_controls: &[String],
-    has_empty_fallback: bool,
+    legacy_finite: bool,
     args: &[Arg],
     arg_types: &[RType],
 ) -> Vec<RType> {
@@ -1327,7 +1323,7 @@ fn input_mode_data(
             None => {
                 listed("...")
                     && arg.name.as_deref().is_none_or(|name| {
-                        !is_input_mode_drop_control(name, drop_controls, has_empty_fallback)
+                        !is_input_mode_drop_control(name, drop_controls, legacy_finite)
                     })
             }
         })
@@ -1337,13 +1333,30 @@ fn input_mode_data(
 
 /// Whether a drop control (`na.rm`, `finite`, or any declared `drop_controls`)
 /// may drop every element: anything but an absent or literal `FALSE` value.
-fn input_mode_may_drop(args: &[Arg], drop_controls: &[String], has_empty_fallback: bool) -> bool {
-    args.iter().any(|arg| {
-        arg.name
-            .as_deref()
-            .is_some_and(|name| is_input_mode_drop_control(name, drop_controls, has_empty_fallback))
-            && !matches!(arg.value, Expr::Logical(false, _))
-    })
+/// Uses R's formal binding (`match_params`) so positional and partial matches
+/// on declared formal controls are recognized alongside `...`-absorbed names.
+fn input_mode_may_drop(
+    sig: &FunctionSig,
+    drop_controls: &[String],
+    legacy_finite: bool,
+    args: &[Arg],
+) -> bool {
+    let bindings = match_params(&sig.params, args);
+    args.iter()
+        .zip(&bindings.param_for_arg)
+        .any(|(arg, formal)| {
+            let is_control = match formal {
+                Some(index) => is_input_mode_drop_control(
+                    &sig.params[*index].name,
+                    drop_controls,
+                    legacy_finite,
+                ),
+                None => arg.name.as_deref().is_some_and(|name| {
+                    is_input_mode_drop_control(name, drop_controls, legacy_finite)
+                }),
+            };
+            is_control && !matches!(arg.value, Expr::Logical(false, _))
+        })
 }
 
 /// Resolve an `input_mode` rule to its possible result modes, or `None`

@@ -650,167 +650,215 @@ impl Backend {
 
     /// Return inlay hints using the file's full project/workspace context
     /// (`FnTable`, `WorkspaceContext`, stubs) when eligible, or single-file
-    /// fallback for size-gated buffers; CPU-bound inference runs on
-    /// `spawn_blocking` so concurrent LSP requests do not stall (#930).
+    /// fallback for size-gated buffers; path grouping and CPU-bound inference
+    /// run on `spawn_blocking` so concurrent LSP requests do not stall (#930).
     async fn hints_for(&self, path: &str) -> Option<Vec<InlayHint>> {
-        let (generation, user_stubs, eligible, owner_root, sibling_open_paths) = {
-            let state = self.state.lock().await;
-            let generation = state.diag_generation;
-            let stubs = &state.context_for_path(path).stubs;
-            if let Some(cached) = state.docs.active(path).and_then(|doc| doc.hints.as_ref())
-                && cached.generation == generation
-                && Arc::ptr_eq(&cached.stubs, stubs)
-            {
-                return Some(cached.hints.clone());
-            }
-            let eligible = state.docs.active(path).is_some_and(|doc| {
-                state.eligibility_for_path_with_len(path, Some(doc.text.len() as u64))
-            });
-            let owner_root = state
-                .folder_context_for_path(path)
-                .map(|ctx| ctx.root.clone());
-            let target_pkg = ry_workspace::enclosing_package_root(Path::new(path));
-            let sibling_open_paths: Vec<(String, i32)> = if eligible {
-                state
-                    .docs
-                    .paths()
-                    .into_iter()
-                    .filter(|p| {
-                        p != path
-                            && state.folder_context_for_path(p).map(|ctx| ctx.root.clone())
-                                == owner_root
-                            && ry_workspace::enclosing_package_root(Path::new(p)) == target_pkg
-                    })
-                    .filter_map(|p| {
-                        let doc = state.docs.active(&p)?;
-                        state
-                            .eligibility_for_path_with_len(&p, Some(doc.text.len() as u64))
-                            .then_some((p, doc.version))
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            (
-                generation,
-                Arc::clone(stubs),
-                eligible,
-                owner_root,
-                sibling_open_paths,
-            )
-        };
-
-        let (file, text) = parsed_file(&self.state, path).await.ok()?;
-
-        let hints = if !eligible {
-            // Over-cap buffers stay out of project-wide state while still
-            // serving local inlay hints off the async runtime.
-            let target_path = path.to_string();
-            let file_for_task = Arc::clone(&file);
-            let stubs_for_task = Arc::clone(&user_stubs);
-            let text_for_task = text.clone();
-            tokio::task::spawn_blocking(move || {
-                let mut checker = ry_checker::Checker::new(&target_path);
-                checker.set_user_stubs(stubs_for_task);
-                checker.enable_assignment_capture();
-                checker.check(&file_for_task);
-                collect_inlay_hints(&checker.take_assignment_types(), &text_for_task)
-            })
-            .await
-            .ok()?
-        } else {
-            let mut parsed_siblings = Vec::with_capacity(sibling_open_paths.len());
-            for (sibling_path, version) in sibling_open_paths {
-                if let Ok((sibling_file, _)) = parsed_file(&self.state, &sibling_path).await {
-                    parsed_siblings.push((sibling_path, version, sibling_file));
+        // Retry if a concurrent `publish_diagnostics` advances `diag_generation`
+        // while hints are being computed, so valid hints are not dropped.
+        for _attempt in 0..3 {
+            let (generation, user_stubs, eligible, owner_root, candidate_open, candidate_disk) = {
+                let state = self.state.lock().await;
+                let generation = state.diag_generation;
+                let stubs = &state.context_for_path(path).stubs;
+                if let Some(cached) = state.docs.active(path).and_then(|doc| doc.hints.as_ref())
+                    && cached.generation == generation
+                    && Arc::ptr_eq(&cached.stubs, stubs)
+                {
+                    return Some(cached.hints.clone());
                 }
-            }
-            let target_pkg = ry_workspace::enclosing_package_root(Path::new(path));
-            let (cache, workspace, config, group_files, open_paths, colliding) = {
-                let mut state = self.state.lock().await;
-                let target_version = state.docs.active(path).map_or(0, |doc| doc.version);
-                let open_paths: HashSet<String> = state.docs.paths().into_iter().collect();
-                let colliding: HashSet<String> = open_paths
-                    .iter()
-                    .filter(|p| state.docs.at(p).len() > 1)
-                    .cloned()
-                    .collect();
-                let mut group_files: Vec<PackageFile> = state
-                    .disk_files
-                    .iter()
-                    .filter(|(p, _)| !state.docs.contains(p))
-                    .filter(|(p, _)| state.eligibility_for_path(p))
-                    .filter(|(p, _)| {
-                        state.folder_context_for_path(p).map(|ctx| ctx.root.clone()) == owner_root
-                            && ry_workspace::enclosing_package_root(Path::new(p)) == target_pkg
-                    })
-                    .map(|(p, f)| (p.clone(), 0, Arc::clone(f)))
-                    .collect();
-                group_files.extend(parsed_siblings);
-                group_files.push((path.to_string(), target_version, Arc::clone(&file)));
-                group_files.sort_by(|a, b| a.0.cmp(&b.0));
-
-                let state = &mut *state;
-                let ctx = match &owner_root {
-                    Some(root) => state
-                        .folder_contexts
-                        .iter_mut()
-                        .find(|ctx| &ctx.root == root)
-                        .unwrap_or(&mut state.fallback),
-                    None => &mut state.fallback,
+                let eligible = state.docs.active(path).is_some_and(|doc| {
+                    state.eligibility_for_path_with_len(path, Some(doc.text.len() as u64))
+                });
+                let owner_root = state
+                    .folder_context_for_path(path)
+                    .map(|ctx| ctx.root.clone());
+                let (candidate_open, candidate_disk) = if eligible {
+                    let open: Vec<(String, i32)> = state
+                        .docs
+                        .paths()
+                        .into_iter()
+                        .filter(|p| {
+                            p != path
+                                && state.folder_context_for_path(p).map(|ctx| ctx.root.clone())
+                                    == owner_root
+                        })
+                        .filter_map(|p| {
+                            let doc = state.docs.active(&p)?;
+                            state
+                                .eligibility_for_path_with_len(&p, Some(doc.text.len() as u64))
+                                .then_some((p, doc.version))
+                        })
+                        .collect();
+                    let disk: Vec<(String, Arc<SourceFile>)> = state
+                        .disk_files
+                        .iter()
+                        .filter(|(p, _)| !state.docs.contains(p))
+                        .filter(|(p, _)| state.eligibility_for_path(p))
+                        .filter(|(p, _)| {
+                            state.folder_context_for_path(p).map(|ctx| ctx.root.clone())
+                                == owner_root
+                        })
+                        .map(|(p, f)| (p.clone(), Arc::clone(f)))
+                        .collect();
+                    (open, disk)
+                } else {
+                    (Vec::new(), Vec::new())
                 };
-                let cache = Arc::clone(ctx.package_caches.entry(target_pkg.clone()).or_default());
-                let workspace = ctx
-                    .workspace_contexts
-                    .get(&target_pkg)
-                    .cloned()
-                    .unwrap_or_default();
-                let config = ctx.config.clone();
-                (cache, workspace, config, group_files, open_paths, colliding)
+                (
+                    generation,
+                    Arc::clone(stubs),
+                    eligible,
+                    owner_root,
+                    candidate_open,
+                    candidate_disk,
+                )
             };
 
-            let mut guard = cache.lock_owned().await;
-            let target_path = path.to_string();
-            let stubs_for_task = Arc::clone(&user_stubs);
-            let text_for_task = text.clone();
-            tokio::task::spawn_blocking(move || {
-                let adoptable: Vec<Arc<SourceFile>> = group_files
-                    .iter()
-                    .filter(|(p, _, _)| !colliding.contains(p))
-                    .map(|(_, _, f)| Arc::clone(f))
-                    .collect();
-                let adopted = ry_checker::frontend::adopted_records(&adoptable, &config);
-                let types = guard.assignment_types_for_with_workspace(
-                    &target_path,
-                    group_files,
-                    stubs_for_task,
-                    workspace,
-                    adopted.records,
-                    &open_paths,
-                );
-                collect_inlay_hints(&types, &text_for_task)
-            })
-            .await
-            .ok()?
-        };
+            let (file, text) = parsed_file(&self.state, path).await.ok()?;
 
-        let mut state = self.state.lock().await;
-        if state.diag_generation != generation
-            || !Arc::ptr_eq(&state.context_for_path(path).stubs, &user_stubs)
-        {
-            return None;
+            let hints = if !eligible {
+                // Over-cap buffers stay out of project-wide state while still
+                // serving local inlay hints off the async runtime.
+                let target_path = path.to_string();
+                let file_for_task = Arc::clone(&file);
+                let stubs_for_task = Arc::clone(&user_stubs);
+                let text_for_task = text.clone();
+                tokio::task::spawn_blocking(move || {
+                    let mut checker = ry_checker::Checker::new(&target_path);
+                    checker.set_user_stubs(stubs_for_task);
+                    checker.enable_assignment_capture();
+                    checker.check(&file_for_task);
+                    collect_inlay_hints(&checker.take_assignment_types(), &text_for_task)
+                })
+                .await
+                .ok()?
+            } else {
+                // Group candidate paths on a blocking worker using
+                // `group_by_package_root` (`analysis_group_key` with per-dir
+                // caching) so reports stay isolated and no disk walks run while
+                // holding `self.state`.
+                let target_path_for_group = path.to_string();
+                let (target_key, sibling_open_paths, group_disk_files) =
+                    tokio::task::spawn_blocking(move || {
+                        let open_len = candidate_open.len();
+                        let mut all_paths: Vec<&str> =
+                            Vec::with_capacity(1 + open_len + candidate_disk.len());
+                        all_paths.push(target_path_for_group.as_str());
+                        for (p, _) in &candidate_open {
+                            all_paths.push(p.as_str());
+                        }
+                        for (p, _) in &candidate_disk {
+                            all_paths.push(p.as_str());
+                        }
+                        let groups = ry_workspace::group_by_package_root(all_paths);
+                        let (key, indices) = groups
+                            .into_iter()
+                            .find(|(_, idxs)| idxs.contains(&0))
+                            .unwrap_or((None, vec![0]));
+                        let mut matched_open = Vec::new();
+                        let mut matched_disk = Vec::new();
+                        for idx in indices {
+                            if idx == 0 {
+                                continue;
+                            } else if idx <= open_len {
+                                matched_open.push(candidate_open[idx - 1].clone());
+                            } else {
+                                let (p, f) = &candidate_disk[idx - 1 - open_len];
+                                matched_disk.push((p.clone(), 0, Arc::clone(f)));
+                            }
+                        }
+                        (key, matched_open, matched_disk)
+                    })
+                    .await
+                    .ok()?;
+
+                let mut parsed_siblings = Vec::with_capacity(sibling_open_paths.len());
+                for (sibling_path, version) in sibling_open_paths {
+                    if let Ok((sibling_file, _)) = parsed_file(&self.state, &sibling_path).await {
+                        parsed_siblings.push((sibling_path, version, sibling_file));
+                    }
+                }
+                let (cache, workspace, config, group_files, open_paths, colliding) = {
+                    let mut state = self.state.lock().await;
+                    let target_version = state.docs.active(path).map_or(0, |doc| doc.version);
+                    let open_paths: HashSet<String> = state.docs.paths().into_iter().collect();
+                    let colliding: HashSet<String> = open_paths
+                        .iter()
+                        .filter(|p| state.docs.at(p).len() > 1)
+                        .cloned()
+                        .collect();
+                    let mut group_files = group_disk_files;
+                    group_files.extend(parsed_siblings);
+                    group_files.push((path.to_string(), target_version, Arc::clone(&file)));
+                    group_files.sort_by(|a, b| a.0.cmp(&b.0));
+
+                    let state = &mut *state;
+                    let ctx = match &owner_root {
+                        Some(root) => state
+                            .folder_contexts
+                            .iter_mut()
+                            .find(|ctx| &ctx.root == root)
+                            .unwrap_or(&mut state.fallback),
+                        None => &mut state.fallback,
+                    };
+                    let cache =
+                        Arc::clone(ctx.package_caches.entry(target_key.clone()).or_default());
+                    let workspace = ctx
+                        .workspace_contexts
+                        .get(&target_key)
+                        .cloned()
+                        .unwrap_or_default();
+                    let config = ctx.config.clone();
+                    (cache, workspace, config, group_files, open_paths, colliding)
+                };
+
+                let mut guard = cache.lock_owned().await;
+                let target_path = path.to_string();
+                let stubs_for_task = Arc::clone(&user_stubs);
+                let text_for_task = text.clone();
+                tokio::task::spawn_blocking(move || {
+                    let adoptable: Vec<Arc<SourceFile>> = group_files
+                        .iter()
+                        .filter(|(p, _, _)| !colliding.contains(p))
+                        .map(|(_, _, f)| Arc::clone(f))
+                        .collect();
+                    let adopted = ry_checker::frontend::adopted_records(&adoptable, &config);
+                    let types = guard.assignment_types_for_with_workspace(
+                        &target_path,
+                        group_files,
+                        stubs_for_task,
+                        workspace,
+                        adopted.records,
+                        &open_paths,
+                    );
+                    collect_inlay_hints(&types, &text_for_task)
+                })
+                .await
+                .ok()?
+            };
+
+            let mut state = self.state.lock().await;
+            state.docs.active(path)?;
+            if state.diag_generation != generation
+                || !Arc::ptr_eq(&state.context_for_path(path).stubs, &user_stubs)
+            {
+                continue;
+            }
+            let Some(doc) = state.docs.active_mut(path).filter(|doc| {
+                doc.parsed
+                    .as_ref()
+                    .is_some_and(|parsed| Arc::ptr_eq(parsed, &file))
+            }) else {
+                continue;
+            };
+            doc.hints = Some(CachedHints {
+                generation,
+                stubs: user_stubs,
+                hints: hints.clone(),
+            });
+            return Some(hints);
         }
-        let doc = state.docs.active_mut(path).filter(|doc| {
-            doc.parsed
-                .as_ref()
-                .is_some_and(|parsed| Arc::ptr_eq(parsed, &file))
-        })?;
-        doc.hints = Some(CachedHints {
-            generation,
-            stubs: user_stubs,
-            hints: hints.clone(),
-        });
-        Some(hints)
+        None
     }
 }
 

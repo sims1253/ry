@@ -187,23 +187,44 @@ pub fn with_attached(
         .collect()
 }
 
+/// Whether a named argument unambiguously matches `character.only` in
+/// `library()` / `require()` (no other formal starts with `"c"`).
+fn matches_character_only_formal(name: &str) -> bool {
+    !name.is_empty() && "character.only".starts_with(name)
+}
+
+/// Whether a named argument unambiguously matches `package` in `library()` /
+/// `require()` (`"p"` is ambiguous with `library`'s `pos`; `"pa"`..=`"package"`
+/// are unambiguous).
+fn matches_package_formal(name: &str) -> bool {
+    name.len() >= 2 && "package".starts_with(name)
+}
+
 /// Whether `library()` / `require()` may run with `character.only = TRUE`.
 /// Any supplied `character.only` that is not literally `FALSE` can force
 /// symbol arguments to evaluate as variables rather than literal package names.
 pub fn character_only_may_be_true(args: &[ry_core::ast::Arg]) -> bool {
     args.iter().any(|argument| {
-        argument.name.as_deref() == Some("character.only")
+        argument
+            .name
+            .as_deref()
+            .is_some_and(matches_character_only_formal)
             && !matches!(argument.value, Expr::Logical(false, _))
     })
 }
 
 /// The literal package name a `library()` / `require()` call attaches, if any.
-/// Handles named `package = ...` and positional first-argument forms, and
-/// declines bare symbols when `character.only` may be `TRUE` (#925).
+/// Handles exact and unambiguous partial `package = ...` names as well as the
+/// positional first-argument form, and declines bare symbols when
+/// `character.only` may be `TRUE` (#925).
 pub fn attached_package_name(args: &[ry_core::ast::Arg]) -> Option<&str> {
     let package_arg = args
         .iter()
         .find(|arg| arg.name.as_deref() == Some("package"))
+        .or_else(|| {
+            args.iter()
+                .find(|arg| arg.name.as_deref().is_some_and(matches_package_formal))
+        })
         .or_else(|| args.iter().find(|arg| arg.name.is_none()))?;
     match &package_arg.value {
         Expr::String(name, _) => Some(name),
@@ -428,14 +449,18 @@ my_library(dplyr)
         assert_exact(
             "library(pkg, character.only = TRUE)
 require(other, character.only = flag)
+library(dynpkg, char = TRUE)
 library(\"dplyr\", character.only = TRUE)
 library(rlang, character.only = FALSE)
 base::library(tibble)
 base::require(\"stringr\")
 library(package = purrr)
+library(pack = vctrs)
 library(quietly = TRUE, tidyr)
 ",
-            &["dplyr", "rlang", "tibble", "stringr", "purrr", "tidyr"],
+            &[
+                "dplyr", "rlang", "tibble", "stringr", "purrr", "vctrs", "tidyr",
+            ],
         );
     }
 }

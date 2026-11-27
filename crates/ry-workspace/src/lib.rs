@@ -1354,7 +1354,7 @@ fn active_r_library_from_path() -> Vec<PathBuf> {
             if !candidate.is_file() {
                 continue;
             }
-            let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+            let resolved = ry_config::canonical_path(&candidate).unwrap_or(candidate);
             if let Some(bin_dir) = resolved.parent() {
                 let mut prefixes = Vec::new();
                 if let Some(parent) = bin_dir.parent() {

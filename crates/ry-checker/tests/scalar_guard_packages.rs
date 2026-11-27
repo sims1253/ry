@@ -262,4 +262,20 @@ fn three_arg_s3_method_custom_function_is_recognized_for_guards_and_dispatch() {
         dispatch_diags.iter().any(|d| d.code == "RY040"),
         "print(x) must infer character return from print_coverage: {dispatch_diags:?}"
     );
+
+    // When 3-arg `S3method(print, widget, remote_print)` names a function not
+    // defined in the checked sources, `print(x)` must NOT fall back to a
+    // coexisting `print.widget` definition.
+    let no_fallback_diags = check_package_diagnostics(
+        "S3method(print, widget, remote_print)\n",
+        "print.widget <- function(x, ...) 'wrong'\n\
+         f <- function() {\n\
+           x <- structure(list(), class = 'widget')\n\
+           print(x) + 1L\n\
+         }\n",
+    );
+    assert!(
+        !no_fallback_diags.iter().any(|d| d.code == "RY040"),
+        "unavailable custom S3method target must stay unknown, not fall back to print.widget: {no_fallback_diags:?}"
+    );
 }

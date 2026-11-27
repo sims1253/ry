@@ -946,9 +946,9 @@ fn run_check_once(
         for (path, reason) in &group.context.degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason.description()));
         }
-        for (name, pkg) in &group.context.resolved_packages {
+        for pkg in group.context.resolved_packages.values() {
             resolved_packages
-                .entry(name.clone())
+                .entry((pkg.name.clone(), pkg.library.clone()))
                 .or_insert_with(|| pkg.clone());
         }
         let input =

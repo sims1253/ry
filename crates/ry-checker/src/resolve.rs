@@ -639,15 +639,26 @@ impl Checker {
             .take(first.class.len as usize)
             .flatten()
         {
-            if let Some(result) = self
+            if let Some(custom_fun) = self
                 .external_s3_method_functions
                 .get(&(generic.to_string(), class.to_string()))
-                .and_then(|fun| self.fn_table.functions.live_named(fun))
-                .or_else(|| {
-                    self.fn_table
-                        .functions
-                        .live_named(&format!("{generic}.{class}"))
-                })
+            {
+                // When 3-arg `S3method(generic, class, fun)` names an explicit
+                // function, R dispatches to `fun` rather than `generic.class`.
+                // Never fall back to `generic.class` if `fun` is unavailable.
+                let result = self
+                    .fn_table
+                    .functions
+                    .live_named(custom_fun)
+                    .map_or_else(RType::unknown, |function| {
+                        self.read_return_slot(function.return_slot)
+                    });
+                return Some(dispatch_result(first.class.guarded, result));
+            }
+            if let Some(result) = self
+                .fn_table
+                .functions
+                .live_named(&format!("{generic}.{class}"))
                 .map(|function| self.read_return_slot(function.return_slot))
                 .or_else(|| {
                     self.fn_table

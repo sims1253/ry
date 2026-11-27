@@ -482,6 +482,8 @@ async fn refresh_watchers(client: Client, state: Arc<Mutex<State>>) {
         serde_json::json!({"globPattern": "**/ry.toml"}),
         serde_json::json!({"globPattern": "**/DESCRIPTION"}),
         serde_json::json!({"globPattern": "**/NAMESPACE"}),
+        serde_json::json!({"globPattern": "**/uvr.toml"}),
+        serde_json::json!({"globPattern": "**/uvr.lock"}),
         serde_json::json!({"globPattern": format!(
             "**/src/*.{{{}}}",
             ry_workspace::NATIVE_SOURCE_EXTENSIONS.join(",")

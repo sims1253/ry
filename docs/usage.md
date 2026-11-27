@@ -258,8 +258,9 @@ ry check .
 
 When `uvr.toml` or `uvr.lock` sits at an ancestor project root and
 `.uvr/library` exists beside it, ry automatically discovers `.uvr/library` for
-both CLI checks and the language server without requiring `R_LIBS`. To override
-the library location manually, pass `R_LIBS`.
+both CLI checks and the language server without requiring `R_LIBS`. Additional
+libraries can be supplied through `R_LIBS`, but the project library takes
+precedence.
 
 ry only reads static package metadata from that library; it does not evaluate
 lockfiles, run `.Rprofile`, or execute package code.

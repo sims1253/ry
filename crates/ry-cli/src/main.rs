@@ -611,6 +611,10 @@ fn run_explain_packages(paths: Vec<PathBuf>, output_format: &str) -> Result<Exit
         }
     }
     let mut packages: std::collections::BTreeSet<String> = cfg.packages.iter().cloned().collect();
+    let mut group_resolved: std::collections::BTreeMap<
+        (String, PathBuf),
+        ry_workspace::ResolvedPackage,
+    > = std::collections::BTreeMap::new();
     if let Ok(groups) =
         pipeline::resolve_groups(&parsed, &cfg, &user_stubs, &[config_root.as_deref()])
     {
@@ -619,7 +623,11 @@ fn run_explain_packages(paths: Vec<PathBuf>, output_format: &str) -> Result<Exit
             for imports in group.context.imported_bindings.into_values() {
                 packages.extend(imports.into_values());
             }
-            packages.extend(group.context.resolved_packages.into_keys());
+            for pkg in group.context.resolved_packages.into_values() {
+                group_resolved
+                    .entry((pkg.name.clone(), pkg.library.clone()))
+                    .or_insert(pkg);
+            }
         }
     }
     let probe_paths = if all_paths.is_empty() {
@@ -627,8 +635,17 @@ fn run_explain_packages(paths: Vec<PathBuf>, output_format: &str) -> Result<Exit
     } else {
         all_paths
     };
-    let pkg_list: Vec<String> = packages.into_iter().collect();
-    let env = ry_workspace::resolve_environment(&probe_paths, &pkg_list);
+    let unresolved_pkgs: Vec<String> = packages
+        .into_iter()
+        .filter(|name| !group_resolved.keys().any(|(resolved, _)| resolved == name))
+        .collect();
+    let mut env = ry_workspace::resolve_environment(&probe_paths, &unresolved_pkgs);
+    for pkg in env.packages.drain(..) {
+        group_resolved
+            .entry((pkg.name.clone(), pkg.library.clone()))
+            .or_insert(pkg);
+    }
+    env.packages = group_resolved.into_values().collect();
 
     let stub_kind = |name: &str| -> &'static str {
         if user_stubs.contains_key(name) {

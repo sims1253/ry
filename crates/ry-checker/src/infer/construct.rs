@@ -995,11 +995,24 @@ impl Checker {
                     params,
                     modes,
                     empty,
+                    drop_controls,
                 }) = &sig.return_mode
                 {
-                    let data = input_mode_data(sig, params, args, arg_types);
-                    input_modes = input_mode_result(modes, *empty, &data, na_rm_may_drop(args))
-                        .unwrap_or_default();
+                    // Legacy vendored `range` (length "2" with empty fallback,
+                    // before r-typeshed 0.7.0 adds explicit `drop_controls`)
+                    // treats `finite` as a drop control; `min`/`max` (length
+                    // "1") treat `finite = ...` as ordinary data.
+                    let legacy_finite =
+                        drop_controls.is_empty() && empty.is_some() && c.length == "2";
+                    let data =
+                        input_mode_data(sig, params, drop_controls, legacy_finite, args, arg_types);
+                    input_modes = input_mode_result(
+                        modes,
+                        *empty,
+                        &data,
+                        input_mode_may_drop(sig, drop_controls, legacy_finite, args),
+                    )
+                    .unwrap_or_default();
                     match input_modes.as_slice() {
                         [mode] => *mode,
                         _ => Mode::Opaque,
@@ -1265,14 +1278,25 @@ fn integer_or_double_type(length: Length) -> RType {
     ]))
 }
 
+/// Whether `name` is an `input_mode` control argument (never data, and when
+/// not literal `FALSE`, able to drop elements from the input). `na.rm` is a
+/// formal of every dots-led Summary member; `finite` is a formal of
+/// `range.default` (handled via `...` on the `range` generic).
+fn is_input_mode_drop_control(name: &str, drop_controls: &[String], legacy_finite: bool) -> bool {
+    name == "na.rm"
+        || (legacy_finite && name == "finite")
+        || drop_controls.iter().any(|control| control == name)
+}
+
 /// The data arguments an `input_mode` rule reads: those bound to a listed
-/// formal, and for a listed `...` everything it absorbs. `na.rm` is a
-/// formal of every dots-led member in R even where the stub omits it, so
-/// it never counts as data. Without call arguments (callback inference)
+/// formal, and for a listed `...` everything it absorbs except drop controls
+/// such as `na.rm` and `finite`. Without call arguments (callback inference)
 /// the types bind positionally.
 fn input_mode_data(
     sig: &FunctionSig,
     params: &[String],
+    drop_controls: &[String],
+    legacy_finite: bool,
     args: &[Arg],
     arg_types: &[RType],
 ) -> Vec<RType> {
@@ -1296,18 +1320,43 @@ fn input_mode_data(
         .zip(&bindings.param_for_arg)
         .filter(|((arg, _), formal)| match formal {
             Some(index) => listed(&sig.params[*index].name),
-            None => listed("...") && arg.name.as_deref() != Some("na.rm"),
+            None => {
+                listed("...")
+                    && arg.name.as_deref().is_none_or(|name| {
+                        !is_input_mode_drop_control(name, drop_controls, legacy_finite)
+                    })
+            }
         })
         .map(|((_, ty), _)| ty.clone())
         .collect()
 }
 
-/// Whether an `na.rm` argument may drop every element: anything but an
-/// absent or literal `FALSE` `na.rm`.
-fn na_rm_may_drop(args: &[Arg]) -> bool {
-    args.iter().any(|arg| {
-        arg.name.as_deref() == Some("na.rm") && !matches!(arg.value, Expr::Logical(false, _))
-    })
+/// Whether a drop control (`na.rm`, `finite`, or any declared `drop_controls`)
+/// may drop every element: anything but an absent or literal `FALSE` value.
+/// Uses R's formal binding (`match_params`) so positional and partial matches
+/// on declared formal controls are recognized alongside `...`-absorbed names.
+fn input_mode_may_drop(
+    sig: &FunctionSig,
+    drop_controls: &[String],
+    legacy_finite: bool,
+    args: &[Arg],
+) -> bool {
+    let bindings = match_params(&sig.params, args);
+    args.iter()
+        .zip(&bindings.param_for_arg)
+        .any(|(arg, formal)| {
+            let is_control = match formal {
+                Some(index) => is_input_mode_drop_control(
+                    &sig.params[*index].name,
+                    drop_controls,
+                    legacy_finite,
+                ),
+                None => arg.name.as_deref().is_some_and(|name| {
+                    is_input_mode_drop_control(name, drop_controls, legacy_finite)
+                }),
+            };
+            is_control && !matches!(arg.value, Expr::Logical(false, _))
+        })
 }
 
 /// Resolve an `input_mode` rule to its possible result modes, or `None`
@@ -1317,10 +1366,10 @@ fn na_rm_may_drop(args: &[Arg]) -> bool {
 /// other input mode, such as unknown, `NULL` or a list, leaves the result
 /// unknown.
 fn input_mode_result(
-    modes: &std::collections::BTreeMap<AtomicMode, AtomicMode>,
+    modes: &std::collections::BTreeMap<AtomicMode, ry_typeshed::InputModeOutcome>,
     empty: Option<AtomicMode>,
     data: &[RType],
-    na_rm_may_drop: bool,
+    may_drop: bool,
 ) -> Option<Vec<Mode>> {
     let mut floor = AtomicMode::Logical;
     let mut possible = std::collections::BTreeSet::from([AtomicMode::Logical]);
@@ -1345,19 +1394,21 @@ fn input_mode_result(
         floor = floor.max(lowest);
     }
     let all_empty = data.iter().all(|ty| ty.length.exact() == Some(0));
-    let may_be_empty = na_rm_may_drop || data.iter().all(|ty| ty.length.min_possible() == 0);
+    let may_be_empty = may_drop || data.iter().all(|ty| ty.length.min_possible() == 0);
     let mut result = std::collections::BTreeSet::new();
     for joined in possible.into_iter().filter(|mode| *mode >= floor) {
-        let mode = *modes.get(&joined)?;
-        match empty {
-            Some(empty) if mode == AtomicMode::Integer && all_empty => {
-                result.insert(empty);
-            }
-            Some(empty) if mode == AtomicMode::Integer && may_be_empty => {
-                result.extend([mode, empty]);
-            }
-            _ => {
-                result.insert(mode);
+        let outcomes = modes.get(&joined)?;
+        for &mode in outcomes.modes() {
+            match empty {
+                Some(empty) if mode == AtomicMode::Integer && all_empty => {
+                    result.insert(empty);
+                }
+                Some(empty) if mode == AtomicMode::Integer && may_be_empty => {
+                    result.extend([mode, empty]);
+                }
+                _ => {
+                    result.insert(mode);
+                }
             }
         }
     }
@@ -1480,7 +1531,9 @@ pub(crate) fn semantic_return_length(
                     .then(|| bound_args(param).next())
                     .flatten()
             };
-            if let Some(index) = bound_control(&spec.collapse.param) {
+            if let Some(collapse) = &spec.collapse
+                && let Some(index) = bound_control(&collapse.param)
+            {
                 // `collapse = NULL` leaves the recycled vector intact. An
                 // unknown control is not evidence of a scalar result.
                 if matches!(arg_types[index].mode, Mode::Null) {
@@ -1493,7 +1546,23 @@ pub(crate) fn semantic_return_length(
                     return Some(Length::Unknown);
                 }
             }
-            if let Some(index) = bound_control(&spec.recycle0.param)
+            if spec.any_value_zero.as_deref() == Some("zero") {
+                if value_types.is_empty() {
+                    return Some(Length::Unknown);
+                }
+                if value_types
+                    .iter()
+                    .any(|ty| matches!(ty.length, Length::Zero))
+                {
+                    return Some(Length::Zero);
+                }
+                if value_types.iter().any(|ty| ty.length.min_possible() == 0) {
+                    return Some(Length::Unknown);
+                }
+                return Some(longest_arg_length(&value_types));
+            }
+            if let Some(recycle0) = &spec.recycle0
+                && let Some(index) = bound_control(&recycle0.param)
                 && !matches!(args[index].value, Expr::Logical(false, _))
             {
                 // A `recycle0` that may be TRUE empties the result on a

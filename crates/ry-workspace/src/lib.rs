@@ -655,6 +655,13 @@ pub fn resolve_workspace_context(
                 file_bindings.extend(typeshed.functions.keys().cloned());
                 file_bindings.extend(typeshed.datasets.keys().cloned());
                 file_bindings.extend(typeshed.globals.ambient_functions.iter().cloned());
+                // A partial stub does not claim a closed export list. When
+                // no installed library supplied the package's real exports,
+                // leave the search path open so unstubbed exports do not
+                // trigger RY010 while known signatures still apply (#926).
+                if typeshed.partial && exports.is_empty() {
+                    file_bindings.insert(SERIALIZED_BINDINGS_UNENUMERABLE.to_string());
+                }
             }
         }
         attached.extend(file_attached.iter().cloned());

@@ -1452,3 +1452,107 @@ fn candidate_stubs_read_their_arguments_eagerly() {
         }
     }
 }
+
+/// Partial stubs (`"partial": true`) act as open namespaces when attached or
+/// imported via NAMESPACE `import(pkg)` so unstubbed exports do not emit
+/// false RY010, while declared signatures and `injects` still apply (#926).
+#[test]
+fn partial_stub_keeps_unstubbed_exports_silent_while_applying_known_rules() {
+    let stub_dir = tempfile::tempdir().unwrap();
+    let partial_stub = r#"{
+        "schema_version": "2",
+        "package": "partialdemo",
+        "version": "0.0.1",
+        "partial": true,
+        "functions": {
+            "typed_scalar": {
+                "params": [{"name": "x", "required": true}],
+                "return": {"mode": "character", "length": "1", "na": false}
+            },
+            "with_injected": {
+                "params": ["code"],
+                "injects": [{"into": ["code"], "names": ["injected_var"]}],
+                "return": {"mode": "opaque", "length": "unknown"}
+            }
+        }
+    }"#;
+    let complete_stub = r#"{
+        "schema_version": "2",
+        "package": "completedemo",
+        "version": "0.0.1",
+        "functions": {
+            "only_export": {
+                "params": ["x"],
+                "return": {"mode": "double", "length": "1"}
+            }
+        }
+    }"#;
+    std::fs::write(stub_dir.path().join("partialdemo.json"), partial_stub).unwrap();
+    std::fs::write(stub_dir.path().join("completedemo.json"), complete_stub).unwrap();
+    let stubs = Arc::new(ry_typeshed::load_stub_dir(stub_dir.path()).unwrap());
+
+    // 1. library(partialdemo): unstubbed export is silent; declared signature still checks.
+    let diags = check_with(
+        "library(partialdemo)\n\
+         x <- unstubbed_symbol\n\
+         y <- unstubbed_call(1L)\n\
+         with_injected({ injected_var + 1L })\n\
+         typed_scalar(1L) + 1L\n",
+        |checker| checker.set_user_stubs(Arc::clone(&stubs)),
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == "RY010"),
+        "partial stub must not emit RY010 for unstubbed exports: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY040"),
+        "known signature from partial stub must still infer character and flag RY040: {diags:?}"
+    );
+
+    // 2. Control: non-partial stub still reports RY010 for missing exports.
+    let control_diags = check_with("library(completedemo)\nx <- not_exported\n", |checker| {
+        checker.set_user_stubs(Arc::clone(&stubs));
+    });
+    assert!(
+        control_diags
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("not_exported")),
+        "complete stub must still flag RY010: {control_diags:?}"
+    );
+
+    // 3. NAMESPACE import(partialdemo) via workspace context keeps unstubbed exports silent.
+    let pkg_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        pkg_dir.path().join("DESCRIPTION"),
+        "Package: consumerpkg\nVersion: 0.1.0\nImports: partialdemo\n",
+    )
+    .unwrap();
+    std::fs::write(pkg_dir.path().join("NAMESPACE"), "import(partialdemo)\n").unwrap();
+    std::fs::create_dir_all(pkg_dir.path().join("R")).unwrap();
+    let r_file = pkg_dir.path().join("R/use.R");
+    let r_src = "f <- function() {\n  v <- unstubbed_export\n  typed_scalar(v) + 1L\n}\n";
+    std::fs::write(&r_file, r_src).unwrap();
+    let path_str = r_file.to_string_lossy().into_owned();
+    let parsed = parse_file(&path_str, r_src);
+    let ws = ry_workspace::resolve_workspace_context(
+        pkg_dir.path(),
+        &ry_config::Config::default(),
+        vec![&parsed],
+        &stubs,
+    )
+    .unwrap();
+    let mut project = Project::new();
+    project.set_user_stubs(Arc::clone(&stubs));
+    project.add_file(path_str, parsed);
+    crate::frontend::set_workspace_context(&mut project, ws);
+    let results = project.check();
+    let pkg_diags: Vec<_> = results.into_iter().flat_map(|(_, d)| d).collect();
+    assert!(
+        !pkg_diags.iter().any(|d| d.code == "RY010"),
+        "NAMESPACE import(partialdemo) must not emit RY010: {pkg_diags:?}"
+    );
+    assert!(
+        pkg_diags.iter().any(|d| d.code == "RY040"),
+        "NAMESPACE import(partialdemo) must still apply known signatures: {pkg_diags:?}"
+    );
+}

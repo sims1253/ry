@@ -2672,6 +2672,10 @@ impl Checker {
         self.user_stubs.contains_key(package) || is_known_package(package)
     }
 
+    pub(crate) fn package_has_complete_exports(&self, package: &str) -> bool {
+        ry_typeshed::package_has_complete_exports(&self.user_stubs, package)
+    }
+
     /// All package names with typeshed signatures, in resolution
     /// order: the embedded known packages, then user-stub packages
     /// that do not shadow a known one. Each name appears once. The

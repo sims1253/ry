@@ -134,16 +134,64 @@ pub enum ReturnModeSpec {
     TestTemplate { test: String, values: Vec<String> },
     /// The result mode follows the data arguments' mode (`sum`, `abs`,
     /// `max`): the data join on R's coercion ladder, and `modes` maps the
-    /// joined mode to the result mode. A joined mode missing from `modes`
-    /// leaves the result unknown (R errors or the mode depends on
-    /// values). `empty` replaces an `integer` result when the data may
-    /// supply no element, as `max(integer(0))` is double.
+    /// joined mode to the result mode (or a set of possible modes, as
+    /// `sum()` on integer data can overflow to double). A joined mode
+    /// missing from `modes` leaves the result unknown (R errors or the
+    /// mode depends on values). `empty` replaces an `integer` result when
+    /// the data may supply no element, as `max(integer(0))` is double.
+    /// `drop_controls` names optional control arguments (such as `na.rm`
+    /// or `finite`) that are never data and, when not literal `FALSE`, may
+    /// drop every element.
     InputMode {
         params: Vec<String>,
-        modes: std::collections::BTreeMap<AtomicMode, AtomicMode>,
+        modes: std::collections::BTreeMap<AtomicMode, InputModeOutcome>,
         #[serde(default)]
         empty: Option<AtomicMode>,
+        #[serde(default)]
+        drop_controls: Vec<String>,
     },
+}
+
+/// Target storage mode(s) for one joined input mode in
+/// [`ReturnModeSpec::InputMode`]: either a single mode (`"integer"`) or a
+/// non-empty set of possible modes (`["integer", "double"]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum InputModeOutcome {
+    Single(AtomicMode),
+    Multiple(Vec<AtomicMode>),
+}
+
+impl<'de> Deserialize<'de> for InputModeOutcome {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Dispatch by JSON shape rather than `#[serde(untagged)]` so an
+        // invalid atomic mode name surfaces `unknown variant` instead of an
+        // opaque untagged-enum error.
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(_) => AtomicMode::deserialize(value)
+                .map(Self::Single)
+                .map_err(|error| D::Error::custom(error.to_string())),
+            serde_json::Value::Array(_) => Vec::<AtomicMode>::deserialize(value)
+                .map(Self::Multiple)
+                .map_err(|error| D::Error::custom(error.to_string())),
+            _ => Err(D::Error::custom(
+                "expected an atomic mode string or array of atomic mode strings",
+            )),
+        }
+    }
+}
+
+impl InputModeOutcome {
+    pub fn modes(&self) -> &[AtomicMode] {
+        match self {
+            Self::Single(mode) => std::slice::from_ref(mode),
+            Self::Multiple(modes) => modes,
+        }
+    }
 }
 
 /// An atomic vector mode, declared in the order of R's coercion ladder.
@@ -161,10 +209,16 @@ pub enum AtomicMode {
 #[serde(deny_unknown_fields)]
 pub struct RecycledValuesLengthSpec {
     pub value_params: Vec<String>,
+    #[serde(default)]
     pub control_params: Vec<String>,
-    pub all_values_zero: String,
-    pub collapse: CollapseLengthControl,
-    pub recycle0: RecycleZeroLengthControl,
+    #[serde(default)]
+    pub all_values_zero: Option<String>,
+    #[serde(default)]
+    pub any_value_zero: Option<String>,
+    #[serde(default)]
+    pub collapse: Option<CollapseLengthControl>,
+    #[serde(default)]
+    pub recycle0: Option<RecycleZeroLengthControl>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -352,6 +406,7 @@ struct StubFlags {
     injects: bool,
     captures_promise: bool,
     s3_methods: bool,
+    partial: bool,
 }
 
 impl PackageSpec {
@@ -388,6 +443,7 @@ impl PackageSpec {
                 injects: json.contains("\"injects\""),
                 captures_promise: json.contains("\"captures_promise\""),
                 s3_methods: json.contains("\"s3_methods\""),
+                partial: json.contains("\"partial\""),
             }
         })
     }
@@ -636,6 +692,12 @@ pub struct Typeshed {
     #[serde(default)]
     pub package: Option<String>,
     pub version: String,
+    /// Whether this stub intentionally lists only a subset of the package's
+    /// exports. Consumers treat partial stubs as open namespaces so
+    /// unstubbed exports do not trigger unbound-variable diagnostics, while
+    /// still applying the declared signatures and metadata.
+    #[serde(default)]
+    pub partial: bool,
     pub functions: std::collections::BTreeMap<String, FunctionSig>,
     /// Optional checker-wide name and S3 metadata. This normally comes
     /// from the base stub and is replaced with it by runtime overrides.
@@ -737,6 +799,8 @@ struct RawFile {
     #[serde(default)]
     package: Option<String>,
     version: String,
+    #[serde(default)]
+    partial: bool,
     functions: RawFunctions,
     #[serde(default)]
     globals: Globals,
@@ -776,6 +840,7 @@ fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
         schema_version: raw.schema_version,
         package: raw.package,
         version: raw.version,
+        partial: raw.partial,
         functions: raw.functions.0,
         globals: raw.globals,
         datasets: raw.datasets,
@@ -869,6 +934,31 @@ pub fn package_has_captures_promise(name: &str) -> bool {
 /// Same contract as [`package_has_injects`].
 pub fn package_has_s3_methods(name: &str) -> bool {
     embedded_stub_flags(name).is_some_and(|flags| flags.s3_methods)
+}
+
+/// Whether `package`'s active stub (user override or embedded) is marked
+/// `partial: true`. Uses the prefilter flag to avoid parsing complete
+/// embedded stubs.
+pub fn package_is_partial(user_stubs: &BTreeMap<String, Typeshed>, package: &str) -> bool {
+    match user_stubs.get(package) {
+        Some(typeshed) => typeshed.partial,
+        None => embedded_stub_flags(package)
+            .is_some_and(|flags| flags.partial && load_package(package).is_some_and(|t| t.partial)),
+    }
+}
+
+/// Whether `package` has a stub that claims a complete export inventory
+/// (i.e. a stub exists and is not marked `partial: true`).
+pub fn package_has_complete_exports(
+    user_stubs: &BTreeMap<String, Typeshed>,
+    package: &str,
+) -> bool {
+    match user_stubs.get(package) {
+        Some(typeshed) => !typeshed.partial,
+        None => embedded_stub_flags(package).is_some_and(|flags| {
+            !flags.partial || load_package(package).is_some_and(|t| !t.partial)
+        }),
+    }
 }
 
 /// Load stub files from a user-supplied directory. Both flat
@@ -1344,7 +1434,12 @@ fn validate_function_semantics(
                 validate_param(report, "return_mode.values", param);
             }
         }
-        Some(ReturnModeSpec::InputMode { params, modes, .. }) => {
+        Some(ReturnModeSpec::InputMode {
+            params,
+            modes,
+            drop_controls,
+            ..
+        }) => {
             if params.is_empty() {
                 validation_error(
                     report,
@@ -1368,6 +1463,50 @@ fn validate_function_semantics(
                     path,
                     format!("{location}.return_mode.modes: must not be empty"),
                 );
+            }
+            for (input_mode, outcome) in modes {
+                let targets = outcome.modes();
+                if targets.is_empty() {
+                    validation_error(
+                        report,
+                        path,
+                        format!(
+                            "{location}.return_mode.modes.{input_mode:?}: must list at least one mode"
+                        ),
+                    );
+                }
+                for (index, target) in targets.iter().enumerate() {
+                    if targets[..index].contains(target) {
+                        validation_error(
+                            report,
+                            path,
+                            format!(
+                                "{location}.return_mode.modes.{input_mode:?}: duplicate target mode `{target:?}`"
+                            ),
+                        );
+                    }
+                }
+            }
+            for (index, control) in drop_controls.iter().enumerate() {
+                if control.is_empty() || control == "..." {
+                    validation_error(
+                        report,
+                        path,
+                        format!(
+                            "{location}.return_mode.drop_controls: invalid control parameter `{control}`"
+                        ),
+                    );
+                } else if drop_controls[..index].contains(control) || params.contains(control) {
+                    validation_error(
+                        report,
+                        path,
+                        format!(
+                            "{location}.return_mode.drop_controls: duplicate or overlapping parameter `{control}`"
+                        ),
+                    );
+                } else if !has_param("...") {
+                    validate_param(report, "return_mode.drop_controls", control);
+                }
             }
         }
         None => {}
@@ -1425,24 +1564,58 @@ fn validate_function_semantics(
                         ),
                     );
                 }
-                for (field, param) in [
-                    ("return_length.collapse.param", &spec.collapse.param),
-                    ("return_length.recycle0.param", &spec.recycle0.param),
-                ] {
-                    validate_param(report, field, param);
-                    if !spec.control_params.contains(param) {
+                if let Some(collapse) = &spec.collapse {
+                    validate_param(report, "return_length.collapse.param", &collapse.param);
+                    if !spec.control_params.contains(&collapse.param) {
                         validation_error(
                             report,
                             path,
-                            format!("{location}.{field}: must declare a control parameter"),
+                            format!(
+                                "{location}.return_length.collapse.param: must declare a control parameter"
+                            ),
+                        );
+                    }
+                    if collapse.when != "non_null" || collapse.length != "1" {
+                        validation_error(
+                            report,
+                            path,
+                            format!("{location}.return_length: unsupported recycled-values rule"),
                         );
                     }
                 }
-                if spec.all_values_zero != "zero"
-                    || spec.collapse.when != "non_null"
-                    || spec.collapse.length != "1"
-                    || spec.recycle0.when != "true"
-                    || spec.recycle0.any_value_zero != "zero"
+                if let Some(recycle0) = &spec.recycle0 {
+                    validate_param(report, "return_length.recycle0.param", &recycle0.param);
+                    if !spec.control_params.contains(&recycle0.param) {
+                        validation_error(
+                            report,
+                            path,
+                            format!(
+                                "{location}.return_length.recycle0.param: must declare a control parameter"
+                            ),
+                        );
+                    }
+                    if recycle0.when != "true" || recycle0.any_value_zero != "zero" {
+                        validation_error(
+                            report,
+                            path,
+                            format!("{location}.return_length: unsupported recycled-values rule"),
+                        );
+                    }
+                }
+                let all_zero_ok = spec
+                    .all_values_zero
+                    .as_deref()
+                    .is_none_or(|value| value == "zero");
+                let any_zero_ok = spec
+                    .any_value_zero
+                    .as_deref()
+                    .is_none_or(|value| value == "zero");
+                let has_zero_rule = spec.all_values_zero.is_some() || spec.any_value_zero.is_some();
+                if !all_zero_ok
+                    || !any_zero_ok
+                    || !has_zero_rule
+                    || (spec.any_value_zero.is_some()
+                        && (spec.recycle0.is_some() || spec.all_values_zero.is_some()))
                 {
                     validation_error(
                         report,
@@ -2211,6 +2384,10 @@ mod tests {
                 typeshed.s3_methods.is_empty() || package_has_s3_methods(name),
                 "{name}: declares s3_methods but the prefilter misses it"
             );
+            assert!(
+                !typeshed.partial || package_is_partial(&BTreeMap::new(), name),
+                "{name}: declares partial but the prefilter misses it"
+            );
         }
         // Pin the current inventory so a data change that flips a
         // prefilter is a deliberate one.
@@ -2342,5 +2519,134 @@ mod tests {
         assert!(is_known_package("posterior"));
         assert!(!is_known_package("forcats"));
         assert!(!is_known_package("doesnotexist"));
+    }
+
+    #[test]
+    fn partial_flag_defaults_false_and_distinguishes_complete_exports() {
+        let partial_json = r#"{"schema_version":"2","package":"mypartial","version":"0.0.1","partial":true,"functions":{"foo":{"params":["x"],"return":{"mode":"opaque","length":"unknown"}}}}"#;
+        let complete_json = r#"{"schema_version":"2","package":"mycomplete","version":"0.0.1","functions":{"foo":{"params":["x"],"return":{"mode":"opaque","length":"unknown"}}}}"#;
+        let partial = parse_typeshed(partial_json, Path::new("mypartial.json")).unwrap();
+        let complete = parse_typeshed(complete_json, Path::new("mycomplete.json")).unwrap();
+        assert!(partial.partial);
+        assert!(!complete.partial);
+
+        let mut user_stubs = BTreeMap::new();
+        user_stubs.insert("mypartial".to_string(), partial);
+        user_stubs.insert("mycomplete".to_string(), complete);
+
+        assert!(package_is_partial(&user_stubs, "mypartial"));
+        assert!(!package_has_complete_exports(&user_stubs, "mypartial"));
+        assert!(!package_is_partial(&user_stubs, "mycomplete"));
+        assert!(package_has_complete_exports(&user_stubs, "mycomplete"));
+        assert!(!package_is_partial(&user_stubs, "doesnotexist"));
+        assert!(!package_has_complete_exports(&user_stubs, "doesnotexist"));
+    }
+
+    #[test]
+    fn input_mode_accepts_multi_mode_outcomes_and_drop_controls() {
+        let dir = tempfile::tempdir().unwrap();
+        let stub = r#"{
+            "schema_version": "2",
+            "package": "demo",
+            "version": "0.0.1",
+            "functions": {
+                "sum_like": {
+                    "params": ["...", {"name": "na.rm", "default": true}],
+                    "return": {"mode": "opaque", "length": "1"},
+                    "return_mode": {
+                        "kind": "input_mode",
+                        "params": ["..."],
+                        "modes": {
+                            "logical": "integer",
+                            "integer": ["integer", "double"],
+                            "double": "double"
+                        },
+                        "drop_controls": ["na.rm"]
+                    }
+                },
+                "range_like": {
+                    "params": ["..."],
+                    "return": {"mode": "opaque", "length": "2"},
+                    "return_mode": {
+                        "kind": "input_mode",
+                        "params": ["..."],
+                        "modes": {"integer": "integer", "double": "double"},
+                        "empty": "double",
+                        "drop_controls": ["na.rm", "finite"]
+                    }
+                }
+            }
+        }"#;
+        std::fs::write(dir.path().join("demo.json"), stub).unwrap();
+        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+        assert_eq!(report.error_count(), 0, "{:?}", report.problems);
+
+        // Empty outcome array and duplicate modes must be rejected.
+        let bad_dir = tempfile::tempdir().unwrap();
+        let bad_stub = r#"{
+            "schema_version": "2",
+            "package": "bad",
+            "version": "0.0.1",
+            "functions": {
+                "f": {
+                    "params": ["x"],
+                    "return": {"mode": "opaque", "length": "1"},
+                    "return_mode": {
+                        "kind": "input_mode",
+                        "params": ["x"],
+                        "modes": {"integer": [], "double": ["double", "double"]},
+                        "drop_controls": ["x"]
+                    }
+                }
+            }
+        }"#;
+        std::fs::write(bad_dir.path().join("bad.json"), bad_stub).unwrap();
+        let bad_report = validate_stub_dirs(&[bad_dir.path().to_path_buf()]);
+        assert!(bad_report.error_count() >= 3, "{:?}", bad_report.problems);
+    }
+
+    #[test]
+    fn recycled_values_accepts_any_value_zero_without_controls() {
+        let dir = tempfile::tempdir().unwrap();
+        let stub = r#"{
+            "schema_version": "2",
+            "package": "demo",
+            "version": "0.0.1",
+            "functions": {
+                "round_like": {
+                    "params": ["x", "digits"],
+                    "return": {"mode": "double", "length": "unknown"},
+                    "return_length": {
+                        "kind": "recycled_values",
+                        "value_params": ["x", "digits"],
+                        "any_value_zero": "zero"
+                    }
+                }
+            }
+        }"#;
+        std::fs::write(dir.path().join("demo.json"), stub).unwrap();
+        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+        assert_eq!(report.error_count(), 0, "{:?}", report.problems);
+
+        // Missing both all_values_zero and any_value_zero must be rejected.
+        let bad_dir = tempfile::tempdir().unwrap();
+        let bad_stub = r#"{
+            "schema_version": "2",
+            "package": "bad",
+            "version": "0.0.1",
+            "functions": {
+                "f": {
+                    "params": ["x", "y"],
+                    "return": {"mode": "double", "length": "unknown"},
+                    "return_length": {
+                        "kind": "recycled_values",
+                        "value_params": ["x", "y"]
+                    }
+                }
+            }
+        }"#;
+        std::fs::write(bad_dir.path().join("bad.json"), bad_stub).unwrap();
+        let bad_report = validate_stub_dirs(&[bad_dir.path().to_path_buf()]);
+        assert!(bad_report.error_count() > 0, "{:?}", bad_report.problems);
     }
 }

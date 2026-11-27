@@ -2624,9 +2624,10 @@ impl Checker {
                     .map(str::to_owned)
                     .collect();
                 for package in attached {
-                    // An attached package without a stub can contribute any
-                    // export or lazy-loaded dataset to the search path.
-                    if !self.package_is_known(&package) {
+                    // An attached package without a complete stub can
+                    // contribute any export or lazy-loaded dataset to the
+                    // search path (#926).
+                    if !self.package_has_complete_exports(&package) {
                         scope.mark_search_path_unknown();
                     }
                     Arc::make_mut(&mut self.loaded).insert(package.clone());

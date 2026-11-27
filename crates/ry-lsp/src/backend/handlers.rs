@@ -322,16 +322,24 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        // One quick fix per diagnostic. Lines that already suppress it get
-        // none.
+        // One quick fix per suppressible diagnostic, reusing a single parser
+        // across the request. Lines that already suppress it get none, and
+        // `# ry: ignore-file` is omitted when only unsuppressible codes
+        // (`RY112`/`RY113`) are in range (#930).
         let mut actions: CodeActionResponse = Vec::new();
-        for diag in diagnostics {
-            if let Some(action) = make_ignore_action(&uri, diag, &file) {
-                actions.push(CodeActionOrCommand::CodeAction(action));
+        let has_suppressible = diagnostics.iter().any(|diag| {
+            let code = crate::diagnostics::diag_code_from_lsp(diag);
+            code.is_empty() || ry_checker::rules::suppressible(&code)
+        });
+        if has_suppressible && let Ok(mut parser) = RParser::new() {
+            for diag in diagnostics {
+                if let Some(action) = make_ignore_action(&uri, diag, &file, &mut parser) {
+                    actions.push(CodeActionOrCommand::CodeAction(action));
+                }
             }
         }
 
-        if let Some(action) = make_ignore_file_action(&uri, &file) {
+        if has_suppressible && let Some(action) = make_ignore_file_action(&uri, &file) {
             actions.push(CodeActionOrCommand::CodeAction(action));
         }
 

@@ -378,7 +378,8 @@ fn code_action_ignore_line_appends_suppression_comment() {
     let text = "x <- 1L + \"s\"\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text))
+    let mut parser = ry_core::RParser::new().unwrap();
+    let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text), &mut parser)
         .expect("should produce an action");
 
     assert_eq!(action.title, "Ignore RY040 on this line");
@@ -526,12 +527,13 @@ fn code_action_ignore_line_availability_follows_checker_suppressions() {
         ("\"a\" + 1L # noqa[RY040]]\n", 0, None, false),
         ("\"a\" + 1L # ry: ignore[RY010] reason\n", 0, None, true),
     ];
+    let mut parser = ry_core::RParser::new().unwrap();
     for &(text, line, code, offered) in cases {
         let mut diag = lsp_diag(line, 0, 1, code.unwrap_or("RY040"));
         if code.is_none() {
             diag.code = None;
         }
-        let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text));
+        let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text), &mut parser);
         assert_eq!(action.is_some(), offered, "{code:?} on {text:?}");
     }
 }
@@ -542,7 +544,8 @@ fn code_action_ignore_line_handles_missing_code() {
     let mut diag = lsp_diag(0, 0, 1, "RY099");
     diag.code = None;
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text))
+    let mut parser = ry_core::RParser::new().unwrap();
+    let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text), &mut parser)
         .expect("should produce an action");
     let edit = action.edit.expect("should have an edit");
     let changes = edit.changes.unwrap();
@@ -608,25 +611,46 @@ fn code_action_ignore_file_skips_already_suppressed() {
 #[test]
 fn line_suppression_never_inserts_inside_multiline_tokens() {
     let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let mut parser = ry_core::RParser::new().unwrap();
     for source in [
         "x <- \"first\nlast\"\n",
         "identity(`first\nlast` = 1)\n",
         "x <- r\"(first\nlast)\"\n",
     ] {
         let file = parse_src("test.R", source);
-        assert!(make_ignore_action(&uri, &lsp_diag(0, 0, 1, "RY040"), &file).is_none());
+        assert!(
+            make_ignore_action(&uri, &lsp_diag(0, 0, 1, "RY040"), &file, &mut parser).is_none()
+        );
     }
 }
 
 #[test]
 fn code_action_preserves_multiline_string_context() {
     let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let mut parser = ry_core::RParser::new().unwrap();
     let file = parse_src(
         "test.R",
         "x <- \"first\n# ry: ignore[RY010]\nlast\"\ny <- missing\n",
     );
     let diag = lsp_diag(2, 0, 1, "RY010");
-    assert!(make_ignore_action(&uri, &diag, &file).is_some());
+    assert!(make_ignore_action(&uri, &diag, &file, &mut parser).is_some());
+}
+
+#[test]
+fn code_action_skips_unsuppressible_directive_diagnostics() {
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let mut parser = ry_core::RParser::new().unwrap();
+    let file = parse_src("test.R", "x <- 1L # ry: ignore[BOGUS]\n");
+    for code in [
+        ry_checker::rules::INVALID_IGNORE,
+        ry_checker::rules::UNUSED_IGNORE,
+    ] {
+        let diag = lsp_diag(0, 8, 27, code);
+        assert!(
+            make_ignore_action(&uri, &diag, &file, &mut parser).is_none(),
+            "{code} must not produce a line-suppression action"
+        );
+    }
 }
 
 #[test]

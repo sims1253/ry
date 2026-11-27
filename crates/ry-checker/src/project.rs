@@ -453,6 +453,91 @@ impl Project {
         }
     }
 
+    /// Infer assignment-site types for one file using the project's full
+    /// cross-file `FnTable`, `ReturnSlots`, and workspace context (#930).
+    /// Ensures Pass 1 and Pass 2 fixpoint tables are current via
+    /// [`Self::check_incremental`], then runs a single assignment-capturing
+    /// pass over `target_path`.
+    pub fn assignment_types_for(
+        &mut self,
+        target_path: &str,
+    ) -> Vec<(ry_core::Span, ry_core::types::RType)> {
+        let _ = self.check_incremental();
+        let Some(index) = self.files.iter().position(|(p, _)| p == target_path) else {
+            return Vec::new();
+        };
+        let box_modules = self.build_box_modules();
+        let tables = TableSnapshot::of(&self.fn_table, self.namespaces());
+        let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
+        let package_known_vars = Arc::new(fn_table.known_vars.clone());
+        let namespaces: HashMap<&str, SharedNamespacePool> = tables
+            .namespaces
+            .iter()
+            .map(|(package, pool)| {
+                let shared = (
+                    Arc::new(pool.known_vars.clone()),
+                    Arc::new(pool.superassigned.clone()),
+                );
+                (package.as_str(), shared)
+            })
+            .collect();
+        let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
+        let loaded = Arc::new(std::mem::take(&mut self.loaded));
+
+        let (path, file) = &self.files[index];
+        let mut emitter =
+            Checker::with_shared_tables(path, Arc::clone(&fn_table), Arc::clone(&return_slots));
+        emitter.set_shared_declarations(Arc::clone(&self.declarations));
+        let namespace = self
+            .source_package(path)
+            .and_then(|package| namespaces.get(package));
+        emitter.set_shared_known_vars(Arc::clone(
+            namespace.map_or(&package_known_vars, |(known_vars, _)| known_vars),
+        ));
+        emitter.set_namespace_superassigned(
+            namespace.map(|(_, superassigned)| Arc::clone(superassigned)),
+        );
+        emitter.set_shared_loaded(Arc::clone(&loaded));
+        emitter.set_bare_loaded(
+            self.bare_loaded
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| loaded.as_ref().clone()),
+        );
+        emitter.set_user_stubs(Arc::clone(&self.user_stubs));
+        emitter.set_box_modules(box_modules);
+        emitter.set_external_bindings(
+            self.external_bindings
+                .get(path)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        emitter.set_package_facts(self.package_facts.get(path).cloned().unwrap_or_default());
+        emitter.set_imported_from(self.imported_from.get(path).cloned().unwrap_or_default());
+        emitter.set_external_s3_methods(
+            self.external_s3_methods
+                .get(path)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        emitter.set_external_s3_method_functions(
+            self.external_s3_method_functions
+                .get(path)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        emitter.set_load_bindings(self.load_bindings.get(path).cloned().unwrap_or_default());
+        emitter.enable_assignment_capture();
+        emitter.emit_diagnostics(file);
+        let types = emitter.take_assignment_types();
+        drop(emitter);
+
+        self.fn_table = Arc::unwrap_or_clone(fn_table);
+        self.return_slots = Arc::unwrap_or_clone(return_slots);
+        self.loaded = Arc::unwrap_or_clone(loaded);
+        types
+    }
+
     pub fn set_load_bindings(
         &mut self,
         bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
@@ -742,7 +827,7 @@ impl Project {
         affected
     }
 
-    fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
+    fn build_box_modules(&self) -> Arc<crate::box_imports::BoxModules> {
         // Box overlays are keyed by physical identity. A native path keeps
         // a lossy display path from colliding with a distinct Unicode module;
         // unsaved buffers use their logical path.
@@ -760,8 +845,12 @@ impl Project {
                 }
             }
         }
+        Arc::new(crate::box_imports::BoxModules::new(box_sources))
+    }
+
+    fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
         // Pass 2 and pass 3 share one module inventory per run.
-        let box_modules = Arc::new(crate::box_imports::BoxModules::new(box_sources));
+        let box_modules = self.build_box_modules();
         // Pass 2. Compute the scope before moving the tables into the
         // refiner, because `fn_table` records S3 generic-to-method edges.
         let mut fixpoint_scope = self.compute_fixpoint_scope();

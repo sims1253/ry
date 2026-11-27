@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tower_lsp::lsp_types::{InlayHint, Range, TextDocumentContentChangeEvent, Url};
 
 pub(super) struct CachedHints {
+    pub generation: u64,
     pub stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     pub hints: Vec<InlayHint>,
 }

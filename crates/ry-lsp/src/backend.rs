@@ -295,14 +295,14 @@ pub(super) struct ProjectCheckResult {
 type PackageFile = (String, i32, Arc<SourceFile>);
 
 impl ProjectCache {
-    pub(super) fn check_with_workspace(
+    fn sync_workspace(
         &mut self,
         files: Vec<(String, i32, Arc<SourceFile>)>,
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
         workspace: ry_workspace::WorkspaceContext,
         records: Vec<ry_core::declarations::DeclarationRecord>,
         open_paths: &HashSet<String>,
-    ) -> ProjectCheckResult {
+    ) -> HashMap<String, Arc<SourceFile>> {
         let checked_files = files
             .iter()
             .map(|(path, _, file)| (path.clone(), Arc::clone(file)))
@@ -341,6 +341,18 @@ impl ProjectCache {
         // history would decide which same-named definition wins; the
         // incoming sequence is the canonical one.
         self.project.reorder_files(&order);
+        checked_files
+    }
+
+    pub(super) fn check_with_workspace(
+        &mut self,
+        files: Vec<(String, i32, Arc<SourceFile>)>,
+        user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+        workspace: ry_workspace::WorkspaceContext,
+        records: Vec<ry_core::declarations::DeclarationRecord>,
+        open_paths: &HashSet<String>,
+    ) -> ProjectCheckResult {
+        let checked_files = self.sync_workspace(files, user_stubs, workspace, records, open_paths);
         let mut diagnostics = self.project.check_incremental();
         ry_checker::append_declaration_diagnostics(
             &mut diagnostics,
@@ -350,6 +362,19 @@ impl ProjectCache {
             diagnostics,
             files: checked_files,
         }
+    }
+
+    pub(super) fn assignment_types_for_with_workspace(
+        &mut self,
+        target_path: &str,
+        files: Vec<(String, i32, Arc<SourceFile>)>,
+        user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+        workspace: ry_workspace::WorkspaceContext,
+        records: Vec<ry_core::declarations::DeclarationRecord>,
+        open_paths: &HashSet<String>,
+    ) -> Vec<(ry_core::Span, ry_core::types::RType)> {
+        let _ = self.sync_workspace(files, user_stubs, workspace, records, open_paths);
+        self.project.assignment_types_for(target_path)
     }
 }
 
@@ -623,26 +648,156 @@ impl Backend {
         let _ = self.writer.send(work);
     }
 
-    /// Return hints from one current parse and its assignment-site inference.
+    /// Return inlay hints using the file's full project/workspace context
+    /// (`FnTable`, `WorkspaceContext`, stubs) when eligible, or single-file
+    /// fallback for size-gated buffers; CPU-bound inference runs on
+    /// `spawn_blocking` so concurrent LSP requests do not stall (#930).
     async fn hints_for(&self, path: &str) -> Option<Vec<InlayHint>> {
-        let user_stubs = {
+        let (generation, user_stubs, eligible, owner_root, sibling_open_paths) = {
             let state = self.state.lock().await;
+            let generation = state.diag_generation;
             let stubs = &state.context_for_path(path).stubs;
             if let Some(cached) = state.docs.active(path).and_then(|doc| doc.hints.as_ref())
+                && cached.generation == generation
                 && Arc::ptr_eq(&cached.stubs, stubs)
             {
                 return Some(cached.hints.clone());
             }
-            Arc::clone(stubs)
+            let eligible = state.docs.active(path).is_some_and(|doc| {
+                state.eligibility_for_path_with_len(path, Some(doc.text.len() as u64))
+            });
+            let owner_root = state
+                .folder_context_for_path(path)
+                .map(|ctx| ctx.root.clone());
+            let target_pkg = ry_workspace::enclosing_package_root(Path::new(path));
+            let sibling_open_paths: Vec<(String, i32)> = if eligible {
+                state
+                    .docs
+                    .paths()
+                    .into_iter()
+                    .filter(|p| {
+                        p != path
+                            && state.folder_context_for_path(p).map(|ctx| ctx.root.clone())
+                                == owner_root
+                            && ry_workspace::enclosing_package_root(Path::new(p)) == target_pkg
+                    })
+                    .filter_map(|p| {
+                        let doc = state.docs.active(&p)?;
+                        state
+                            .eligibility_for_path_with_len(&p, Some(doc.text.len() as u64))
+                            .then_some((p, doc.version))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            (
+                generation,
+                Arc::clone(stubs),
+                eligible,
+                owner_root,
+                sibling_open_paths,
+            )
         };
+
         let (file, text) = parsed_file(&self.state, path).await.ok()?;
-        let mut checker = ry_checker::Checker::new(path);
-        checker.set_user_stubs(Arc::clone(&user_stubs));
-        checker.enable_assignment_capture();
-        checker.check(&file);
-        let hints = collect_inlay_hints(&checker.take_assignment_types(), &text);
+
+        let hints = if !eligible {
+            // Over-cap buffers stay out of project-wide state while still
+            // serving local inlay hints off the async runtime.
+            let target_path = path.to_string();
+            let file_for_task = Arc::clone(&file);
+            let stubs_for_task = Arc::clone(&user_stubs);
+            let text_for_task = text.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut checker = ry_checker::Checker::new(&target_path);
+                checker.set_user_stubs(stubs_for_task);
+                checker.enable_assignment_capture();
+                checker.check(&file_for_task);
+                collect_inlay_hints(&checker.take_assignment_types(), &text_for_task)
+            })
+            .await
+            .ok()?
+        } else {
+            let mut parsed_siblings = Vec::with_capacity(sibling_open_paths.len());
+            for (sibling_path, version) in sibling_open_paths {
+                if let Ok((sibling_file, _)) = parsed_file(&self.state, &sibling_path).await {
+                    parsed_siblings.push((sibling_path, version, sibling_file));
+                }
+            }
+            let target_pkg = ry_workspace::enclosing_package_root(Path::new(path));
+            let (cache, workspace, config, group_files, open_paths, colliding) = {
+                let mut state = self.state.lock().await;
+                let target_version = state.docs.active(path).map_or(0, |doc| doc.version);
+                let open_paths: HashSet<String> = state.docs.paths().into_iter().collect();
+                let colliding: HashSet<String> = open_paths
+                    .iter()
+                    .filter(|p| state.docs.at(p).len() > 1)
+                    .cloned()
+                    .collect();
+                let mut group_files: Vec<PackageFile> = state
+                    .disk_files
+                    .iter()
+                    .filter(|(p, _)| !state.docs.contains(p))
+                    .filter(|(p, _)| state.eligibility_for_path(p))
+                    .filter(|(p, _)| {
+                        state.folder_context_for_path(p).map(|ctx| ctx.root.clone()) == owner_root
+                            && ry_workspace::enclosing_package_root(Path::new(p)) == target_pkg
+                    })
+                    .map(|(p, f)| (p.clone(), 0, Arc::clone(f)))
+                    .collect();
+                group_files.extend(parsed_siblings);
+                group_files.push((path.to_string(), target_version, Arc::clone(&file)));
+                group_files.sort_by(|a, b| a.0.cmp(&b.0));
+
+                let state = &mut *state;
+                let ctx = match &owner_root {
+                    Some(root) => state
+                        .folder_contexts
+                        .iter_mut()
+                        .find(|ctx| &ctx.root == root)
+                        .unwrap_or(&mut state.fallback),
+                    None => &mut state.fallback,
+                };
+                let cache = Arc::clone(ctx.package_caches.entry(target_pkg.clone()).or_default());
+                let workspace = ctx
+                    .workspace_contexts
+                    .get(&target_pkg)
+                    .cloned()
+                    .unwrap_or_default();
+                let config = ctx.config.clone();
+                (cache, workspace, config, group_files, open_paths, colliding)
+            };
+
+            let mut guard = cache.lock_owned().await;
+            let target_path = path.to_string();
+            let stubs_for_task = Arc::clone(&user_stubs);
+            let text_for_task = text.clone();
+            tokio::task::spawn_blocking(move || {
+                let adoptable: Vec<Arc<SourceFile>> = group_files
+                    .iter()
+                    .filter(|(p, _, _)| !colliding.contains(p))
+                    .map(|(_, _, f)| Arc::clone(f))
+                    .collect();
+                let adopted = ry_checker::frontend::adopted_records(&adoptable, &config);
+                let types = guard.assignment_types_for_with_workspace(
+                    &target_path,
+                    group_files,
+                    stubs_for_task,
+                    workspace,
+                    adopted.records,
+                    &open_paths,
+                );
+                collect_inlay_hints(&types, &text_for_task)
+            })
+            .await
+            .ok()?
+        };
+
         let mut state = self.state.lock().await;
-        if !Arc::ptr_eq(&state.context_for_path(path).stubs, &user_stubs) {
+        if state.diag_generation != generation
+            || !Arc::ptr_eq(&state.context_for_path(path).stubs, &user_stubs)
+        {
             return None;
         }
         let doc = state.docs.active_mut(path).filter(|doc| {
@@ -651,6 +806,7 @@ impl Backend {
                 .is_some_and(|parsed| Arc::ptr_eq(parsed, &file))
         })?;
         doc.hints = Some(CachedHints {
+            generation,
             stubs: user_stubs,
             hints: hints.clone(),
         });

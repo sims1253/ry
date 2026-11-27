@@ -145,3 +145,119 @@ fn seq_partial_length_out_pins_the_length() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert_eq!(scope.get("x").unwrap().length, Length::Known(4));
 }
+
+/// `range(..., finite = ...)` treats `finite` as a drop control rather than
+/// a logical data argument (#922). Verified in GNU R 4.6.2:
+/// `typeof(range(integer(0), finite = FALSE))` is `"double"`,
+/// `typeof(range(NA_integer_, finite = TRUE))` is `"double"`, and
+/// `typeof(range(1L, finite = FALSE))` is `"integer"`.
+#[test]
+fn range_finite_control_is_not_data_and_may_drop() {
+    for (src, expected) in [
+        ("x <- range(integer(0), finite = FALSE)", DOUBLE),
+        ("x <- range(NA_integer_, finite = TRUE)", INTEGER_OR_DOUBLE),
+        ("x <- range(1L, finite = FALSE)", INTEGER),
+        ("x <- range(1L, finite = TRUE)", INTEGER_OR_DOUBLE),
+        (
+            "flag <- runif(1) > 0.5\nx <- range(1L, finite = flag)",
+            INTEGER_OR_DOUBLE,
+        ),
+    ] {
+        assert_eq!(mode_of(src), expected, "`{src}`");
+    }
+}
+
+/// Multi-mode `input_mode` entries allow a joined input mode (such as
+/// `sum()`'s integer data, which overflows to `"double"` in GNU R 4.6.2) to
+/// widen to a union while keeping double/complex/logical precise (#922).
+#[test]
+fn input_mode_multi_mode_outcome_supports_sum_integer_overflow() {
+    let stub = r#"{
+        "schema_version": "2",
+        "package": "overflowpkg",
+        "version": "0.0.1",
+        "functions": {
+            "sum_overflow": {
+                "params": ["...", {"name": "na.rm", "default": true}],
+                "return": {"mode": "opaque", "length": "1", "na": true},
+                "return_mode": {
+                    "kind": "input_mode",
+                    "params": ["..."],
+                    "modes": {
+                        "logical": "integer",
+                        "integer": ["integer", "double"],
+                        "double": "double",
+                        "complex": "complex"
+                    },
+                    "drop_controls": ["na.rm"]
+                }
+            }
+        }
+    }"#;
+    let (diagnostics_fn, _) = (
+        |src: &str| {
+            let (diagnostics, scope) = check_with_stubs(src, &[("overflowpkg.json", stub)]);
+            assert!(diagnostics.is_empty(), "`{src}`: {diagnostics:?}");
+            modes(scope.get("x").unwrap())
+        },
+        (),
+    );
+
+    for (src, expected) in [
+        ("x <- overflowpkg::sum_overflow(TRUE, FALSE)", INTEGER),
+        (
+            "x <- overflowpkg::sum_overflow(2147483647L, 1L)",
+            INTEGER_OR_DOUBLE,
+        ),
+        ("x <- overflowpkg::sum_overflow(1L, 2L)", INTEGER_OR_DOUBLE),
+        ("x <- overflowpkg::sum_overflow(1.5, 2.5)", DOUBLE),
+        (
+            "x <- overflowpkg::sum_overflow(complex(real = 1, imaginary = 1))",
+            COMPLEX,
+        ),
+    ] {
+        assert_eq!(diagnostics_fn(src), expected, "`{src}`");
+    }
+}
+
+/// `recycled_values` with `any_value_zero: "zero"` models two-argument math
+/// and string functions (`round`, `signif`, `log`, `startsWith`, `endsWith`)
+/// that recycle their second argument without `paste`-style controls.
+#[test]
+fn recycled_values_any_value_zero_handles_recycled_second_argument() {
+    let stub = r#"{
+        "schema_version": "2",
+        "package": "recyclepkg",
+        "version": "0.0.1",
+        "functions": {
+            "round2": {
+                "params": ["x", "digits"],
+                "return": {"mode": "double", "length": "unknown", "na": true},
+                "return_length": {
+                    "kind": "recycled_values",
+                    "value_params": ["x", "digits"],
+                    "any_value_zero": "zero"
+                }
+            }
+        }
+    }"#;
+
+    for (src, expected) in [
+        ("x <- recyclepkg::round2(1.234)", Length::One),
+        ("x <- recyclepkg::round2(1.234, 1:3)", Length::Known(3)),
+        ("x <- recyclepkg::round2(1:5, 1:2)", Length::Known(5)),
+        ("x <- recyclepkg::round2(numeric(0), 1:3)", Length::Zero),
+        (
+            "x <- recyclepkg::round2(1.234, digits = 1:4)",
+            Length::Known(4),
+        ),
+        (
+            "v <- seq_len(runif(1))\nx <- recyclepkg::round2(v, 1:3)",
+            Length::Unknown,
+        ),
+    ] {
+        let (diagnostics, scope) = check_with_stubs(src, &[("recyclepkg.json", stub)]);
+        assert!(diagnostics.is_empty(), "`{src}`: {diagnostics:?}");
+        assert_eq!(scope.get("x").unwrap().length, expected, "`{src}`");
+    }
+}

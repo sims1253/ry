@@ -78,3 +78,12 @@ stopifnot(typeof(seq.int(1, 10, by = 1)) == "integer",
 # A partial `length.out` name is still `length.out`.
 stopifnot(length(seq(1, 10, length = 4)) == 4L,
           typeof(seq(1, 10, len = 4)) == "double")
+
+# `range(..., finite = ...)` treats `finite` as a control, not data (#922).
+stopifnot(typeof(suppressWarnings(range(integer(0), finite = FALSE))) == "double",
+          typeof(suppressWarnings(range(NA_integer_, finite = TRUE))) == "double",
+          typeof(range(1L, finite = FALSE)) == "integer",
+          typeof(range(1L, finite = TRUE)) == "integer")
+
+# `sum()` integer overflow promotes to double in GNU R (#922).
+stopifnot(typeof(sum(2147483647L, 1L)) == "double")

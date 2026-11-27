@@ -169,7 +169,7 @@ impl Checker {
             || self
                 .loaded
                 .iter()
-                .any(|package| !self.package_is_known(package))
+                .any(|package| !self.package_has_complete_exports(package))
         {
             return true;
         }

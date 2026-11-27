@@ -536,14 +536,24 @@ impl Checker {
         // logic as `list(...)`, but the result is classed
         // "data.frame" and column lengths are coerced to a common
         // length (R recycles; for v1 we take the max of the known
-        // lengths).
+        // lengths). Only a list/data.frame single argument reuses its
+        // column schema directly; a named atomic vector like
+        // `c(a = 1, b = 2)` becomes a single-column data frame (#923).
         if lookup_name == "data.frame" {
             if args.len() == 1
                 && args[0].name.is_none()
+                && arg_types[0].mode == Mode::List
                 && let Some(schema) = arg_types[0].columns.clone()
             {
+                let length = if schema.complete {
+                    Length::Known(schema.columns.len())
+                } else if schema.columns.is_empty() {
+                    Length::Unknown
+                } else {
+                    Length::AtLeast(schema.columns.len())
+                };
                 return Some(
-                    RType::new(Mode::List, Length::Known(schema.columns.len()))
+                    RType::new(Mode::List, length)
                         .with_class(ClassVector::single("data.frame"))
                         .with_columns(schema),
                 );
@@ -551,22 +561,91 @@ impl Checker {
             return Some(self.infer_data_frame(arg_types, args));
         }
 
+        // `t(x)` is an S3 generic (`t.default`, `t.data.frame`, user `t.*`).
+        // `t.data.frame` coerces to an unclassed matrix via `as.matrix()`, so
+        // it must not return the data frame or its `$` columns (#923). Only
+        // unclassed atomic inputs and plain `data.frame` inputs are modeled
+        // here; other classed inputs fall through to S3/S4 dispatch.
         if lookup_name == "t" {
-            return Some(arg_types.first().cloned().unwrap_or_else(RType::unknown));
+            let input = arg_types.first()?;
+            if input.class.is_classless() && input.mode.is_atomic() {
+                return Some(RType::new(input.mode, input.length));
+            }
+            if input.class == ClassVector::single("data.frame") {
+                return Some(Self::transpose_data_frame(input));
+            }
+            return None;
         }
 
         if lookup_name == "as.data.frame"
             && let Some(input) = arg_types.first()
+            && input.mode == Mode::List
             && let Some(schema) = input.columns.clone()
             && !schema.is_empty()
         {
+            let length = if schema.complete {
+                Length::Known(schema.columns.len())
+            } else {
+                Length::AtLeast(schema.columns.len())
+            };
             return Some(
-                RType::new(Mode::List, Length::Known(schema.columns.len()))
+                RType::new(Mode::List, length)
                     .with_class(ClassVector::single("data.frame"))
                     .with_columns(schema),
             );
         }
         None
+    }
+
+    /// Result type of `base::t.data.frame(df)` (`t(as.matrix(df))`): always an
+    /// unclassed matrix with no `$` column schema. When every column is a known
+    /// classless atomic vector in a complete schema, `as.matrix.data.frame`
+    /// coerces up R's atomic ladder (`logical < integer < double < complex <
+    /// character`); otherwise the element mode stays unknown while class stays
+    /// empty (`oldClass(t(df))` is `NULL` in R).
+    fn transpose_data_frame(df: &RType) -> RType {
+        let mut mode = Mode::Opaque;
+        if let Some(schema) = &df.columns
+            && schema.complete
+            && !schema.columns.is_empty()
+        {
+            let mut coerced: Option<Mode> = None;
+            let mut all_plain_atomic = true;
+            for (_, col) in &schema.columns {
+                if !col.class.is_classless() {
+                    all_plain_atomic = false;
+                    break;
+                }
+                let rank = match col.mode {
+                    Mode::Logical => 0,
+                    Mode::Integer => 1,
+                    Mode::Double => 2,
+                    Mode::Complex => 3,
+                    Mode::Character => 4,
+                    _ => {
+                        all_plain_atomic = false;
+                        break;
+                    }
+                };
+                coerced = Some(match coerced {
+                    None => col.mode,
+                    Some(prev) => {
+                        let prev_rank = match prev {
+                            Mode::Logical => 0,
+                            Mode::Integer => 1,
+                            Mode::Double => 2,
+                            Mode::Complex => 3,
+                            _ => 4,
+                        };
+                        if rank > prev_rank { col.mode } else { prev }
+                    }
+                });
+            }
+            if all_plain_atomic && let Some(joined) = coerced {
+                mode = joined;
+            }
+        }
+        RType::new(mode, Length::Unknown).with_class(ClassVector::empty())
     }
 
     /// The literal-length constructor stage of `infer_call`: `vector`,

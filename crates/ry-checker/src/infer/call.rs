@@ -226,6 +226,36 @@ impl Checker {
         }
     }
 
+    /// Whether an atomic constructor call (`c`, `list`, `data.frame`, `t`,
+    /// `as.data.frame`) resolves to base rather than a qualified external
+    /// package (`otherpkg::t`), a project/lexical helper, or an import from
+    /// another package (#924). Unlike `error_wrapper_recognized`, user base
+    /// stubs do not disable base constructors.
+    fn base_constructor_recognized(
+        &self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        scope: &Scope,
+    ) -> bool {
+        if let Some((pkg, _)) = crate::resolve::split_qualified(semantic_name) {
+            return pkg == "base" && !matches!(func, Expr::String(_, _)) && name == semantic_name;
+        }
+        if name != semantic_name {
+            return false;
+        }
+        !scope.is_parameter(semantic_name)
+            && scope.lexical_definition(semantic_name).is_none()
+            && !self.fn_table.functions.binds(semantic_name)
+            && self
+                .imported_from
+                .get(semantic_name)
+                .is_none_or(|imported| imported == "base")
+            && !scope
+                .get(semantic_name)
+                .is_some_and(|ty| ty.fn_sig.is_some() || ty.mode.may_be_function())
+    }
+
     /// Discard declaration-only exact identities after evaluating an
     /// expression whose binding effects cannot be excluded. This extra
     /// invalidation runs only when an adopted contract is selected.
@@ -450,8 +480,19 @@ impl Checker {
         }
 
         // `tryCatch(expr, ..., handler = fun)`: the join of the main
-        // expression and all handler return types.
-        if semantic_name == "tryCatch" {
+        // expression and all handler return types. Guarded by base provenance
+        // so `base::tryCatch(...)` is recognized and local/project/otherpkg
+        // definitions are not hijacked (#924).
+        if lookup_name == "tryCatch"
+            && self.error_wrapper_recognized(
+                &name,
+                func,
+                &semantic_name,
+                &lookup_name,
+                "base",
+                scope,
+            )
+        {
             return self.infer_trycatch_call(args, scope);
         }
 
@@ -565,15 +606,10 @@ impl Checker {
             return self.emit_symbol_not_callable(&name, value_type.mode, span);
         }
 
-        // The atomic-constructor stage: `c`, `list`, `data.frame`, `t`,
-        // `as.data.frame`.
-        if let Some(t) = self.infer_atomic_constructor_call(&lookup_name, args, &call.arg_types) {
-            return t;
-        }
-
-        // Class dispatch must run before the higher-order, FnTable, and
-        // typeshed stages below: a method's inferred return type wins over
-        // the generic's stub.
+        // Class dispatch must run before the constructor, higher-order,
+        // FnTable, and typeshed stages below: a method's inferred return type
+        // (such as `t.foo`, `c.foo`, or `as.data.frame.foo`) wins over the
+        // generic's base constructor fast path or stub (#924).
         let instances: Vec<bool> = args
             .iter()
             .map(|argument| self.is_proven_new_call(&argument.value, scope))
@@ -602,6 +638,17 @@ impl Checker {
             .and_then(|first| self.user_s3_dispatch_return(&lookup_name, first))
         {
             return rt;
+        }
+
+        // The atomic-constructor stage: `c`, `list`, `data.frame`, `t`,
+        // `as.data.frame`. Guarded by base provenance and user-function
+        // precedence so `otherpkg::t()`, `otherpkg::list()`, or a project
+        // `FnTable` helper is never hijacked as a base builtin (#924).
+        if call.head.user_function().is_none()
+            && self.base_constructor_recognized(&name, func, &semantic_name, scope)
+            && let Some(t) = self.infer_atomic_constructor_call(&lookup_name, args, &call.arg_types)
+        {
+            return t;
         }
 
         // S3 dispatch: when a known generic is called with a classed

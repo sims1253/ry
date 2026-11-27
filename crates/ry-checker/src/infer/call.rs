@@ -2618,7 +2618,7 @@ impl Checker {
         // spurious RY010 on every `library(magrittr)` etc. We ALSO record
         // the package, and any packages it attaches in turn, into
         // `self.loaded` so the dplyr NSE gating sees them after either call.
-        if semantic_name == "library" || semantic_name == "require" {
+        if ry_workspace::is_attach_call_name(semantic_name) {
             if let Some(pkg) = crate::attached_package_name(args) {
                 let attached: Vec<String> = ry_workspace::attaching(pkg, &self.user_stubs)
                     .map(str::to_owned)
@@ -2633,13 +2633,13 @@ impl Checker {
                     Arc::make_mut(&mut self.loaded).insert(package.clone());
                     Arc::make_mut(&mut self.bare_loaded).insert(package);
                 }
-            } else if crate::character_only(args) {
+            } else if ry_workspace::packages::character_only_may_be_true(args) {
                 // `library(pkg, character.only = TRUE)` evaluates its
                 // argument. Without a literal package name we cannot
                 // know which bindings were attached.
                 scope.mark_search_path_unknown();
             }
-            return Some(if semantic_name == "require" {
+            return Some(if lookup_name == "require" {
                 RType::new(Mode::Logical, Length::One)
             } else {
                 RType::new(Mode::Null, Length::Zero)

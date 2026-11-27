@@ -22,7 +22,7 @@ use serialized::serialized_inventory;
 
 pub use native::NATIVE_SOURCE_EXTENSIONS;
 use packages::NamespaceMetadata;
-pub use packages::{PackageFacts, attaching};
+pub use packages::{PackageFacts, attached_package_name, attaching, is_attach_call_name};
 
 use ry_core::FFI_PRIMITIVES;
 use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
@@ -161,6 +161,22 @@ pub fn resolve_group(
     resolve_workspace_context(&resolution_root, config, files, user_stubs)
 }
 
+/// A package resolved from an installed R library on disk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedPackage {
+    pub name: String,
+    pub version: Option<String>,
+    pub library: PathBuf,
+}
+
+/// Static snapshot of the R library environment discovered for a set of paths.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResolvedEnvironment {
+    pub active_r_version: Option<String>,
+    pub library_roots: Vec<PathBuf>,
+    pub packages: Vec<ResolvedPackage>,
+}
+
 /// Filesystem-derived state applied to a checker `Project`.
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceContext {
@@ -171,8 +187,10 @@ pub struct WorkspaceContext {
     pub package_facts: HashMap<String, PackageFacts>,
     pub imported_bindings: HashMap<String, HashMap<String, String>>,
     pub s3_methods: HashMap<String, HashSet<(String, String)>>,
+    pub s3_method_functions: HashMap<String, HashMap<(String, String), String>>,
     pub load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     pub degraded_scopes: Vec<(PathBuf, InventoryFailure)>,
+    pub resolved_packages: BTreeMap<String, ResolvedPackage>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -386,6 +404,9 @@ pub fn parse_source_file(path: &Path, overlay: Option<&[u8]>) -> Result<SourceFi
 struct LibraryRoot {
     path: PathBuf,
     max_depth: usize,
+    /// When true and an active R minor version is known, sibling R version
+    /// subdirectories that do not match the active version are skipped (#929).
+    strict_version: bool,
 }
 
 impl LibraryRoot {
@@ -393,6 +414,7 @@ impl LibraryRoot {
         Self {
             path: path.into(),
             max_depth: 0,
+            strict_version: false,
         }
     }
 
@@ -400,6 +422,15 @@ impl LibraryRoot {
         Self {
             path: path.into(),
             max_depth,
+            strict_version: false,
+        }
+    }
+
+    fn version_scoped(path: impl Into<PathBuf>, max_depth: usize) -> Self {
+        Self {
+            path: path.into(),
+            max_depth,
+            strict_version: true,
         }
     }
 }
@@ -420,7 +451,8 @@ pub fn resolve_workspace_context(
     let library_roots = r_library_roots(&all_paths);
     let preferred_version = current_r_minor_version(&library_roots);
     let mut namespace_cache: HashMap<PathBuf, NamespaceMetadata> = HashMap::new();
-    let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut export_cache: HashMap<String, (HashSet<String>, Option<ResolvedPackage>)> =
+        HashMap::new();
     let mut dataset_cache: HashMap<PathBuf, DataInventory> = HashMap::new();
     let mut source_binding_cache: HashMap<PathBuf, SourceBindings> = HashMap::new();
     let mut native_inventory_cache = HashMap::new();
@@ -438,7 +470,9 @@ pub fn resolve_workspace_context(
     let mut package_facts = HashMap::new();
     let mut imported_from = HashMap::new();
     let mut s3_methods = HashMap::new();
+    let mut s3_method_functions = HashMap::new();
     let mut load_bindings = HashMap::new();
+    let mut resolved_packages = BTreeMap::new();
     // A package root is visited once per file in it, so a single oversized
     // dataset would otherwise be reported once per file. Deduplicate on the
     // (path, reason) pair; the CLI prints one line per entry.
@@ -461,6 +495,7 @@ pub fn resolve_workspace_context(
         let mut file_bindings = HashSet::new();
         let mut file_package_facts = PackageFacts::default();
         let mut file_s3_methods = HashSet::new();
+        let mut file_s3_method_functions = HashMap::new();
         let mut file_imported_from = HashMap::new();
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
@@ -531,6 +566,7 @@ pub fn resolve_workspace_context(
                     })
                 }));
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
+            file_s3_method_functions.extend(metadata.s3_method_functions.clone());
             // `import(pkg)` puts pkg's exports in the package namespace, not
             // on the search path. Two execution contexts still resolve those
             // names: the package's own `R/` sources, and the testthat runner
@@ -647,9 +683,14 @@ pub fn resolve_workspace_context(
             if source_package.as_ref() == Some(package) {
                 continue;
             }
-            let exports = export_cache.entry(package.clone()).or_insert_with(|| {
-                installed_package_exports(package, &library_roots, preferred_version.as_deref())
+            let (exports, resolved) = export_cache.entry(package.clone()).or_insert_with(|| {
+                installed_package_info(package, &library_roots, preferred_version.as_deref())
             });
+            if let Some(info) = resolved {
+                resolved_packages
+                    .entry(package.clone())
+                    .or_insert_with(|| info.clone());
+            }
             file_bindings.extend(exports.iter().cloned());
             if let Some(typeshed) = ry_typeshed::package_stub(user_stubs, package) {
                 file_bindings.extend(typeshed.functions.keys().cloned());
@@ -672,6 +713,9 @@ pub fn resolve_workspace_context(
         }
         imported_from.insert(file.path.clone(), file_imported_from);
         s3_methods.insert(file.path.clone(), file_s3_methods);
+        if !file_s3_method_functions.is_empty() {
+            s3_method_functions.insert(file.path.clone(), file_s3_method_functions);
+        }
     }
     Ok(WorkspaceContext {
         attached_packages: attached,
@@ -680,8 +724,10 @@ pub fn resolve_workspace_context(
         package_facts,
         imported_bindings: imported_from,
         s3_methods,
+        s3_method_functions,
         load_bindings,
         degraded_scopes: degraded.into_iter().collect(),
+        resolved_packages,
     })
 }
 
@@ -1197,10 +1243,9 @@ fn r_library_roots(all_paths: &[PathBuf]) -> Vec<LibraryRoot> {
         return Vec::new();
     }
     let mut roots = Vec::new();
-    let mut seen_renv = HashSet::new();
-    // The renv probe walks each file's ancestor directories; files in
-    // one directory share the walk, so probe each distinct directory
-    // once instead of once per file.
+    let mut seen_project_libs = HashSet::new();
+    // Project library probes walk each file's ancestor directories; files in
+    // one directory share the walk, so probe each distinct directory once.
     let mut seen_parents: HashSet<&Path> = HashSet::new();
     for path in all_paths {
         let start = if path.is_dir() {
@@ -1213,11 +1258,22 @@ fn r_library_roots(all_paths: &[PathBuf]) -> Vec<LibraryRoot> {
         if !seen_parents.insert(start) {
             continue;
         }
+        // Auto-discover `.uvr/library` when `uvr.toml` or `uvr.lock` sits at
+        // the project root (#812), and nearby `renv/library` roots.
+        if let Some(uvr) = start.ancestors().find_map(|ancestor| {
+            let has_uvr_marker =
+                ancestor.join("uvr.toml").is_file() || ancestor.join("uvr.lock").is_file();
+            let lib = ancestor.join(".uvr/library");
+            (has_uvr_marker && lib.is_dir()).then_some(lib)
+        }) && seen_project_libs.insert(uvr.clone())
+        {
+            roots.push(LibraryRoot::exact(uvr));
+        }
         if let Some(renv) = start
             .ancestors()
             .map(|ancestor| ancestor.join("renv/library"))
             .find(|candidate| candidate.is_dir())
-            && seen_renv.insert(renv.clone())
+            && seen_project_libs.insert(renv.clone())
         {
             roots.push(LibraryRoot::nested(renv, 3));
         }
@@ -1230,7 +1286,14 @@ fn r_library_roots(all_paths: &[PathBuf]) -> Vec<LibraryRoot> {
     if let Some(r_home) = std::env::var_os("R_HOME") {
         roots.push(LibraryRoot::exact(PathBuf::from(r_home).join("library")));
     }
+    // Prefer the active R binary on PATH (including rig-managed shims) and
+    // rig's current symlink ahead of fixed system paths so `current_r_minor_version`
+    // matches the active R installation (#929).
+    for lib in active_r_library_from_path() {
+        roots.push(LibraryRoot::exact(lib));
+    }
     for path in [
+        "/opt/R/current/lib/R/library",
         "/usr/local/lib/R/site-library",
         "/usr/local/lib64/R/site-library",
         "/usr/lib/R/site-library",
@@ -1240,40 +1303,85 @@ fn r_library_roots(all_paths: &[PathBuf]) -> Vec<LibraryRoot> {
     ] {
         roots.push(LibraryRoot::exact(path));
     }
-    roots.push(LibraryRoot::nested(
+    roots.push(LibraryRoot::version_scoped(
         "/Library/Frameworks/R.framework/Versions",
         3,
     ));
     if let Some(home) = std::env::var_os("HOME") {
         let home = PathBuf::from(home);
-        roots.push(LibraryRoot::nested(home.join("R"), 2));
-        roots.push(LibraryRoot::nested(home.join("Library/R"), 4));
+        roots.push(LibraryRoot::version_scoped(home.join("R"), 2));
+        roots.push(LibraryRoot::version_scoped(home.join("Library/R"), 4));
     }
     for key in ["LOCALAPPDATA", "APPDATA"] {
         if let Some(root) = std::env::var_os(key) {
-            roots.push(LibraryRoot::nested(
+            roots.push(LibraryRoot::version_scoped(
                 PathBuf::from(root).join("R/win-library"),
                 2,
             ));
         }
     }
     if let Some(profile) = std::env::var_os("USERPROFILE") {
-        roots.push(LibraryRoot::nested(
+        roots.push(LibraryRoot::version_scoped(
             PathBuf::from(profile).join("Documents/R/win-library"),
             2,
         ));
     }
     for key in ["ProgramFiles", "ProgramFiles(x86)"] {
         if let Some(program_files) = std::env::var_os(key) {
-            roots.push(LibraryRoot::nested(
+            roots.push(LibraryRoot::version_scoped(
                 PathBuf::from(program_files).join("R"),
                 2,
             ));
         }
     }
     let mut seen = HashSet::new();
-    roots.retain(|root| seen.insert((root.path.clone(), root.max_depth)));
+    roots.retain(|root| seen.insert((root.path.clone(), root.max_depth, root.strict_version)));
     roots
+}
+
+fn active_r_library_from_path() -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return found;
+    };
+    #[cfg(windows)]
+    let binary_names = ["R.exe", "Rscript.exe"];
+    #[cfg(not(windows))]
+    let binary_names = ["R", "Rscript"];
+    for dir in std::env::split_paths(&path_var) {
+        for bin in binary_names {
+            let candidate = dir.join(bin);
+            if !candidate.is_file() {
+                continue;
+            }
+            let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+            if let Some(bin_dir) = resolved.parent() {
+                let mut prefixes = Vec::new();
+                if let Some(parent) = bin_dir.parent() {
+                    prefixes.push(parent);
+                    if let Some(grandparent) = parent.parent() {
+                        prefixes.push(grandparent);
+                    }
+                }
+                for prefix in prefixes {
+                    for rel in [
+                        "lib/R/library",
+                        "lib64/R/library",
+                        "library",
+                        "Resources/library",
+                    ] {
+                        let lib = prefix.join(rel);
+                        if lib.join("base").join("DESCRIPTION").is_file() {
+                            found.push(lib);
+                            return found;
+                        }
+                    }
+                }
+            }
+            return found;
+        }
+    }
+    found
 }
 
 fn library_root_from_env_path(path: PathBuf) -> Option<LibraryRoot> {
@@ -1310,6 +1418,7 @@ fn find_package_namespace(
     package: &str,
     depth: usize,
     preferred_version: Option<&str>,
+    strict_version: bool,
 ) -> Option<PathBuf> {
     if package.is_empty()
         || package == "."
@@ -1332,6 +1441,19 @@ fn find_package_namespace(
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
+        .filter(|path| {
+            if !strict_version {
+                return true;
+            }
+            let Some(active) = preferred_version else {
+                return true;
+            };
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            // Under version-scoped user/system library trees (`~/R/.../4.5`,
+            // `~/R/.../4.6`), skip sibling R version directories that do not
+            // match the active R minor version (#929).
+            !looks_like_r_version_dir(name) || directory_matches_r_version(name, active)
+        })
         .collect();
     directories.sort_by(|a, b| {
         let a_name = a.file_name().and_then(|name| name.to_str()).unwrap_or("");
@@ -1347,12 +1469,28 @@ fn find_package_namespace(
     for path in directories {
         if path.is_dir()
             && let Some(found) =
-                find_package_namespace(&path, package, depth - 1, preferred_version)
+                find_package_namespace(&path, package, depth - 1, preferred_version, strict_version)
         {
             return Some(found);
         }
     }
     None
+}
+
+fn looks_like_r_version_dir(directory: &str) -> bool {
+    let candidate = directory.trim_prefix("R-");
+    let mut parts = candidate.split('.');
+    let Some(major) = parts.next() else {
+        return false;
+    };
+    let Some(minor_rest) = parts.next() else {
+        return false;
+    };
+    if major.is_empty() || !major.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let minor = minor_rest.split(['.', '-', '_']).next().unwrap_or("");
+    !minor.is_empty() && minor.bytes().all(|b| b.is_ascii_digit())
 }
 
 fn directory_matches_r_version(directory: &str, minor_version: &str) -> bool {
@@ -1363,18 +1501,73 @@ fn directory_matches_r_version(directory: &str, minor_version: &str) -> bool {
         })
 }
 
-fn installed_package_exports(
+fn read_description_version(package_dir: &Path) -> Option<String> {
+    let description = std::fs::read_to_string(package_dir.join("DESCRIPTION")).ok()?;
+    description
+        .lines()
+        .find_map(|line| line.strip_prefix("Version:"))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn installed_package_info(
     package: &str,
     roots: &[LibraryRoot],
     preferred_version: Option<&str>,
-) -> HashSet<String> {
-    roots
-        .iter()
-        .find_map(|root| {
-            find_package_namespace(&root.path, package, root.max_depth, preferred_version)
+) -> (HashSet<String>, Option<ResolvedPackage>) {
+    let Some(namespace) = roots.iter().find_map(|root| {
+        find_package_namespace(
+            &root.path,
+            package,
+            root.max_depth,
+            preferred_version,
+            root.strict_version,
+        )
+    }) else {
+        return (HashSet::new(), None);
+    };
+    let exports = read_namespace(&namespace).exports;
+    let resolved = namespace.parent().and_then(|pkg_dir| {
+        let library = pkg_dir.parent()?.to_path_buf();
+        let version = read_description_version(pkg_dir);
+        Some(ResolvedPackage {
+            name: package.to_string(),
+            version,
+            library,
         })
-        .map(|path| read_namespace(&path).exports)
-        .unwrap_or_default()
+    });
+    (exports, resolved)
+}
+
+/// Resolve the active R library environment and package versions for a set of
+/// workspace paths and referenced package names (#812).
+pub fn resolve_environment(all_paths: &[PathBuf], packages: &[String]) -> ResolvedEnvironment {
+    let roots = r_library_roots(all_paths);
+    let active_r_version = current_r_full_version(&roots);
+    let preferred_version = active_r_version.as_deref().and_then(minor_version_of);
+    let library_roots: Vec<PathBuf> = roots
+        .iter()
+        .filter(|root| root.path.is_dir())
+        .map(|root| root.path.clone())
+        .collect();
+    let mut resolved = Vec::new();
+    let mut seen = BTreeSet::new();
+    for package in packages {
+        if !seen.insert(package.clone()) {
+            continue;
+        }
+        if let (_, Some(info)) =
+            installed_package_info(package, &roots, preferred_version.as_deref())
+        {
+            resolved.push(info);
+        }
+    }
+    resolved.sort_by(|a, b| a.name.cmp(&b.name));
+    ResolvedEnvironment {
+        active_r_version,
+        library_roots,
+        packages: resolved,
+    }
 }
 
 /// Literal installed exports visible to a source file through the library
@@ -1392,6 +1585,7 @@ pub fn installed_exports_for_file(package: &str, file: &Path) -> Option<HashSet<
                 package,
                 root.max_depth,
                 preferred_version.as_deref(),
+                root.strict_version,
             )
         })
         .map(|namespace| read_namespace(&namespace))
@@ -1399,17 +1593,21 @@ pub fn installed_exports_for_file(package: &str, file: &Path) -> Option<HashSet<
         .map(|metadata| metadata.exports)
 }
 
-fn current_r_minor_version(roots: &[LibraryRoot]) -> Option<String> {
-    let namespace = roots
-        .iter()
-        .find_map(|root| find_package_namespace(&root.path, "base", root.max_depth, None))?;
-    let description = std::fs::read_to_string(namespace.parent()?.join("DESCRIPTION")).ok()?;
-    let version = description
-        .lines()
-        .find_map(|line| line.strip_prefix("Version:"))?
-        .trim();
+fn minor_version_of(version: &str) -> Option<String> {
     let mut parts = version.split('.');
     Some(format!("{}.{}", parts.next()?, parts.next()?))
+}
+
+fn current_r_full_version(roots: &[LibraryRoot]) -> Option<String> {
+    let namespace = roots
+        .iter()
+        .find_map(|root| find_package_namespace(&root.path, "base", root.max_depth, None, false))?;
+    read_description_version(namespace.parent()?)
+}
+
+fn current_r_minor_version(roots: &[LibraryRoot]) -> Option<String> {
+    let version = current_r_full_version(roots)?;
+    minor_version_of(&version)
 }
 
 #[cfg(test)]
@@ -1830,5 +2028,92 @@ mod package_grouping_tests {
         assert!(file.as_os_str().len() > 260);
         assert_eq!(enclosing_package_root(&file), Some(root.clone()));
         assert_eq!(package_relative_path(&file, &root), Some(relative));
+    }
+
+    #[test]
+    fn version_scoped_user_library_skips_mismatched_r_minor_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_r = dir.path().join("R");
+        let lib_45 = user_r.join("x86_64-pc-linux-gnu-library").join("4.5");
+        let lib_46 = user_r.join("x86_64-pc-linux-gnu-library").join("4.6");
+        std::fs::create_dir_all(lib_45.join("S7")).unwrap();
+        std::fs::write(
+            lib_45.join("S7").join("NAMESPACE"),
+            "export(class_double)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            lib_45.join("S7").join("DESCRIPTION"),
+            "Package: S7\nVersion: 0.2.0\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(lib_46.join("newpkg")).unwrap();
+        std::fs::write(lib_46.join("newpkg").join("NAMESPACE"), "export(foo)\n").unwrap();
+        std::fs::write(
+            lib_46.join("newpkg").join("DESCRIPTION"),
+            "Package: newpkg\nVersion: 1.2.3\n",
+        )
+        .unwrap();
+
+        let roots = vec![LibraryRoot::version_scoped(user_r, 2)];
+        // When active R is 4.6, a package installed only in 4.5 is NOT picked up (#929).
+        let (s7_exports, s7_info) = installed_package_info("S7", &roots, Some("4.6"));
+        assert!(s7_exports.is_empty(), "stale 4.5 S7 leaked: {s7_exports:?}");
+        assert!(s7_info.is_none());
+
+        // A package installed in 4.6 IS picked up with its library and version.
+        let (new_exports, new_info) = installed_package_info("newpkg", &roots, Some("4.6"));
+        assert!(new_exports.contains("foo"));
+        let info = new_info.expect("newpkg resolved from 4.6");
+        assert_eq!(info.version.as_deref(), Some("1.2.3"));
+        assert_eq!(info.library, lib_46);
+
+        // When active R is 4.5, S7 IS picked up from 4.5 and newpkg is skipped.
+        let (s7_45, _) = installed_package_info("S7", &roots, Some("4.5"));
+        assert!(s7_45.contains("class_double"));
+        let (new_45, _) = installed_package_info("newpkg", &roots, Some("4.5"));
+        assert!(new_45.is_empty());
+    }
+
+    #[test]
+    fn uvr_library_is_auto_discovered_when_uvr_marker_is_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let uvr_lib = dir.path().join(".uvr").join("library");
+        std::fs::create_dir_all(uvr_lib.join("custompkg")).unwrap();
+        std::fs::write(
+            uvr_lib.join("custompkg").join("NAMESPACE"),
+            "export(custom_fn)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            uvr_lib.join("custompkg").join("DESCRIPTION"),
+            "Package: custompkg\nVersion: 0.4.2\n",
+        )
+        .unwrap();
+        let script = dir.path().join("R").join("analysis.R");
+        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+        std::fs::write(&script, "library(custompkg)\ncustom_fn()\n").unwrap();
+
+        // Without uvr.toml or uvr.lock, `.uvr/library` is not picked up.
+        let roots_without_marker = r_library_roots(std::slice::from_ref(&script));
+        assert!(
+            !roots_without_marker.iter().any(|r| r.path == uvr_lib),
+            "unexpected .uvr/library without marker"
+        );
+
+        // With `uvr.toml`, `.uvr/library` is discovered automatically (#812).
+        std::fs::write(dir.path().join("uvr.toml"), "[project]\nname = \"demo\"\n").unwrap();
+        let env = resolve_environment(std::slice::from_ref(&script), &["custompkg".to_string()]);
+        // Only assert if RY_NO_INSTALLED_LIBRARIES is not set in the test env.
+        if std::env::var_os("RY_NO_INSTALLED_LIBRARIES").is_none() {
+            assert!(env.library_roots.contains(&uvr_lib));
+            let resolved = env
+                .packages
+                .iter()
+                .find(|p| p.name == "custompkg")
+                .expect("custompkg resolved from .uvr/library");
+            assert_eq!(resolved.version.as_deref(), Some("0.4.2"));
+            assert_eq!(resolved.library, uvr_lib);
+        }
     }
 }

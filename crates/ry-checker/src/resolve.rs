@@ -613,6 +613,10 @@ impl Checker {
                 .external_s3_methods
                 .iter()
                 .any(|(generic, class)| method_of(generic) == Some(class))
+            || self
+                .external_s3_method_functions
+                .values()
+                .any(|fun| fun == name)
             || (table.registered_s3_methods.contains(name)
                 && !["registerS3method", ".S3method", "evalqOnLoad"]
                     .iter()
@@ -636,9 +640,14 @@ impl Checker {
             .flatten()
         {
             if let Some(result) = self
-                .fn_table
-                .functions
-                .live_named(&format!("{generic}.{class}"))
+                .external_s3_method_functions
+                .get(&(generic.to_string(), class.to_string()))
+                .and_then(|fun| self.fn_table.functions.live_named(fun))
+                .or_else(|| {
+                    self.fn_table
+                        .functions
+                        .live_named(&format!("{generic}.{class}"))
+                })
                 .map(|function| self.read_return_slot(function.return_slot))
                 .or_else(|| {
                     self.fn_table

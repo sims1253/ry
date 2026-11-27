@@ -248,27 +248,21 @@ names at top level, their return types stay unknown.
 ## uvr project libraries
 
 [uvr](https://github.com/nbafrank/uvr/blob/main/README.md) installs a project's
-packages in `.uvr/library/`. Provision that library with uvr first. Then pass
-its path to ry through the existing `R_LIBS` environment variable. From the
-project directory, use this POSIX shell recipe:
+packages in `.uvr/library/`. Provision that library with `uvr sync`, then run
+`ry` as usual:
 
 ```sh
 uvr sync
-R_LIBS="$PWD/.uvr/library" ry check .
-```
-
-In PowerShell on Windows, use:
-
-```powershell
-uvr sync
-$env:R_LIBS = Join-Path (Get-Location) '.uvr\library'
 ry check .
 ```
 
-ry only reads static package metadata from that library; it does not read uvr
-lockfiles, run `.Rprofile`, or execute package code. For the editor, set the
-same `R_LIBS` in the language server's environment (for example by launching
-the editor from that shell) and restart the server after changing it.
+When `uvr.toml` or `uvr.lock` sits at an ancestor project root and
+`.uvr/library` exists beside it, ry automatically discovers `.uvr/library` for
+both CLI checks and the language server without requiring `R_LIBS`. To override
+the library location manually, pass `R_LIBS`.
+
+ry only reads static package metadata from that library; it does not evaluate
+lockfiles, run `.Rprofile`, or execute package code.
 
 An installed package is not automatically attached. ry uses its `NAMESPACE`
 exports when checked source calls `library()` or `require()`, or when a source
@@ -276,11 +270,14 @@ package imports it. A `uvr.toml` or `uvr.lock` dependency alone adds no
 unqualified names; declare a package attached by the host with
 `packages = ["name"]` in `ry.toml`.
 
-ry searches a nearby `renv/library` first, then `R_LIBS`, `R_LIBS_USER`,
-`R_LIBS_SITE`, and the standard R library locations; the first `NAMESPACE`
-found for a package wins. `ry dump-facts --format json .` records a context
-hash for the library inventory, which helps when CLI and editor results
-differ.
+ry searches a nearby `.uvr/library` or `renv/library` first, then `R_LIBS`,
+`R_LIBS_USER`, `R_LIBS_SITE`, and the active R installation's library locations;
+the first `NAMESPACE` found for a package wins. Run `ry explain packages` (or
+`ry explain packages --output-format json`) to inspect the discovered library
+roots and which library and version each referenced package resolved from;
+`ry check --explain-files` also prints resolved packages on stderr.
+`ry dump-facts --format json .` records a context hash for the library
+inventory, which helps when CLI and editor results differ.
 
 ## Data masking and NSE
 

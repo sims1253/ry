@@ -138,24 +138,11 @@ fn is_na_literal(expr: &Expr) -> bool {
     matches!(expr, Expr::Na(_, _))
 }
 
-/// Whether `library()` / `require()` was passed `character.only = TRUE`.
-fn character_only(args: &[Arg]) -> bool {
-    args.iter().any(|argument| {
-        argument.name.as_deref() == Some("character.only")
-            && matches!(argument.value, Expr::Logical(true, _))
-    })
-}
-
-/// The package a `library()` / `require()` call attaches, given its
-/// argument list: the first argument names the package as a bare symbol
-/// — unless `character.only = TRUE` restricts it to a string literal.
-/// `None` when no literal name is available.
+/// The package a `library()` / `require()` call attaches, delegating to the
+/// shared workspace helper so CLI/workspace and checker agree on
+/// `character.only`, named `package = ...`, and `base::` qualification (#925).
 fn attached_package_name(args: &[Arg]) -> Option<&str> {
-    match &args.first()?.value {
-        Expr::Ident { name, .. } if !character_only(args) => Some(name),
-        Expr::String(name, _) => Some(name),
-        _ => None,
-    }
+    ry_workspace::attached_package_name(args)
 }
 
 fn non_divisible_recycling(lhs: Length, rhs: Length) -> Option<(usize, usize)> {
@@ -1904,6 +1891,7 @@ pub struct Checker {
     namespace: Option<String>,
     imported_from: HashMap<String, String>,
     external_s3_methods: HashSet<(String, String)>,
+    external_s3_method_functions: HashMap<(String, String), String>,
     /// Method screens derived from the collected and imported tables. They
     /// cannot change during inference; collection and the setters reset it.
     method_screens: std::sync::OnceLock<infer::binop::MethodScreens>,
@@ -2193,6 +2181,7 @@ impl Checker {
             namespace: None,
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
+            external_s3_method_functions: HashMap::new(),
             method_screens: std::sync::OnceLock::new(),
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
@@ -2274,7 +2263,7 @@ impl Checker {
             Walk::ALL,
             |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
                 if let AstNode::Expr(Expr::Call { func, args, .. }) = node
-                    && matches!(binding_name(func), Some("library" | "require"))
+                    && binding_name(func).is_some_and(ry_workspace::is_attach_call_name)
                     && let Some(package) = attached_package_name(args)
                 {
                     attached.extend(
@@ -2724,6 +2713,14 @@ impl Checker {
 
     pub fn set_external_s3_methods(&mut self, methods: HashSet<(String, String)>) {
         self.external_s3_methods = methods;
+        self.method_screens = std::sync::OnceLock::new();
+    }
+
+    pub fn set_external_s3_method_functions(
+        &mut self,
+        functions: HashMap<(String, String), String>,
+    ) {
+        self.external_s3_method_functions = functions;
         self.method_screens = std::sync::OnceLock::new();
     }
 

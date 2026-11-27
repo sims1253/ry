@@ -275,6 +275,15 @@ enum ExplainCmd {
     Rule(ExplainRuleArgs),
     /// Show vendored and active runtime typeshed packages.
     Typeshed,
+    /// Show discovered R libraries and resolved package versions.
+    Packages {
+        /// Files or directories to inspect (defaults to the current directory).
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+        /// Output format: text or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        output_format: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -370,6 +379,10 @@ fn main() -> Result<ExitCode> {
         Cmd::Explain { command } => match command {
             ExplainCmd::Rule(args) => run_explain_rule(args.rule, &args.output_format),
             ExplainCmd::Typeshed => run_explain_typeshed(),
+            ExplainCmd::Packages {
+                paths,
+                output_format,
+            } => run_explain_packages(paths, &output_format),
         },
         Cmd::Typeshed {
             command: TypeshedCmd::Validate { dirs },
@@ -526,6 +539,169 @@ fn run_explain_typeshed() -> Result<ExitCode> {
                 }
             }
             Err(error) => crate::eprintln_safe!("ry: warning: {error}"),
+        }
+    }
+    output::write_stdout(&buf)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_explain_packages(paths: Vec<PathBuf>, output_format: &str) -> Result<ExitCode> {
+    if !matches!(output_format, "text" | "json") {
+        crate::eprintln_safe!(
+            "ry: unknown output format '{output_format}' (expected text or json)"
+        );
+        return Ok(ExitCode::FAILURE);
+    }
+    let cwd = std::env::current_dir().into_diagnostic()?;
+    let search_roots = if paths.is_empty() {
+        vec![PathBuf::from(".")]
+    } else {
+        paths
+    };
+    let missing: Vec<&PathBuf> = search_roots.iter().filter(|root| !root.exists()).collect();
+    if !missing.is_empty() {
+        for root in missing {
+            crate::eprintln_safe!("ry: {}: no such file or directory", root.display());
+        }
+        return Ok(ExitCode::FAILURE);
+    }
+    let search_start = search_roots
+        .first()
+        .map(|p| {
+            let abs = if p.is_absolute() {
+                p.clone()
+            } else {
+                cwd.join(p)
+            };
+            if abs.is_dir() {
+                abs
+            } else {
+                abs.parent().unwrap_or(&cwd).to_path_buf()
+            }
+        })
+        .unwrap_or_else(|| cwd.clone());
+    let (config_root, cfg) = match config::Config::discover(&search_start) {
+        Ok(Some((path, cfg))) => (path.parent().map(PathBuf::from), cfg),
+        Ok(None) => (None, config::Config::default()),
+        Err(error) => {
+            crate::eprintln_safe!("ry: {error}");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+    let mut user_stubs = std::collections::BTreeMap::new();
+    for dir in &cfg.typeshed {
+        if let Ok((loaded, _warnings)) = ry_typeshed::load_stub_dir_with_warnings(dir) {
+            user_stubs.extend(loaded);
+        }
+    }
+    let mut all_paths = Vec::new();
+    for root in &search_roots {
+        let discovered = ry_workspace::discover_r_files(
+            root,
+            config_root.as_deref(),
+            &cfg,
+            cfg.check_test_fixtures,
+        );
+        all_paths.extend(discovered.files);
+    }
+    let mut parsed = Vec::new();
+    for path in &all_paths {
+        if let Ok(file) = ry_workspace::parse_source_file(path, None) {
+            parsed.push(std::sync::Arc::new(file));
+        }
+    }
+    let mut packages: std::collections::BTreeSet<String> = cfg.packages.iter().cloned().collect();
+    if let Ok(groups) =
+        pipeline::resolve_groups(&parsed, &cfg, &user_stubs, &[config_root.as_deref()])
+    {
+        for group in groups {
+            packages.extend(group.context.attached_packages);
+            for imports in group.context.imported_bindings.into_values() {
+                packages.extend(imports.into_values());
+            }
+            packages.extend(group.context.resolved_packages.into_keys());
+        }
+    }
+    let probe_paths = if all_paths.is_empty() {
+        search_roots
+    } else {
+        all_paths
+    };
+    let pkg_list: Vec<String> = packages.into_iter().collect();
+    let env = ry_workspace::resolve_environment(&probe_paths, &pkg_list);
+
+    let stub_kind = |name: &str| -> &'static str {
+        if user_stubs.contains_key(name) {
+            "user"
+        } else if name == "base" || ry_typeshed::known_packages().any(|pkg| pkg == name) {
+            "embedded"
+        } else {
+            "none"
+        }
+    };
+
+    if output_format == "json" {
+        let packages_json: Vec<serde_json::Value> = env
+            .packages
+            .iter()
+            .map(|pkg| {
+                serde_json::json!({
+                    "name": pkg.name,
+                    "version": pkg.version,
+                    "library": pkg.library.display().to_string(),
+                    "stub": stub_kind(&pkg.name),
+                })
+            })
+            .collect();
+        let payload = serde_json::json!({
+            "active_r_version": env.active_r_version,
+            "library_roots": env.library_roots.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+            "packages": packages_json,
+        });
+        output::writeln_stdout(&serde_json::to_string_pretty(&payload).into_diagnostic()?)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    use std::fmt::Write as _;
+    let mut buf = String::new();
+    let _ = writeln!(
+        buf,
+        "active R version: {}",
+        env.active_r_version.as_deref().unwrap_or("(unknown)")
+    );
+    let _ = writeln!(buf, "library roots:");
+    if env.library_roots.is_empty() {
+        let _ = writeln!(buf, "  (none)");
+    } else {
+        for root in &env.library_roots {
+            let _ = writeln!(buf, "  {}", root.display());
+        }
+    }
+    let _ = writeln!(buf, "resolved packages:");
+    if env.packages.is_empty() {
+        let _ = writeln!(buf, "  (none)");
+    } else {
+        for pkg in &env.packages {
+            let version = pkg.version.as_deref().unwrap_or("?");
+            let stub = stub_kind(&pkg.name);
+            if stub == "none" {
+                let _ = writeln!(
+                    buf,
+                    "  {} {} ({})",
+                    pkg.name,
+                    version,
+                    pkg.library.display()
+                );
+            } else {
+                let _ = writeln!(
+                    buf,
+                    "  {} {} ({}) [{} stub]",
+                    pkg.name,
+                    version,
+                    pkg.library.display(),
+                    stub
+                );
+            }
         }
     }
     output::write_stdout(&buf)?;

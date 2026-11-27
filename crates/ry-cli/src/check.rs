@@ -259,6 +259,21 @@ pub(crate) fn run_check(
         overlay.as_ref(),
         &state.check_context(min_confidence),
     )?;
+    if explain_files {
+        for pkg in &result.resolved_packages {
+            match pkg.version.as_deref() {
+                Some(version) => crate::eprintln_safe!(
+                    "ry: package {} {} ({})",
+                    pkg.name,
+                    version,
+                    pkg.library.display()
+                ),
+                None => {
+                    crate::eprintln_safe!("ry: package {} ({})", pkg.name, pkg.library.display())
+                }
+            }
+        }
+    }
     // Directories the initial scan could not read fail the run like
     // parse errors do, even when every discovered file checks clean.
     result.discovery_errors = scan.read_errors.len();
@@ -676,6 +691,9 @@ pub(crate) struct CheckResult {
     /// set. Like parse errors, they fail the run's exit code: a
     /// partially undiscoverable input must not look like a clean check.
     discovery_errors: usize,
+    /// Installed packages resolved from R libraries during workspace context
+    /// resolution, reported by `--explain-files` on stderr (#812).
+    resolved_packages: Vec<ry_workspace::ResolvedPackage>,
 }
 
 /// Whether parser recovery indicates that a file is probably not R source.
@@ -909,6 +927,7 @@ fn run_check_once(
     // (`ry_checker::post_process`), so the CLI and the LSP apply one order.
     // Suppression comments and the severity filter run per file here.
     // `post_demotion` then runs on the collected result below.
+    let mut resolved_packages = std::collections::BTreeMap::new();
     for group in groups {
         let files: Vec<_> = group
             .indices
@@ -926,6 +945,11 @@ fn run_check_once(
         );
         for (path, reason) in &group.context.degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason.description()));
+        }
+        for (name, pkg) in &group.context.resolved_packages {
+            resolved_packages
+                .entry(name.clone())
+                .or_insert_with(|| pkg.clone());
         }
         let input =
             pipeline::CheckInput::new(&parsed, &group.indices, &ctx.user_stubs, group.context);
@@ -977,6 +1001,7 @@ fn run_check_once(
         parse_errors,
         degraded: degraded.into_iter().collect(),
         discovery_errors: 0,
+        resolved_packages: resolved_packages.into_values().collect(),
     })
 }
 

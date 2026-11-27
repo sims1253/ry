@@ -1834,3 +1834,62 @@ fn ry_toml_exclude_patterns_skip_matched_files() {
         assert!(output.success(), "{root:?}: {output:?}");
     }
 }
+
+/// Auto-discovery of `.uvr/library` alongside `uvr.toml` resolves exports
+/// without `R_LIBS`, `ry check --explain-files` reports resolved packages on
+/// stderr, and `ry explain packages` renders both text and JSON (#812).
+#[test]
+fn uvr_library_auto_discovery_and_explain_packages() {
+    let tmp = tempfile::tempdir().unwrap();
+    write(
+        tmp.path(),
+        &[
+            ("uvr.toml", b"[project]\nname = \"demo\"\n"),
+            (
+                ".uvr/library/myuvrpkg/DESCRIPTION",
+                b"Package: myuvrpkg\nVersion: 2.3.4\n",
+            ),
+            (
+                ".uvr/library/myuvrpkg/NAMESPACE",
+                b"export(uvr_exported_fn)\n",
+            ),
+            ("analysis.R", b"library(myuvrpkg)\nuvr_exported_fn()\n"),
+        ],
+    );
+    let checked = check()
+        .env_remove("RY_NO_INSTALLED_LIBRARIES")
+        .cwd(tmp.path())
+        .args([".", "--explain-files", "--output-format", "json"])
+        .run();
+    assert!(checked.success(), "{checked:?}");
+    assert_eq!(checked.json(), json!([]), "{checked:?}");
+    assert!(
+        checked.stderr().contains("ry: package myuvrpkg 2.3.4"),
+        "expected resolved package on stderr: {}",
+        checked.stderr()
+    );
+
+    let explained_text = ry!()
+        .cwd(tmp.path())
+        .args(["explain", "packages", "."])
+        .run();
+    assert!(explained_text.success(), "{explained_text:?}");
+    assert!(
+        explained_text.stdout().contains("myuvrpkg 2.3.4"),
+        "{}",
+        explained_text.stdout()
+    );
+
+    let explained_json = ry!()
+        .cwd(tmp.path())
+        .args(["explain", "packages", ".", "--output-format", "json"])
+        .run();
+    assert!(explained_json.success(), "{explained_json:?}");
+    let parsed: serde_json::Value = serde_json::from_str(&explained_json.stdout()).unwrap();
+    let pkgs = parsed["packages"].as_array().unwrap();
+    assert!(
+        pkgs.iter()
+            .any(|p| p["name"] == "myuvrpkg" && p["version"] == "2.3.4"),
+        "{parsed}"
+    );
+}

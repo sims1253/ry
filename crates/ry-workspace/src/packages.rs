@@ -62,6 +62,8 @@ pub struct NamespaceMetadata {
     pub export_patterns: bool,
     /// Explicit `(generic, class)` registrations from `S3method()`.
     pub s3_methods: HashSet<(String, String)>,
+    /// Custom function names from 3-argument `S3method(generic, class, fun)`.
+    pub s3_method_functions: HashMap<(String, String), String>,
 }
 
 /// Extract the directives relevant to static binding resolution.
@@ -119,9 +121,14 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                 }
             }
             "import" => {
-                metadata
-                    .imported_packages
-                    .extend(args.iter().filter_map(|arg| static_name(&arg.value)));
+                // `import(pkg, except = ...)` lists package names positionally;
+                // named arguments such as `except = foo` are exclusions, not
+                // imported packages (#925).
+                metadata.imported_packages.extend(
+                    args.iter()
+                        .filter(|arg| arg.name.is_none())
+                        .filter_map(|arg| static_name(&arg.value)),
+                );
             }
             "export" => {
                 metadata
@@ -140,7 +147,14 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                     let generic = generic
                         .rsplit_once("::")
                         .map_or(generic.as_str(), |(_, bare)| bare);
-                    metadata.s3_methods.insert((generic.to_string(), class));
+                    metadata
+                        .s3_methods
+                        .insert((generic.to_string(), class.clone()));
+                    if let Some(fun) = args.get(2).and_then(|arg| static_name(&arg.value)) {
+                        metadata
+                            .s3_method_functions
+                            .insert((generic.to_string(), class), fun);
+                    }
                 }
             }
             _ => {}
@@ -173,6 +187,39 @@ pub fn with_attached(
         .collect()
 }
 
+/// Whether `library()` / `require()` may run with `character.only = TRUE`.
+/// Any supplied `character.only` that is not literally `FALSE` can force
+/// symbol arguments to evaluate as variables rather than literal package names.
+pub fn character_only_may_be_true(args: &[ry_core::ast::Arg]) -> bool {
+    args.iter().any(|argument| {
+        argument.name.as_deref() == Some("character.only")
+            && !matches!(argument.value, Expr::Logical(false, _))
+    })
+}
+
+/// The literal package name a `library()` / `require()` call attaches, if any.
+/// Handles named `package = ...` and positional first-argument forms, and
+/// declines bare symbols when `character.only` may be `TRUE` (#925).
+pub fn attached_package_name(args: &[ry_core::ast::Arg]) -> Option<&str> {
+    let package_arg = args
+        .iter()
+        .find(|arg| arg.name.as_deref() == Some("package"))
+        .or_else(|| args.iter().find(|arg| arg.name.is_none()))?;
+    match &package_arg.value {
+        Expr::String(name, _) => Some(name),
+        Expr::Ident { name, .. } if !character_only_may_be_true(args) => Some(name),
+        _ => None,
+    }
+}
+
+/// Whether `name` is an unqualified or `base::`-qualified `library`/`require`.
+pub fn is_attach_call_name(name: &str) -> bool {
+    matches!(
+        name,
+        "library" | "require" | "base::library" | "base::require"
+    )
+}
+
 /// Find packages attached by `library()` or `require()` calls.
 ///
 /// `requireNamespace()` is deliberately excluded: it makes `pkg::name`
@@ -183,10 +230,10 @@ pub fn attached_packages(file: &SourceFile) -> HashSet<String> {
     let mut packages = HashSet::new();
     let _ = walk_stmts(&file.stmts, Walk::ALL, |node: AstNode<'_>, _: usize| {
         if let AstNode::Expr(Expr::Call { func, args, .. }) = node
-            && matches!(func.as_ref(), Expr::Ident { name, .. } if name == "library" || name == "require")
-            && let Some(package) = args.first().and_then(|arg| static_name(&arg.value))
+            && matches!(func.as_ref(), Expr::Ident { name, .. } if is_attach_call_name(name))
+            && let Some(package) = attached_package_name(args)
         {
-            packages.insert(package);
+            packages.insert(package.to_string());
         }
         ControlFlow::<(), Descend>::Continue(Descend::Into)
     });
@@ -325,6 +372,70 @@ my_library(dplyr)
         assert_eq!(
             namespace_metadata(&file).native_routine_prefixes,
             HashSet::from(["pkg_".to_string()])
+        );
+    }
+
+    #[test]
+    fn import_ignores_named_except_argument() {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse(
+                "NAMESPACE",
+                "import(dplyr, except = filter)\nimport(rlang, except = c(abort, warn))\n",
+            )
+            .unwrap();
+        assert_eq!(
+            namespace_metadata(&file).imported_packages,
+            HashSet::from(["dplyr".to_string(), "rlang".to_string()])
+        );
+    }
+
+    #[test]
+    fn three_arg_s3_method_preserves_custom_function_name() {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse(
+                "NAMESPACE",
+                "S3method(print, coverage, print_coverage)\nS3method(base::length, widget, widget_len)\nS3method(format, widget)\n",
+            )
+            .unwrap();
+        let metadata = namespace_metadata(&file);
+        assert_eq!(
+            metadata.s3_methods,
+            HashSet::from([
+                ("print".to_string(), "coverage".to_string()),
+                ("length".to_string(), "widget".to_string()),
+                ("format".to_string(), "widget".to_string()),
+            ])
+        );
+        assert_eq!(
+            metadata.s3_method_functions,
+            HashMap::from([
+                (
+                    ("print".to_string(), "coverage".to_string()),
+                    "print_coverage".to_string()
+                ),
+                (
+                    ("length".to_string(), "widget".to_string()),
+                    "widget_len".to_string()
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn attached_packages_respects_character_only_base_qualifier_and_named_package() {
+        assert_exact(
+            "library(pkg, character.only = TRUE)
+require(other, character.only = flag)
+library(\"dplyr\", character.only = TRUE)
+library(rlang, character.only = FALSE)
+base::library(tibble)
+base::require(\"stringr\")
+library(package = purrr)
+library(quietly = TRUE, tidyr)
+",
+            &["dplyr", "rlang", "tibble", "stringr", "purrr", "tidyr"],
         );
     }
 }

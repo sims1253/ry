@@ -593,6 +593,31 @@ fn closed_stdout_does_not_panic() {
         assert!(!stderr.contains("panicked"), "{format}: {stderr}");
         assert_ne!(output.code(), Some(101), "{format}: {stderr}");
     }
+
+    // Batch subcommands and clap `--help` / `--version` also route through
+    // the broken-pipe-safe output seam (#920).
+    for args in [
+        vec!["version"],
+        vec!["--version"],
+        vec!["--help"],
+        vec!["explain", "rule"],
+        vec!["explain", "typeshed"],
+        vec!["dump-facts", temp.path().to_str().unwrap()],
+        vec!["dump-types", temp.path().to_str().unwrap()],
+        vec!["generate-shell-completion", "bash"],
+    ] {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let output = CliOutput(child.wait_with_output().unwrap());
+        let stderr = output.stderr();
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert_ne!(output.code(), Some(101), "{args:?}: {stderr}");
+    }
 }
 
 #[test]

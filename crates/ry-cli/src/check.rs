@@ -143,11 +143,8 @@ pub(crate) fn run_check(
     let color_choice = color;
     let color = color.enabled(format);
     // An early exit still needs a complete machine-readable report.
-    let print_empty_report = || {
-        print!(
-            "{}",
-            render_diagnostics(&[], format, &HashMap::new(), color)
-        )
+    let print_empty_report = || -> Result<()> {
+        crate::output::write_stdout(&render_diagnostics(&[], format, &HashMap::new(), color))
     };
     let filter = ry_checker::filter_from_config(&cfg);
     let user_stubs = load_user_stubs(&cfg.typeshed);
@@ -171,7 +168,7 @@ pub(crate) fn run_check(
         for root in &missing {
             eprintln!("ry: {}: no such file or directory", root.display());
         }
-        print_empty_report();
+        print_empty_report()?;
         return Ok(discovery_exit_code(&cfg));
     }
 
@@ -196,7 +193,7 @@ pub(crate) fn run_check(
                 cfg.index.max_file_bytes,
             )?
             else {
-                print_empty_report();
+                print_empty_report()?;
                 return Ok(discovery_exit_code(&cfg));
             };
             if explain_files {
@@ -214,7 +211,7 @@ pub(crate) fn run_check(
     // watch mode: an unreadable root is a discovery failure, not a quiet
     // empty set.
     if all_paths.is_empty() && !(watch && scan.read_errors.is_empty()) {
-        print_empty_report();
+        print_empty_report()?;
         if scan.read_errors.is_empty() {
             let roots = search_roots
                 .iter()
@@ -962,7 +959,7 @@ fn run_check_once(
         // Diagnostics go to stdout (matches ruff/ty): `ry check > log`
         // captures the diagnostics, while the summary line and watch-
         // mode chrome go to stderr.
-        print!("{}", rendered);
+        crate::output::write_stdout(&rendered)?;
     }
 
     Ok(CheckResult {

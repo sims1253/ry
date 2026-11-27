@@ -3,6 +3,7 @@ mod dump;
 mod facts;
 mod facts_declarations;
 mod facts_types;
+mod output;
 mod pipeline;
 mod reduce;
 
@@ -288,8 +289,12 @@ enum TypeshedCmd {
 
 fn main() -> Result<ExitCode> {
     // `ArgMatches` is kept so check's `flag_set` can tell a user-passed
-    // flag from its clap default.
-    let mut matches = Cli::command().get_matches();
+    // flag from its clap default. Use `try_get_matches` so `--help` /
+    // `--version` writes go through our broken-pipe-safe output seam (#920).
+    let mut matches = match Cli::command().try_get_matches() {
+        Ok(matches) => matches,
+        Err(err) => return Ok(output::handle_clap_error(err)),
+    };
     if matches.subcommand().is_none() {
         // Only global flags can precede a missing subcommand, and they
         // parse the same after `check`.
@@ -298,18 +303,13 @@ fn main() -> Result<ExitCode> {
             args.push("ry".into());
         }
         args.insert(1, "check".into());
-        matches = Cli::command().get_matches_from(args);
+        matches = match Cli::command().try_get_matches_from(args) {
+            Ok(matches) => matches,
+            Err(err) => return Ok(output::handle_clap_error(err)),
+        };
     }
     let cli = Cli::from_arg_matches(&matches).expect("clap derive schema is self-consistent");
     let cmd = cli.cmd.expect("a bare `ry` re-parses as `ry check`");
-    // A batch command whose reader goes away (`ry check | head`) should end
-    // quietly like other Unix tools, not panic in `println!`. The language
-    // server keeps the ignored signal and handles a closed client itself.
-    #[cfg(unix)]
-    if !matches!(cmd, Cmd::Server { .. }) {
-        // SAFETY: runs on the main thread before any other thread starts.
-        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
-    }
 
     // Kept only for `check`: detecting explicit CLI overrides of scalar
     // fields the config file can also set.
@@ -350,7 +350,7 @@ fn main() -> Result<ExitCode> {
             Ok(code)
         }
         Cmd::Version { output_format } => {
-            print_version(&output_format);
+            print_version(&output_format)?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Reduce {
@@ -378,11 +378,11 @@ fn main() -> Result<ExitCode> {
     }
 }
 
-fn print_version(format: &str) {
+fn print_version(format: &str) -> Result<()> {
     let v = env!("CARGO_PKG_VERSION");
     match format {
-        "json" => println!("{{\"name\":\"ry\",\"version\":\"{}\"}}", v),
-        _ => println!("ry {}", v),
+        "json" => output::writeln_stdout(&format!("{{\"name\":\"ry\",\"version\":\"{v}\"}}")),
+        _ => output::writeln_stdout(&format!("ry {v}")),
     }
 }
 
@@ -424,21 +424,28 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
                     })
                 })
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+            output::writeln_stdout(&serde_json::to_string_pretty(&json).into_diagnostic()?)?;
         }
         _ => {
+            use std::fmt::Write as _;
+            let mut buf = String::new();
             if matched.len() == 1 {
                 let r = matched[0];
-                println!("{} ({})", r.code, r.name);
-                println!("Default severity: {}", r.default_severity);
-                println!();
-                println!("{}", r.summary);
-                print_rule_example(&r.example());
+                let _ = writeln!(buf, "{} ({})", r.code, r.name);
+                let _ = writeln!(buf, "Default severity: {}", r.default_severity);
+                let _ = writeln!(buf);
+                let _ = writeln!(buf, "{}", r.summary);
+                write_rule_example(&mut buf, &r.example());
             } else {
-                println!("{:<8} {:<24} {:<10} summary", "code", "name", "severity");
-                println!("{}", "-".repeat(78));
+                let _ = writeln!(
+                    buf,
+                    "{:<8} {:<24} {:<10} summary",
+                    "code", "name", "severity"
+                );
+                let _ = writeln!(buf, "{}", "-".repeat(78));
                 for r in &matched {
-                    println!(
+                    let _ = writeln!(
+                        buf,
                         "{:<8} {:<24} {:<10} {}",
                         r.code,
                         r.name,
@@ -447,47 +454,51 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
                     );
                 }
             }
+            output::write_stdout(&buf)?;
         }
     }
     Ok(ExitCode::SUCCESS)
 }
 
 /// The worked example under a single rule's explanation.
-fn print_rule_example(example: &ry_checker::rules::RuleExample) {
-    let indented = |source: &str| {
+fn write_rule_example(buf: &mut String, example: &ry_checker::rules::RuleExample) {
+    use std::fmt::Write as _;
+    fn indented(buf: &mut String, source: &str) {
         for line in source.lines() {
             if line.is_empty() {
-                println!();
+                let _ = writeln!(buf);
             } else {
-                println!("    {line}");
+                let _ = writeln!(buf, "    {line}");
             }
         }
-    };
-    for (path, contents) in &example.support {
-        println!();
-        println!("With `{path}`:");
-        println!();
-        indented(contents);
     }
-    println!();
-    println!("Example (`example.{}`):", example.extension);
-    println!();
-    indented(example.flagged);
-    println!();
-    println!("Fix: {}", example.fix);
-    println!();
-    indented(example.fixed);
+    for (path, contents) in &example.support {
+        let _ = writeln!(buf);
+        let _ = writeln!(buf, "With `{path}`:");
+        let _ = writeln!(buf);
+        indented(buf, contents);
+    }
+    let _ = writeln!(buf);
+    let _ = writeln!(buf, "Example (`example.{}`):", example.extension);
+    let _ = writeln!(buf);
+    indented(buf, example.flagged);
+    let _ = writeln!(buf);
+    let _ = writeln!(buf, "Fix: {}", example.fix);
+    let _ = writeln!(buf);
+    indented(buf, example.fixed);
 }
 
 fn run_explain_typeshed() -> Result<ExitCode> {
-    println!("vendored snapshot:");
+    use std::fmt::Write as _;
+    let mut buf = String::new();
+    let _ = writeln!(buf, "vendored snapshot:");
     for line in ry_typeshed::SOURCE.trim().lines() {
-        println!("  {line}");
+        let _ = writeln!(buf, "  {line}");
     }
-    println!("embedded packages:");
-    println!("  base");
+    let _ = writeln!(buf, "embedded packages:");
+    let _ = writeln!(buf, "  base");
     for package in ry_typeshed::known_packages() {
-        println!("  {package}");
+        let _ = writeln!(buf, "  {package}");
     }
 
     let cwd = std::env::current_dir().into_diagnostic()?;
@@ -499,16 +510,16 @@ fn run_explain_typeshed() -> Result<ExitCode> {
             return Ok(ExitCode::FAILURE);
         }
     };
-    println!("user stub directories:");
+    let _ = writeln!(buf, "user stub directories:");
     if dirs.is_empty() {
-        println!("  (none)");
+        let _ = writeln!(buf, "  (none)");
     }
     for dir in dirs {
-        println!("  {}", dir.display());
+        let _ = writeln!(buf, "  {}", dir.display());
         match ry_typeshed::load_stub_dir_with_warnings(&dir) {
             Ok((stubs, warnings)) => {
                 for package in stubs.keys() {
-                    println!("    {package}");
+                    let _ = writeln!(buf, "    {package}");
                 }
                 for warning in warnings {
                     eprintln!("ry: warning: {warning}");
@@ -517,6 +528,7 @@ fn run_explain_typeshed() -> Result<ExitCode> {
             Err(error) => eprintln!("ry: warning: {error}"),
         }
     }
+    output::write_stdout(&buf)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -528,7 +540,10 @@ fn run_typeshed_validate(dirs: &[PathBuf], quiet: bool) -> Result<ExitCode> {
             eprintln!("{}: error: {}", problem.path.display(), problem.message);
         }
     }
-    println!("Validated {} stub files: {errors} errors.", report.files);
+    output::writeln_stdout(&format!(
+        "Validated {} stub files: {errors} errors.",
+        report.files
+    ))?;
     Ok(if errors == 0 {
         ExitCode::SUCCESS
     } else {
@@ -549,7 +564,9 @@ fn run_shell_completion(shell: &str) -> Result<ExitCode> {
             return Ok(ExitCode::FAILURE);
         }
     };
-    clap_complete::generate(shell_kind, &mut cmd, "ry", &mut std::io::stdout());
+    let mut buf = Vec::new();
+    clap_complete::generate(shell_kind, &mut cmd, "ry", &mut buf);
+    output::write_stdout_bytes(&buf)?;
     Ok(ExitCode::SUCCESS)
 }
 

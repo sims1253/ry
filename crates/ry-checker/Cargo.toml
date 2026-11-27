@@ -29,3 +29,6 @@ tempfile = { workspace = true }
 [[bench]]
 name = "performance"
 harness = false
+
+[lints]
+workspace = true

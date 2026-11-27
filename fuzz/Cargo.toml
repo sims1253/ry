@@ -25,3 +25,10 @@ test = false
 doc = false
 
 [workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"

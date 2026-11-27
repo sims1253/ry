@@ -85,7 +85,7 @@ pub(crate) fn run_reduce(args: ReduceArgs) -> Result<ExitCode> {
     match &args.output {
         Some(path) => std::fs::write(path, &reduced)
             .map_err(|error| miette!("cannot write {}: {error}", path.display()))?,
-        None => print!("{reduced}"),
+        None => crate::output::write_stdout(&reduced)?,
     }
     Ok(ExitCode::SUCCESS)
 }

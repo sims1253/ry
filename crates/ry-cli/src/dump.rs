@@ -550,7 +550,7 @@ pub(crate) fn run_dump_types(
             })
             .collect(),
     };
-    println!("{}", serde_json::to_string_pretty(&dump).into_diagnostic()?);
+    crate::output::writeln_stdout(&serde_json::to_string_pretty(&dump).into_diagnostic()?)?;
     // Diagnostics (if any) never affect the dump's exit code.
     Ok(ExitCode::SUCCESS)
 }

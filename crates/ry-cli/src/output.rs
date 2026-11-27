@@ -50,20 +50,58 @@ pub(crate) fn write_stdout_bytes(bytes: &[u8]) -> Result<()> {
     }
 }
 
-/// Handle a `clap::Error` without panicking if stdout is closed when clap
-/// prints `--help` or `--version`.
-pub(crate) fn handle_clap_error(err: clap::Error) -> ExitCode {
-    let code = err.exit_code();
-    let rendered = err.render().ansi().to_string();
-    let target_is_stdout = !err.use_stderr();
-    let write_res = if target_is_stdout {
-        write_to(io::stdout().lock(), &rendered)
-    } else {
-        write_to(io::stderr().lock(), &rendered)
+/// Write raw text to stderr without panicking on `BrokenPipe` (which exits
+/// quietly like batch stdout).
+pub(crate) fn write_stderr(text: &str) {
+    let stderr = io::stderr();
+    match write_to(stderr.lock(), text) {
+        Ok(true) => {}
+        Ok(false) => std::process::exit(0),
+        Err(_) => {}
+    }
+}
+
+/// Write a line (text + `\n`) to stderr without panicking on `BrokenPipe`.
+pub(crate) fn writeln_stderr(text: &str) {
+    let mut line = String::with_capacity(text.len() + 1);
+    line.push_str(text);
+    line.push('\n');
+    write_stderr(&line);
+}
+
+#[macro_export]
+macro_rules! eprintln_safe {
+    () => {
+        $crate::output::writeln_stderr("")
     };
-    match write_res {
-        Ok(true) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
-        Ok(false) => ExitCode::SUCCESS,
+    ($($arg:tt)*) => {
+        $crate::output::writeln_stderr(&format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! eprint_safe {
+    ($($arg:tt)*) => {
+        $crate::output::write_stderr(&format!($($arg)*))
+    };
+}
+
+/// Handle a `clap::Error` without panicking if stdout or stderr is closed.
+/// Delegates to `err.print()` so clap's stream-aware color policy stays
+/// intact; treats `BrokenPipe` as success only for help/version on stdout,
+/// preserving clap's error exit code on invalid invocations.
+pub(crate) fn handle_clap_error(err: clap::Error) -> ExitCode {
+    let code = ExitCode::from(u8::try_from(err.exit_code()).unwrap_or(1));
+    let target_is_stdout = !err.use_stderr();
+    match err.print() {
+        Ok(()) => code,
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+            if target_is_stdout {
+                ExitCode::SUCCESS
+            } else {
+                code
+            }
+        }
         Err(_) => ExitCode::FAILURE,
     }
 }

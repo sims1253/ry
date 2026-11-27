@@ -618,6 +618,30 @@ fn closed_stdout_does_not_panic() {
         assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
         assert_ne!(output.code(), Some(101), "{args:?}: {stderr}");
     }
+
+    // Closed stderr must not panic either, and invalid CLI flags keep a
+    // non-zero exit status even when stderr is closed.
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--exit-zero", "--statistics"])
+        .arg(temp.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stderr.take());
+    let status = child.wait().unwrap();
+    assert_ne!(status.code(), Some(101));
+
+    let mut bad_child = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        .arg("--not-an-option")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(bad_child.stderr.take());
+    let bad_status = bad_child.wait().unwrap();
+    assert!(!bad_status.success());
+    assert_ne!(bad_status.code(), Some(101));
 }
 
 #[test]

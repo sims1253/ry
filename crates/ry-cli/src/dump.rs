@@ -437,7 +437,7 @@ fn dump_parse_failure(
     match error {
         pipeline::ParseError::Read(_) => pipeline::FailureAction::Abort,
         pipeline::ParseError::Parse { error, .. } => {
-            eprintln!(
+            crate::eprintln_safe!(
                 "ry: {}: parse error: {error}; file omitted from dump",
                 path.display()
             );
@@ -475,7 +475,7 @@ pub(crate) fn run_dump_types(
     let mut all_paths = Vec::new();
     for root in &files {
         if !root.exists() {
-            eprintln!("ry: {}: no such file or directory", root.display());
+            crate::eprintln_safe!("ry: {}: no such file or directory", root.display());
             return Ok(ExitCode::FAILURE);
         }
         let result = ry_workspace::discover_r_files(
@@ -494,7 +494,7 @@ pub(crate) fn run_dump_types(
     let parsed = match pipeline::parse_files(&all_paths, None, dump_parse_failure) {
         Ok(parsed) => parsed,
         Err(failure) => {
-            eprintln!("ry: {}: {}", failure.path.display(), failure.error);
+            crate::eprintln_safe!("ry: {}: {}", failure.path.display(), failure.error);
             return Ok(ExitCode::FAILURE);
         }
     };
@@ -502,7 +502,7 @@ pub(crate) fn run_dump_types(
         ry_workspace::reports::is_report_path(std::path::Path::new(&file.path))
             && (!file.input_issues.is_empty() || !file.parse_errors.is_empty())
     }) {
-        eprintln!(
+        crate::eprintln_safe!(
             "ry: {}: dump-types cannot export a report after an uncertain input or R chunk syntax error",
             file.path
         );
@@ -530,7 +530,7 @@ pub(crate) fn run_dump_types(
         // note on stderr here too so a dump over the same project reports
         // the same precision loss without polluting the JSON on stdout.
         for (path, reason) in &group.context.degraded_scopes {
-            eprintln!("{}", reason.notice(path));
+            crate::eprintln_safe!("{}", reason.notice(path));
         }
         let input = pipeline::CheckInput::new(&parsed, &group.indices, &user_stubs, group.context);
         let captured = pipeline::check_project_with_facts_capture(input, false, vec![]);

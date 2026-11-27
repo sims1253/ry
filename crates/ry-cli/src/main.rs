@@ -392,7 +392,7 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
         Some(name) => match ry_checker::rules::find(name) {
             Some(r) => vec![r],
             None => {
-                eprintln!("ry: unknown rule `{}`", name);
+                crate::eprintln_safe!("ry: unknown rule `{}`", name);
                 return Ok(ExitCode::FAILURE);
             }
         },
@@ -506,7 +506,7 @@ fn run_explain_typeshed() -> Result<ExitCode> {
         Ok(Some((_path, config))) => config.typeshed,
         Ok(None) => Vec::new(),
         Err(error) => {
-            eprintln!("ry: {error}");
+            crate::eprintln_safe!("ry: {error}");
             return Ok(ExitCode::FAILURE);
         }
     };
@@ -522,10 +522,10 @@ fn run_explain_typeshed() -> Result<ExitCode> {
                     let _ = writeln!(buf, "    {package}");
                 }
                 for warning in warnings {
-                    eprintln!("ry: warning: {warning}");
+                    crate::eprintln_safe!("ry: warning: {warning}");
                 }
             }
-            Err(error) => eprintln!("ry: warning: {error}"),
+            Err(error) => crate::eprintln_safe!("ry: warning: {error}"),
         }
     }
     output::write_stdout(&buf)?;
@@ -537,7 +537,7 @@ fn run_typeshed_validate(dirs: &[PathBuf], quiet: bool) -> Result<ExitCode> {
     let errors = report.error_count();
     if !quiet {
         for problem in &report.problems {
-            eprintln!("{}: error: {}", problem.path.display(), problem.message);
+            crate::eprintln_safe!("{}: error: {}", problem.path.display(), problem.message);
         }
     }
     output::writeln_stdout(&format!(
@@ -560,7 +560,7 @@ fn run_shell_completion(shell: &str) -> Result<ExitCode> {
         "elvish" => clap_complete::Shell::Elvish,
         "powershell" | "pwsh" => clap_complete::Shell::PowerShell,
         other => {
-            eprintln!("ry: unknown shell `{}`", other);
+            crate::eprintln_safe!("ry: unknown shell `{}`", other);
             return Ok(ExitCode::FAILURE);
         }
     };

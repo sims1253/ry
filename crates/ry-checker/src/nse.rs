@@ -781,10 +781,23 @@ fn infer_dplyr_join(arg_types: &[RType], args: &[Arg]) -> RType {
     };
     let mut result = RType::new(Mode::List, Length::Unknown).with_class(class);
 
+    // A join can drop, duplicate, or NA-pad rows relative to either input, so
+    // column lengths and constant value facts from `x` or `y` do not survive.
+    let joined_col = |ty: &RType| RType {
+        length: Length::Unknown,
+        value_facts: ry_core::types::ValueFacts::default(),
+        ..ty.clone()
+    };
+
     let mut columns = Vec::new();
     let mut complete = true;
     if let Some(schema) = &x_type.columns {
-        columns.extend(schema.columns.iter().cloned());
+        columns.extend(
+            schema
+                .columns
+                .iter()
+                .map(|(name, ty)| (name.clone(), joined_col(ty))),
+        );
         complete &= schema.complete;
     } else {
         complete = false;
@@ -794,7 +807,7 @@ fn infer_dplyr_join(arg_types: &[RType], args: &[Arg]) -> RType {
         let mut suffixed = Vec::new();
         for (name, ty) in &schema.columns {
             if !columns.iter().any(|(existing, _)| existing == name) {
-                columns.push((name.clone(), ty.clone()));
+                columns.push((name.clone(), joined_col(ty)));
             } else if !is_key(name) {
                 suffixed.push(name);
             }

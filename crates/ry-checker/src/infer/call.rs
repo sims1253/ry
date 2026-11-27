@@ -239,7 +239,14 @@ impl Checker {
         scope: &Scope,
     ) -> bool {
         if let Some((pkg, _)) = crate::resolve::split_qualified(semantic_name) {
-            return pkg == "base" && !matches!(func, Expr::String(_, _)) && name == semantic_name;
+            return pkg == "base"
+                && !matches!(func, Expr::String(_, _))
+                && name == semantic_name
+                && !self.literal_bindings_may_be_shadowed(
+                    ["::", "`::`", ":::", "`:::`"],
+                    &HashSet::new(),
+                    scope,
+                );
         }
         if name != semantic_name {
             return false;
@@ -589,6 +596,20 @@ impl Checker {
             return t;
         }
 
+        // A qualified call (`pkg::fun(...)` / `pkg:::fun(...)`) executes
+        // through the `::` / `:::` operator. If those operators may be
+        // shadowed in scope, neither base constructors nor package stubs
+        // describe the result (#924).
+        if semantic_name.contains("::")
+            && self.literal_bindings_may_be_shadowed(
+                ["::", "`::`", ":::", "`:::`"],
+                &HashSet::new(),
+                scope,
+            )
+        {
+            return RType::unknown();
+        }
+
         // No lexical callable won. A bare typed package value is a
         // non-function call, not a zero-argument function signature --
         // but only when no function of that name is reachable anywhere
@@ -606,10 +627,13 @@ impl Checker {
             return self.emit_symbol_not_callable(&name, value_type.mode, span);
         }
 
-        // Class dispatch must run before the constructor, higher-order,
-        // FnTable, and typeshed stages below: a method's inferred return type
-        // (such as `t.foo`, `c.foo`, or `as.data.frame.foo`) wins over the
-        // generic's base constructor fast path or stub (#924).
+        // S4 dispatch runs before constructors so an explicit `setMethod`
+        // wins over any base fast path. Non-generic base constructors
+        // (`list`, `data.frame`) run before user S3 dispatch because they do
+        // not dispatch S3 methods (`list.foo` must never hijack `list(x)`),
+        // while S3-generic constructors (`c`, `t`, `as.data.frame`) run after
+        // user S3 dispatch so `t.foo` / `c.foo` / `as.data.frame.foo` win
+        // over base's fast path (#924).
         let instances: Vec<bool> = args
             .iter()
             .map(|argument| self.is_proven_new_call(&argument.value, scope))
@@ -632,6 +656,16 @@ impl Checker {
             S4Selection::NoCandidate => {}
         }
 
+        let base_constructor_ok = call.head.user_function().is_none()
+            && self.base_constructor_recognized(&name, func, &semantic_name, scope);
+
+        if base_constructor_ok
+            && let Some(t) =
+                self.infer_non_generic_constructor_call(&lookup_name, args, &call.arg_types)
+        {
+            return t;
+        }
+
         if let Some(rt) = call
             .arg_types
             .first()
@@ -640,13 +674,9 @@ impl Checker {
             return rt;
         }
 
-        // The atomic-constructor stage: `c`, `list`, `data.frame`, `t`,
-        // `as.data.frame`. Guarded by base provenance and user-function
-        // precedence so `otherpkg::t()`, `otherpkg::list()`, or a project
-        // `FnTable` helper is never hijacked as a base builtin (#924).
-        if call.head.user_function().is_none()
-            && self.base_constructor_recognized(&name, func, &semantic_name, scope)
-            && let Some(t) = self.infer_atomic_constructor_call(&lookup_name, args, &call.arg_types)
+        if base_constructor_ok
+            && let Some(t) =
+                self.infer_generic_constructor_call(&lookup_name, args, &call.arg_types)
         {
             return t;
         }

@@ -273,4 +273,59 @@ fn constructor_and_trycatch_provenance_and_user_stub_override_precedence() {
         check_with_stubs("x <- stats::median(1:3)\n", &[("stats.json", stats_stub)]);
     assert!(diags_stats.is_empty(), "{diags_stats:?}");
     assert_eq!(scope_stats.get("x").unwrap().mode, Mode::Character);
+
+    // Non-generic constructors (`list`, `data.frame`) must NOT dispatch to
+    // user functions named `list.<class>` (#924).
+    let (diags_list_s3, scope_list_s3) = check_with_scope(
+        "list.foo <- function(x) 'wrong'\n\
+         x <- structure(1L, class = 'foo')\n\
+         y <- list(x)\n",
+    );
+    assert!(diags_list_s3.is_empty(), "{diags_list_s3:?}");
+    assert_eq!(scope_list_s3.get("y").unwrap().mode, Mode::List);
+
+    // Shadowing `::` disables qualified base constructor fast paths (#924).
+    let (diags_ns_shadow, scope_ns_shadow) = check_with_scope(
+        "`::` <- function(pkg, name) function(...) 'text'\n\
+         x <- base::c(1L)\n",
+    );
+    assert!(diags_ns_shadow.is_empty(), "{diags_ns_shadow:?}");
+    assert_ne!(scope_ns_shadow.get("x").unwrap().mode, Mode::Integer);
+
+    // Wrapper `data.frame(..., stringsAsFactors = FALSE)` forwarding `...`
+    // to `base::data.frame` must produce an open data frame, never a closed
+    // schema with a literal `"..."` column (usethis regression).
+    let diags_df_dots = check(
+        "data.frame <- function(..., stringsAsFactors = FALSE) {\n\
+           base::data.frame(..., stringsAsFactors = stringsAsFactors)\n\
+         }\n\
+         pick_tag <- function(nm) {\n\
+           dat <- data.frame(nm = nm, stringsAsFactors = FALSE)\n\
+           dat$nm[1]\n\
+         }\n",
+    );
+    assert!(
+        diags_df_dots.is_empty(),
+        "data.frame(...) wrapper must not trigger RY060: {diags_df_dots:?}"
+    );
+
+    // `dplyr::left_join` changes row counts relative to both inputs: column
+    // lengths from a multi-row lookup table must not leak onto the joined
+    // output and trigger RY001 (gt regression).
+    let diags_join = check(
+        "twip_factors <- c(a = 1, b = 2, c = 3, d = 4, e = 5, f = 6)\n\
+         twip_factors_df <- data.frame(unit = names(twip_factors), conv = unname(twip_factors))\n\
+         abs_len <- function(lengths_df) {\n\
+           res <- dplyr::left_join(lengths_df, twip_factors_df, by = c('unit' = 'unit'))\n\
+           dplyr::select(res, 'unit')\n\
+         }\n\
+         f <- function(df) {\n\
+           out <- abs_len(df)\n\
+           if (out$unit == '%') 1L else 2L\n\
+         }\n",
+    );
+    assert!(
+        diags_join.is_empty(),
+        "left_join must not propagate lookup table row count onto joined columns: {diags_join:?}"
+    );
 }

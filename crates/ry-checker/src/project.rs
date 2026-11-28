@@ -466,6 +466,9 @@ impl Project {
         &mut self,
         target_path: &str,
     ) -> Vec<(ry_core::Span, ry_core::types::RType)> {
+        if !self.files.iter().any(|(p, _)| p == target_path) {
+            return Vec::new();
+        }
         // Every input change marks a path dirty or, for a reorder, sets
         // `reordered`, and the check clears both, so a clean project's
         // tables and `prev_tables` are current.
@@ -1598,7 +1601,8 @@ mod tests {
         project.add_file("caller.R".into(), parse_file("caller.R", "n <- make()\n"));
         let mode = |project: &mut Project| {
             let types = project.assignment_types_for("caller.R");
-            format!("{:?}", types[0].1.mode)
+            let (_, ty) = types.first().expect("caller.R has one assignment");
+            format!("{:?}", ty.mode)
         };
         assert!(mode(&mut project).contains("Integer"));
         // Clean: no check runs, and the shared tables come back intact.
@@ -1637,7 +1641,9 @@ mod tests {
             project
         };
         let mode = |project: &mut Project| {
-            format!("{:?}", project.assignment_types_for("caller.R")[0].1.mode)
+            let types = project.assignment_types_for("caller.R");
+            let (_, ty) = types.first().expect("caller.R has one assignment");
+            format!("{:?}", ty.mode)
         };
         let mut warm = project_in(&[0, 1, 2, 3]);
         let before = mode(&mut warm);

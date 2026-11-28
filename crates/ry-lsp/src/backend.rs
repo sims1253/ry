@@ -724,7 +724,7 @@ impl Backend {
                 let target_path = path.to_string();
                 let file_for_task = Arc::clone(&file);
                 let stubs_for_task = Arc::clone(&user_stubs);
-                let text_for_task = text.clone();
+                let text_for_task = text;
                 tokio::task::spawn_blocking(move || {
                     let mut checker = ry_checker::Checker::new(&target_path);
                     checker.set_user_stubs(stubs_for_task);
@@ -822,7 +822,7 @@ impl Backend {
                 }
                 let target_path = path.to_string();
                 let stubs_for_task = Arc::clone(&user_stubs);
-                let text_for_task = text.clone();
+                let text_for_task = text;
                 tokio::task::spawn_blocking(move || {
                     let adoptable: Vec<Arc<SourceFile>> = group_files
                         .iter()

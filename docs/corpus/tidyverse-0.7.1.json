@@ -12,7 +12,7 @@
     {
       "name": "ggplot2",
       "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd",
-      "diagnostics": 15
+      "diagnostics": 7
     },
     {
       "name": "dplyr",
@@ -22,7 +22,7 @@
     {
       "name": "tidyr",
       "commit": "26f83e89a690b6cf31a260489b828df0ff43ebb2",
-      "diagnostics": 8
+      "diagnostics": 0
     },
     {
       "name": "readr",
@@ -32,7 +32,7 @@
     {
       "name": "purrr",
       "commit": "481e829f297fd4315b386518215157f361475ad0",
-      "diagnostics": 1
+      "diagnostics": 2
     },
     {
       "name": "tibble",
@@ -134,6 +134,96 @@
       "column": 10,
       "label": "true_positive",
       "audit_group": "ifelse-mode"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-join.R",
+      "line": 164,
+      "column": 49,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-join.R",
+      "line": 167,
+      "column": 53,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-rf-join.R",
+      "line": 114,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-rf-join.R",
+      "line": 115,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-semi-join.R",
+      "line": 126,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-semi-join.R",
+      "line": 127,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-set-op.R",
+      "line": 54,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-set-op.R",
+      "line": 55,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-union.R",
+      "line": 58,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-union.R",
+      "line": 62,
+      "column": 53,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
     },
     {
       "package": "dbplyr",
@@ -497,60 +587,6 @@
     },
     {
       "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/facet-.R",
-      "line": 1074,
-      "column": 28,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/plot-render.R",
-      "line": 64,
-      "column": 12,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/plot-render.R",
-      "line": 65,
-      "column": 12,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/plot-render.R",
-      "line": 82,
-      "column": 46,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/plot-render.R",
-      "line": 83,
-      "column": 46,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/plot-render.R",
-      "line": 297,
-      "column": 19,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
       "code": "RY109",
       "path": "R/stat-bindot.R",
       "line": 133,
@@ -566,24 +602,6 @@
       "column": 38,
       "label": "true_positive",
       "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/utilities.R",
-      "line": 556,
-      "column": 53,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/utilities.R",
-      "line": 563,
-      "column": 53,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
     },
     {
       "package": "ggplot2",
@@ -640,6 +658,15 @@
       "audit_group": "upstream-glue"
     },
     {
+      "package": "haven",
+      "code": "RY111",
+      "path": "R/labelled.R",
+      "line": 111,
+      "column": 31,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
       "package": "hms",
       "code": "RY106",
       "path": "R/hms.R",
@@ -686,189 +713,27 @@
     },
     {
       "package": "purrr",
+      "code": "RY032",
+      "path": "R/deprec-prepend.R",
+      "line": 34,
+      "column": 7,
+      "label": "false_positive",
+      "audit_group": "partial-stub-search-path"
+    },
+    {
+      "package": "purrr",
       "code": "RY109",
       "path": "R/progress-bars.R",
       "line": 56,
       "column": 16,
       "label": "true_positive",
       "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "tidyr",
-      "code": "RY010",
-      "path": "R/chop.R",
-      "line": 386,
-      "column": 27,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "tidyr",
-      "code": "RY010",
-      "path": "R/chop.R",
-      "line": 465,
-      "column": 7,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "tidyr",
-      "code": "RY010",
-      "path": "R/hoist.R",
-      "line": 155,
-      "column": 37,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "tidyr",
-      "code": "RY010",
-      "path": "R/hoist.R",
-      "line": 156,
-      "column": 55,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "tidyr",
-      "code": "RY010",
-      "path": "R/unnest-helper.R",
-      "line": 88,
-      "column": 40,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "tidyr",
-      "code": "RY010",
-      "path": "R/unnest-longer.R",
-      "line": 268,
-      "column": 23,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "tidyr",
-      "code": "RY010",
-      "path": "R/unnest-longer.R",
-      "line": 285,
-      "column": 45,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "tidyr",
-      "code": "RY010",
-      "path": "R/unnest-wider.R",
-      "line": 232,
-      "column": 17,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-join.R",
-      "line": 164,
-      "column": 49,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-join.R",
-      "line": 167,
-      "column": 53,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-rf-join.R",
-      "line": 114,
-      "column": 54,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-rf-join.R",
-      "line": 115,
-      "column": 54,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-semi-join.R",
-      "line": 126,
-      "column": 54,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-semi-join.R",
-      "line": 127,
-      "column": 54,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-set-op.R",
-      "line": 54,
-      "column": 54,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-set-op.R",
-      "line": 55,
-      "column": 54,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-union.R",
-      "line": 58,
-      "column": 54,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY111",
-      "path": "R/query-union.R",
-      "line": 62,
-      "column": 53,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "haven",
-      "code": "RY111",
-      "path": "R/labelled.R",
-      "line": 111,
-      "column": 31,
-      "label": "true_positive",
-      "audit_group": "ry111-constant-shadowing"
     }
   ],
   "classification": {
     "true_positive": 37,
-    "false_positive": 29,
-    "unowned": 16
+    "false_positive": 30,
+    "unowned": 0
   },
   "audit_group_counts": {
     "upstream-ggplot2": 4,
@@ -880,14 +745,15 @@
     "P8": 0,
     "P7b": 3,
     "upstream-glue": 1,
-    "plan-32-33": 16,
+    "plan-32-33": 0,
     "pr195-nse-stubs": 6,
     "ifelse-mode": 2,
     "ry109-self-defaults": 10,
     "seq-defaulted": 1,
     "ry111-constant-shadowing": 11,
     "ry001-null-union": 1,
-    "test-fixture": 1
+    "test-fixture": 1,
+    "partial-stub-search-path": 1
   },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
@@ -922,8 +788,9 @@
     "Guards that exclude an omitted NULL default drop its type (#692). No ledger identity changes; three unowned RY001 report lines past `if (is.null(x)) return(...)` disappear: rlang R/trace.R:531:7 and :540:7 (also reviewed false positives in the Posit ledger) and testthat R/source.R:83:11.",
     "Top-level on_load() blocks bind package names (#691): plain assignments in a top-level rlang-style on_load({...}) block are now package bindings. No ledger identity changes; the ungated rlang reports lose five RY010 false positives, R/cnd-abort.R:855:10, R/env-special.R:220:16, and R/trace.R:1082:8, :1094:16 and :1096:16 (has_cli_format, base_pkg_env, has_cli_start_app, theme_error_highlight and theme_error_arg_highlight, which rlang binds in on_load() blocks; this manifest pins rlang 830745e8, so the trace.R lines differ from the Posit ledger's 1d0e0065 pin). The Posit ledger drops 46 reviewed false positives (namespace-on-load).",
     "A `$`/`[[` miss on a partly known list is unknown (#689). No ledger identity changes; one unowned RY001 report line disappears: testthat R/parallel-taskq.R:137:13, `private$tasks$idle[i]` after `$<-` writes to other fields of the opaque `private$tasks` (this manifest pins testthat 50a99ec7; the Posit ledger's 9b6f12b9 pin has it at :205:13 as a reviewed false positive, and that ledger drops 7 false positives and 1 true positive).",
-    "A project-defined `%<-%` destructures (#706). No ledger identity changes; the ungated rlang reports lose one RY001 false positive, R/cnd-abort.R:548:7 (`if (found_restart)` after rlang's own standalone-zeallot `%<-%` binds it; also a reviewed false positive in the Posit ledger)."
+    "A project-defined `%<-%` destructures (#706). No ledger identity changes; the ungated rlang reports lose one RY001 false positive, R/cnd-abort.R:548:7 (`if (found_restart)` after rlang's own standalone-zeallot `%<-%` binds it; also a reviewed false positive in the Posit ledger).",
+    "Vendoring the tagged r-typeshed v0.7.0 (#928) drops all 16 `plan-32-33` unowned RY010 identities (ggplot2 R/facet-.R, R/plot-render.R, R/utilities.R; tidyr R/chop.R, R/hoist.R, R/unnest-helper.R, R/unnest-longer.R, R/unnest-wider.R): their names are vctrs exports such as `vec_is_list` that the now partial vctrs stub does not list, which stay open (#926), or S7 names that the now complete S7 inventory lists. It adds one false positive, purrr RY032 R/deprec-prepend.R:34:7 (`is.null(before) || before == 1` after `stopifnot(is.null(before) || (before > 0 && before <= n))`): purrr's `import(vctrs)` now attaches a partial stub, so the search path is unknown and the scalar-assertion proof boundary (#702) no longer accepts the `stopifnot` fact. The guard is correct R; group `partial-stub-search-path`."
   ],
-  "ry_commit": "fc4eaac7987095e92b77e3954f322d5bc11ad2e3",
-  "source_sha256": "4d3dc96e2a77addc699f2e4700ca06fe5c6943e8ed9f9d4aefe2ef7e51fa22bb"
+  "ry_commit": "75d1dd51c5dcc092a614f434a0cdac59a854caf5",
+  "source_sha256": "297ac40e4d9688fc5a5b1925205d5dff7ad42e25fed6bb68da57a64febc8c21b"
 }

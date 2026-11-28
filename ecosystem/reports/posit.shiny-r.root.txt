@@ -4,9 +4,7 @@ R/bootstrap-layout.R:609:68 RY109
 R/conditions.R:154:7 RY032
 R/reactives.R:2669:21 RY111
 R/runapp.R:375:7 RY032
-R/utils.R:334:23 RY010
 inst/app_template/app.R:15:3 RY000
 inst/app_template/app.R:25:3 RY000
 inst/app_template/app.R:27:3 RY000
 inst/app_template/tests/testthat/test-shinytest2.R:6:3 RY000
-inst/examples/03_reactivity/app.R:38:44 RY010

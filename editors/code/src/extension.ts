@@ -9,14 +9,16 @@ let bootImmediate: NodeJS.Immediate | null = null;
 
 function runtime(context: vscode.ExtensionContext): Promise<Runtime> {
   if (runtimePromise == null) {
-    runtimePromise = import("./common/runtime")
+    const pending: Promise<Runtime> = import("./common/runtime")
       .then((module) => module.start(context))
       .catch((error) => {
         // Do not cache the rejection: a later command or deactivate()
-        // retries the load instead of failing permanently.
-        runtimePromise = null;
+        // retries the load instead of failing permanently. A load that
+        // deactivate() already dropped must not clear a newer one.
+        if (runtimePromise === pending) runtimePromise = null;
         throw error;
       });
+    runtimePromise = pending;
   }
   return runtimePromise;
 }
@@ -64,6 +66,7 @@ export function deactivate(): Promise<void> {
     clearImmediate(bootImmediate);
     bootImmediate = null;
   }
+  // Take the load so a second deactivate() cannot shut it down again.
   const active = runtimePromise;
   runtimePromise = null;
   return active == null

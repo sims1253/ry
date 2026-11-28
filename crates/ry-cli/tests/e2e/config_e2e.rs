@@ -1901,7 +1901,7 @@ fn preview_mode_without_preview_rules_leaves_output_unchanged() {
     let tmp = tempfile::tempdir().unwrap();
     let source = b"n <- 2\nif (n) print(undefined_thing)\nif (c(TRUE, FALSE)) 1\n";
     write(tmp.path(), &[("bad.R", source)]);
-    for format in ["full", "json", "github", "gitlab", "junit"] {
+    for format in ["full", "concise", "json", "github", "gitlab", "junit"] {
         let run = |args: &[&str]| {
             fs::remove_file(tmp.path().join("ry.toml")).ok();
             check_in(

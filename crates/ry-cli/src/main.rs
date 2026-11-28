@@ -485,7 +485,9 @@ fn status_line(status: ry_checker::rules::RuleStatus) -> String {
     use ry_checker::rules::RuleStatus;
     let how = match status {
         RuleStatus::Stable => "on by default",
-        RuleStatus::Preview => "on with `preview = true` or `--preview`; may still change",
+        RuleStatus::Preview => {
+            "on with `preview = true`, `--preview`, `extend-select` or a severity override; may still change"
+        }
         RuleStatus::OptIn => "off by default; enable with `extend-select` or a severity override",
     };
     format!("{} ({how})", status.as_str())

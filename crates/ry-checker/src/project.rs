@@ -483,6 +483,10 @@ impl Project {
             return Vec::new();
         };
         let box_modules = self.build_box_modules();
+        // The tables are taken out for the walk. If it unwinds, a cleared
+        // `has_prev_emit` makes the next call run a full check, which
+        // rebuilds them, instead of trusting the empty ones.
+        self.has_prev_emit = false;
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
         let loaded = Arc::new(std::mem::take(&mut self.loaded));
@@ -538,6 +542,7 @@ impl Project {
         self.fn_table = Arc::unwrap_or_clone(fn_table);
         self.return_slots = Arc::unwrap_or_clone(return_slots);
         self.loaded = Arc::unwrap_or_clone(loaded);
+        self.has_prev_emit = true;
         types
     }
 

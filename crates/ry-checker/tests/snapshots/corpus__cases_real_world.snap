@@ -52,3 +52,27 @@ expression: rows
   diagnostics: []
 - case: a data parameter with a non-function default shadows the loader
   diagnostics: []
+- case: covr traces a function with a quoted exit call
+  diagnostics: []
+- case: an unbound helper in a trace() exit call still reports
+  diagnostics:
+    - code: RY010
+      line: 184
+      message: "variable `instrument_missing` is not bound in this scope"
+      severity: warning
+- case: covr calls its registered native routines by symbol
+  diagnostics: []
+- case: an unbound .Call() data argument still reports
+  diagnostics:
+    - code: RY010
+      line: 206
+      message: "variable `new_value` is not bound in this scope"
+      severity: warning
+- case: covr evaluates code under withr and matches gcov output with rex
+  diagnostics: []
+- case: "code run under withr::with_envvar() is still checked"
+  diagnostics:
+    - code: RY040
+      line: 242
+      message: "cannot apply arithmetic op to `double` and `character`"
+      severity: error

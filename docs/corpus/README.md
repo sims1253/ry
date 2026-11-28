@@ -13,7 +13,7 @@ batch, such as `manual-audit` or `P2`.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 67 | 37 / 30 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 33 | 80 | 37 / 43 / 0 | hermetic (strict CI gate) |
 | [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 223 | 88 / 135 / 0 | hermetic (strict CI gate) |
 
 The `0.7.1` in the tidyverse ledger's filename is historical. The `ry` column
@@ -72,14 +72,15 @@ reading and are not compared.
 
 | Corpus | Files | R rejects | ry RY000 | Disagreements |
 | :-- | ---: | ---: | ---: | ---: |
-| tidyverse (with base R sources) | 4197 | 7 | 7 | 0 |
+| tidyverse (with base R sources) | 4399 | 7 | 7 | 0 |
 | posit | 8397 | 18 | 18 | 0 |
 
 ## Reconciliation
 
 `ecosystem/run.sh` reconciles the hermetic root reports it generates
 (`RY_NO_INSTALLED_LIBRARIES=1`) against a ledger. The ledger is the CI
-baseline, and any missing or unowned identity fails the build. A disappeared `true_positive` gets its
+baseline, and any missing or unowned identity fails the build, as does a
+manifest package the ledger's `packages` list omits. A disappeared `true_positive` gets its
 own error line.
 
 > Reproducing reports outside `run.sh` requires the same variable: without
@@ -101,11 +102,10 @@ after a full run. Package, classification, and audit-group counts must match
 the reviewed identity list.
 
 The tidyverse ledger's `source_sha256` uses the same recipe over every
-non-`posit` `*.root.txt` report, one for each of the 32 entries in
-`ecosystem/packages.txt`. The table's 24 packages count only the ledger's
-`packages` entries. Eight manifest packages have no entry: the reports for
-cli, rlang, and testthat hold 13 unowned findings, and those for curl, fs,
-jsonlite, scales, and withr are empty.
+non-`posit` `*.root.txt` report, one for each of the 33 entries in
+`ecosystem/packages.txt`. Every manifest entry has a ledger `packages` entry,
+including those whose reports are empty (covr, curl, fs, jsonlite, scales,
+and withr).
 
 ## Running the corpora
 

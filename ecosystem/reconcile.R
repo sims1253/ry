@@ -23,10 +23,11 @@ multiset_delta <- function(left, right) {
 #'
 #' @param reports_dir Directory containing the .root.txt report files.
 #' @param report_prefix Manifest namespace prefixed to each report file name ("" for the default manifest).
-#' @param audited Character vector of package names to read.
-read_actual_identities <- function(reports_dir, report_prefix = "", audited) {
+#' @param processed Character vector of processed package names; each one's
+#'   report is read whether or not the ledger lists the package.
+read_actual_identities <- function(reports_dir, report_prefix = "", processed) {
   actual <- character(0)
-  for (package in audited) {
+  for (package in processed) {
     report <- file.path(reports_dir, paste0(report_prefix, package, ".root.txt"))
     lines <- readLines(report, encoding = "UTF-8", warn = FALSE)
     lines <- lines[nzchar(lines)]
@@ -48,9 +49,12 @@ read_actual_identities <- function(reports_dir, report_prefix = "", audited) {
 #' @return Integer exit status: 0 = pass, 1 = fail.
 reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {
   corpus <- jsonlite::fromJSON(corpus_path, simplifyDataFrame = TRUE)
-  audited <- intersect(processed, corpus$packages$name)
+  # Every processed package must have a ledger entry, even one with no
+  # findings: a package missing from the ledger would otherwise leave the gate
+  # silently.
+  unledgered <- setdiff(processed, corpus$packages$name)
 
-  expected_rows <- corpus$findings[corpus$findings$package %in% audited, , drop = FALSE]
+  expected_rows <- corpus$findings[corpus$findings$package %in% processed, , drop = FALSE]
   expected <- identity_key(
     expected_rows$package,
     expected_rows$code,
@@ -58,7 +62,7 @@ reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {
     expected_rows$line,
     expected_rows$column
   )
-  actual <- read_actual_identities(reports_dir, report_prefix, audited)
+  actual <- read_actual_identities(reports_dir, report_prefix, processed)
 
   missing <- multiset_delta(expected, actual)
   unowned <- multiset_delta(actual, expected)
@@ -86,12 +90,20 @@ reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {
   if (length(unowned)) {
     writeLines(c("ecosystem: unowned hermetic findings appeared:", paste0("  - ", unowned)), stderr())
   }
+  if (length(unledgered)) {
+    writeLines(c("ecosystem: manifest packages missing from the ledger:", paste0("  - ", unledgered)), stderr())
+  }
   if (length(missing_required)) {
     writeLines("ecosystem: a reviewed true_positive finding disappeared.", stderr())
     return(1L)
   }
+  if (length(unledgered)) {
+    writeLines(sprintf("ecosystem: add each missing package to the `packages` of %s, with its commit and diagnostics count", corpus_path), stderr())
+  }
   if (length(missing) || length(unowned)) {
     writeLines(sprintf("ecosystem: update %s with the reviewed findings delta", corpus_path), stderr())
+  }
+  if (length(missing) || length(unowned) || length(unledgered)) {
     return(1L)
   }
   0L

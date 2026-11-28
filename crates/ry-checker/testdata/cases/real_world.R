@@ -157,3 +157,87 @@ g <- function(flag) {
 # no-diag
 # A caller may pass a function over the NULL default (Shiny modules).
 f <- function(data = NULL) data()$nodes
+
+## case: covr traces a function with a quoted exit call
+# no-diag
+# covr R/shiny.R and tests/testthat/test-shiny.R (#927): names inside quote()
+# in a trace() exit or tracer are not reads.
+instrument_source <- function(file, envir, value) invisible(value)
+trace_source <- function(where) {
+  suppressMessages(trace(
+    "sourceUTF8",
+    exit = as.call(list(
+      instrument_source,
+      quote(file),
+      quote(envir),
+      quote(returnValue())
+    )),
+    where = where,
+    print = FALSE
+  ))
+  suppressMessages(trace("sourceUTF8", quote(NULL), where = where, print = FALSE))
+}
+
+## case: an unbound helper in a trace() exit call still reports
+# expect: RY010
+trace_source <- function(where) {
+  trace("sourceUTF8", exit = as.call(list(instrument_missing, quote(file))), where = where, print = FALSE)
+}
+
+## case: covr calls its registered native routines by symbol
+# no-diag
+# covr R/replace.R and R/trace_calls.R call the routines src/reassign.c
+# registers (#927); the first .Call() argument is an entry point, not a read.
+replace <- function(replacement) {
+  .Call(covr_reassign_function, replacement$target_value, replacement$new_value)
+}
+reset <- function(replacement) {
+  .Call(
+    covr_reassign_function,
+    replacement$target_value,
+    replacement$orig_value
+  )
+}
+take <- function() .Call(covr_counter_take)
+
+## case: an unbound .Call() data argument still reports
+# expect: RY010
+replace <- function(replacement) {
+  .Call(covr_reassign_function, replacement$target_value, new_value)
+}
+
+## case: covr evaluates code under withr and matches gcov output with rex
+# no-diag
+# covr R/with_coverage.R and R/compiled.R (#927): rex shortcuts such as
+# `anything`, `any_spaces` and `digit` are rex() vocabulary, not reads.
+collect <- function(code) {
+  withr::with_envvar(c("R_COVR" = "true"), code)
+}
+parse_header <- function(lines) {
+  rex::re_matches(
+    lines[1],
+    rex::rex("Source:", capture(name = "source", anything))
+  )$source
+}
+gcov_lines <- function(lines) {
+  re <- rex::rex(
+    any_spaces,
+    capture(name = "coverage", some_of(digit, "-", "#", "=", "*")),
+    ":",
+    any_spaces,
+    capture(name = "line", digits),
+    ":"
+  )
+  matches <- rex::re_matches(lines, re)
+  lines[!is.na(matches$coverage)]
+}
+in_src <- function(src_path) {
+  withr::local_dir(src_path)
+  list.files(".", pattern = rex::rex(".gcno", end))
+}
+
+## case: code run under withr::with_envvar() is still checked
+# expect: RY040
+collect <- function() {
+  withr::with_envvar(c("R_COVR" = "true"), 1 + "a")
+}

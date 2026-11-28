@@ -322,7 +322,7 @@
       "disagreement_files": []
     },
     "tidyverse": {
-      "files": 4197,
+      "files": 4399,
       "r_rejected": 7,
       "ry_rejected": 7,
       "disagreements": 0,
@@ -334,6 +334,11 @@
         },
         "cli": {
           "files": 169,
+          "r_rejected": 0,
+          "ry_rejected": 0
+        },
+        "covr": {
+          "files": 202,
           "r_rejected": 0,
           "ry_rejected": 0
         },

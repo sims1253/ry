@@ -38,3 +38,5 @@ scales	https://github.com/r-lib/scales.git	8d0b0bdb3e036c2336242a55bb0e02f6fb234
 jsonlite	https://github.com/jeroen/jsonlite.git	0134cba18366b1c51c6497f4f97273a8423d8d86
 testthat	https://github.com/r-lib/testthat.git	50a99ec76fed8140a9211ed862289e877e86614d
 curl	https://github.com/jeroen/curl.git	fa17cc6d238fbb331a5648b15a8018c4dc2e8f76
+# covr 4.0.0 (CRAN v4.0.0), the package behind #916.
+covr	https://github.com/r-lib/covr.git	7dbd4deaea58f8d9533b7538bf5c16acad5764ba

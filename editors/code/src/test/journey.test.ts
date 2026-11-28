@@ -88,16 +88,25 @@ describe("Installed diagnostic journey", () => {
     expect(document.getText()).to.equal(original);
     await checkpoint("03-undone", [0, 1]);
 
-    const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
-      "vscode.executeCodeActionProvider",
-      uri,
-      new vscode.Range(0, 5, 0, 12),
-      vscode.CodeActionKind.QuickFix.value,
-    );
+    let actions: vscode.CodeAction[] | undefined;
+    let action: vscode.CodeAction | undefined;
+    const actionDeadline = Date.now() + 15000;
+    while (Date.now() < actionDeadline) {
+      actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
+        "vscode.executeCodeActionProvider",
+        uri,
+        new vscode.Range(0, 5, 0, 12),
+        vscode.CodeActionKind.QuickFix.value,
+      );
+      action = actions?.find(
+        (candidate) => candidate.title === "Ignore RY040 on this line",
+      );
+      if (action?.edit !== undefined) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     save("04-actions", actions);
-    const action = actions?.find(
-      (candidate) => candidate.title === "Ignore RY040 on this line",
-    );
     expect(action?.edit, "line suppression edit").not.to.equal(undefined);
     expect(await vscode.workspace.applyEdit(action!.edit!)).to.equal(true);
     expect(document.lineAt(0).text).to.include("# ry: ignore[RY040]");

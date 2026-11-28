@@ -4,9 +4,14 @@
     "types": ["node", "vscode", "mocha", "chai"]
   },
   "include": ["src/test/**/*"],
-  // Binary and error unit tests run with Bun.
+  // Binary, error, extension, and runtime unit tests run with Bun.
   // They import `bun:test`, which resolves neither here nor in the VS Code
   // Extension Host, so they must not be compiled into the Mocha suite that
   // test/installed.cjs runs from out/test/e2e.test.js.
-  "exclude": ["src/test/binary.test.ts", "src/test/errors.test.ts"]
+  "exclude": [
+    "src/test/binary.test.ts",
+    "src/test/errors.test.ts",
+    "src/test/extension.test.ts",
+    "src/test/runtime.test.ts"
+  ]
 }

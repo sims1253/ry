@@ -83,20 +83,24 @@ export function start(context: vscode.ExtensionContext): Runtime {
   statusItem.setBusy();
   context.subscriptions.push(statusItem);
 
-  let serverState: LanguageClient | null = null;
-  let restartQueued = false;
-  let restartPromise: Promise<void> | null = null;
-  let resolvedBinary: ResolvedBinary | null = null;
-  let settings: ISettings | undefined;
-  let shutdownStarted = false;
   const readSettings = () => {
     const folder = vscode.workspace.workspaceFolders?.[0];
     return folder
       ? getWorkspaceSettings(serverId, folder)
       : getGlobalSettings(serverId);
   };
+  let serverState: LanguageClient | null = null;
+  let restartQueued = false;
+  let restartPromise: Promise<void> | null = null;
+  let resolvedBinary: ResolvedBinary | null = null;
+  // Seed initial settings before registering listeners so unrelated startup
+  // configuration events cannot queue a duplicate server start (#919).
+  let settings: ISettings = readSettings();
+  let shutdownStarted = false;
   const reportFailure = (message: string) => {
     logger.error(message);
+    // A window reload or deactivation must not raise error toasts.
+    if (shutdownStarted) return;
     if (serverState && resolvedBinary) statusItem.setReady(resolvedBinary);
     else statusItem.setError(message);
     void vscode.window
@@ -123,6 +127,7 @@ export function start(context: vscode.ExtensionContext): Runtime {
       reportFailure(error);
       return;
     }
+    if (shutdownStarted) return;
     statusItem.setBusy();
     const nextClient = await startServer(
       serverId,
@@ -130,6 +135,10 @@ export function start(context: vscode.ExtensionContext): Runtime {
       outputChannel,
       traceOutputChannel,
     );
+    if (shutdownStarted) {
+      await stopServer(nextClient);
+      return;
+    }
     const previous = serverState;
     serverState = nextClient;
     resolvedBinary = nextBinary;
@@ -176,6 +185,9 @@ export function start(context: vscode.ExtensionContext): Runtime {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(
       async (e: vscode.ConfigurationChangeEvent) => {
+        if (!e.affectsConfiguration(serverId)) {
+          return;
+        }
         if (e.affectsConfiguration(`${serverId}.enable`)) {
           vscode.window.showWarningMessage(
             `To enable or disable ${LOG_CHANNEL_NAME} after changing the \`enable\` setting, you must restart VS Code.`,
@@ -184,7 +196,7 @@ export function start(context: vscode.ExtensionContext): Runtime {
         }
 
         const newSettings = readSettings();
-        if (!settings || checkIfConfigurationChanged(settings, newSettings)) {
+        if (checkIfConfigurationChanged(settings, newSettings)) {
           await requestRestart();
         } else {
           settings = newSettings;

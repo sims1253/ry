@@ -499,6 +499,7 @@ pub struct SeverityFilter {
     expanded_ignores: Vec<&'static str>,
     selected: Option<Vec<&'static str>>,
     extended_selection: Vec<&'static str>,
+    preview: bool,
     scoped: std::collections::HashMap<&'static str, Option<Severity>>,
 }
 
@@ -541,6 +542,10 @@ impl SeverityFilter {
     pub fn add_extend_select(&mut self, token: &str) {
         self.extended_selection.extend(Self::expand(token));
     }
+    /// Add preview rules to the default rule set (`preview = true`).
+    pub fn enable_preview(&mut self) {
+        self.preview = true;
+    }
 
     pub(crate) fn set_scoped(&mut self, code: &'static str, severity: Option<Severity>) {
         self.scoped.insert(code, severity);
@@ -564,7 +569,11 @@ impl SeverityFilter {
             return Some(Severity::Warning);
         }
         let selected = self.selected.as_ref().map_or_else(
-            || rules::enabled_by_default(code),
+            || match rules::status(code) {
+                rules::RuleStatus::Stable => true,
+                rules::RuleStatus::Preview => self.preview,
+                rules::RuleStatus::OptIn => false,
+            },
             |selected| selected.contains(&code),
         ) || self.extended_selection.contains(&code);
         selected.then_some(default)

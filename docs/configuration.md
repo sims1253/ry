@@ -22,6 +22,10 @@ ignore = ["RY033"]
 extend-select = ["RY003"]
 # select      = ["RY010", "RY040"]
 
+# Also report preview rules, which may still change (same as `--preview`).
+# See the rule status section of rules.md.
+preview = false
+
 # Packages attached outside the checked sources.
 packages = ["dplyr"]
 

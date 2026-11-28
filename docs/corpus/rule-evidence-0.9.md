@@ -60,11 +60,13 @@ parse-clean.
 
 ## Complete verdict table
 
-Allowed verdicts: keep, fix, default-off, retire. No single column
+Allowed verdicts: keep, fix, preview, default-off, retire. No single column
 determines the verdict.
 
 - **keep**: true semantic claim plus demonstrated useful reachability.
 - **fix**: diagnosed implementation gap owning a regression.
+- **preview**: a new rule still collecting evidence; preview mode adds it to
+  the default rule set (see [preview promotion](#preview-promotion)).
 - **default-off**: defensible behavior whose observed noise exceeds default value.
 - **retire**: false claim or no defensible reachable behavior.
 
@@ -129,6 +131,9 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
   the executable matrix. The tests `reverting_default_off_rules_fails` and
   `default_off_verdicts_match_the_registry` gate this: enabling either rule
   in the registry fails one of them.
+- **Preview rules**: a `preview` verdict requires `RuleStatus::Preview` in the
+  registry, and `default_off_verdicts_match_the_registry` gates it. No rule
+  has this verdict yet.
 - **RY095 (retired)**: absent from `RULES`. The test
   `retired_rules_are_absent_from_the_registry` gates this: re-adding RY095
   fails the test.
@@ -137,6 +142,27 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
   verifies the registry matches the verdict table.
 - **Every rule has a verdict**: the test `every_rule_has_an_executed_verdict`
   verifies the verdict table covers exactly the `RULES` registry.
+
+## Preview promotion
+
+A rule enters preview with `status: RuleStatus::Preview` in
+`crates/ry-checker/src/rules.rs`, a `preview` verdict in
+`crates/ry-checker/tests/rule_evidence.rs`, and a worked example whose
+`ry.toml` sets `preview = true`. It moves to stable (`keep`) when all of
+these hold:
+
+- Three consecutive ecosystem runs of both corpus manifests
+  (`ecosystem/run.sh`) in preview mode show zero confirmed false positives
+  for the rule. `run.sh` has no preview mode yet; the first rule to enter
+  preview adds one.
+- `crates/ry-checker/tests/probes.rs` has its positive probe and a quiet
+  negative control, and both pass.
+- An oracle fixture under `crates/ry-checker/testdata/oracle/` confirms the R
+  claim.
+
+The promotion PR changes the status, the verdict, and the example, and
+records the ledger runs it relied on. A rule whose runs keep finding false
+positives is narrowed, made `default-off`, or retired.
 
 ## Completeness checks
 

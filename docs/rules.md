@@ -69,9 +69,26 @@ explanation for one rule, with an example that triggers it and the fixed code.
 | RY128 | invalid-diag-dimension | error | A proven base `diag()` whose matrix dimension is proven invalid: a negative or `NA` `nrow`/`ncol`, or, with neither supplied, a length-one numeric `x` proven negative or `NA`, which `diag` reads as the dimension rather than a diagonal entry, so R errors ("invalid 'nrow' value"). Silent for vector `x` (diagonal entries), non-negative scalars, entries mode (a scalar `x` with any second argument supplied), classed `x` that may dispatch to a `diag` method, and computed values ry cannot prove. |
 | RY129 | nesting-limit | warning | Source nested deeper than ry analyzes: more than 128 syntax levels, or more than 1024 nested `else if` arms. R's parser allows that depth, so this is not a syntax error, but the file is not checked. Argument and parameter lists, flat `else if` arms, and left-associative operator chains do not count toward the depth. Nesting past R's own limit of 49 brackets is RY000. |
 
-RY003 and RY113 are registered but default-off: they are omitted from output
-unless a severity override or rule selection names them (for example
-`warn = ["RY003", "RY113"]`).
+### Rule status
+
+Each rule has one of three statuses, shown by `ry explain rule`:
+
+- **stable**: on by default.
+- **preview**: added to the default rule set by `preview = true` in `ry.toml`
+  or `ry check --preview`. A preview rule may still change or be withdrawn. Its findings
+  carry a `[preview]` message prefix, or `"preview": true` in JSON output.
+  No rule is in preview yet.
+- **opt-in**: off by default because its observed noise exceeds its default
+  value. RY003 and RY113 are opt-in.
+
+Preview mode adds preview rules to the default rule set; it never enables
+opt-in rules. A severity override or `extend-select` that names a preview or
+opt-in rule enables it without preview mode (for example
+`warn = ["RY003", "RY113"]`), and `select` replaces the default set, preview
+rules included.
+
+A preview rule is promoted to stable after the criteria in the
+[rule evidence record](corpus/rule-evidence-0.9.md#preview-promotion).
 
 A capture function such as `enquo()` silences RY109 only when it resolves
 through an attached package or a `NAMESPACE` import. Without `library(rlang)`,

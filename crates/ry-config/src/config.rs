@@ -410,6 +410,8 @@ pub struct Config {
     /// Add rules to the default or selected rule set.
     #[serde(alias = "extend-select")]
     pub extend_select: Vec<String>,
+    /// Add preview rules to the default rule set. Default: false.
+    pub preview: bool,
     /// Exclude patterns (gitignore-style). Default: empty.
     pub exclude: Vec<String>,
     /// Source globs to include despite `.Rbuildignore`, relative to `ry.toml`.
@@ -467,6 +469,7 @@ impl Default for Config {
             rule_overrides: Vec::new(),
             select: None,
             extend_select: Vec::new(),
+            preview: false,
             exclude: Vec::new(),
             include_build_ignored: Vec::new(),
             check_test_fixtures: false,
@@ -650,6 +653,8 @@ pub struct CliOverrides {
     pub error_on_warning: Option<bool>,
     /// `--exit-zero`, when the flag was passed explicitly.
     pub exit_zero: Option<bool>,
+    /// `--preview`, when the flag was passed explicitly.
+    pub preview: Option<bool>,
     /// `--output-format`, when the flag was passed explicitly.
     pub output_format: Option<String>,
     /// `-v` count; added to the config's `verbose`.
@@ -674,6 +679,9 @@ impl Config {
         }
         if let Some(exit_zero) = cli.exit_zero {
             self.exit_zero = exit_zero;
+        }
+        if let Some(preview) = cli.preview {
+            self.preview = preview;
         }
         if let Some(output_format) = cli.output_format {
             self.output_format = output_format;
@@ -848,6 +856,7 @@ mod tests {
         assert!(d.ignore.is_empty());
         assert!(d.select.is_none());
         assert!(d.extend_select.is_empty());
+        assert!(!d.preview);
         assert!(d.exclude.is_empty());
         assert!(!d.check_test_fixtures);
         assert_eq!(d.output_format, DEFAULT_OUTPUT_FORMAT);
@@ -878,6 +887,7 @@ warn = ["invalid-arithmetic"]
 ignore = ["RY010"]
 select = ["RY002"]
 extend-select = ["RY003"]
+preview = true
 exclude = ["tests/fixtures/**", "**/_snapshots/**"]
 check-test-fixtures = true
 output-format = "json"
@@ -896,6 +906,7 @@ baseline = "diagnostics.json"
         assert_eq!(cfg.ignore, vec!["RY010"]);
         assert_eq!(cfg.select, Some(vec!["RY002".into()]));
         assert_eq!(cfg.extend_select, vec!["RY003"]);
+        assert!(cfg.preview);
         assert_eq!(cfg.exclude, vec!["tests/fixtures/**", "**/_snapshots/**"]);
         assert!(cfg.check_test_fixtures);
         assert_eq!(cfg.output_format, "json");
@@ -1210,11 +1221,13 @@ paths = ["inst/shiny/**"]
         let merged = cfg.merge_cli(CliOverrides {
             error_on_warning: Some(true),
             exit_zero: Some(true),
+            preview: Some(true),
             output_format: Some("json".to_string()),
             ..CliOverrides::default()
         });
         assert!(merged.error_on_warning);
         assert!(merged.exit_zero);
+        assert!(merged.preview);
         assert_eq!(merged.output_format, "json");
     }
 
@@ -1225,6 +1238,7 @@ paths = ["inst/shiny/**"]
         let cfg = Config {
             error_on_warning: true,
             exit_zero: true,
+            preview: true,
             output_format: "json".to_string(),
             verbose: 2,
             quiet: 1,
@@ -1233,6 +1247,7 @@ paths = ["inst/shiny/**"]
         let merged = cfg.merge_cli(CliOverrides::default());
         assert!(merged.error_on_warning);
         assert!(merged.exit_zero);
+        assert!(merged.preview);
         assert_eq!(merged.output_format, "json");
         assert_eq!(merged.verbose, 2);
         assert_eq!(merged.quiet, 1);

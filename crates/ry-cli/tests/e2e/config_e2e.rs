@@ -1893,3 +1893,61 @@ fn uvr_library_auto_discovery_and_explain_packages() {
         "{parsed}"
     );
 }
+
+/// No shipped rule is in preview yet, so `--preview` and `preview = true`
+/// must leave every output format byte-identical to a default run (#822).
+#[test]
+fn preview_mode_without_preview_rules_leaves_output_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = b"n <- 2\nif (n) print(undefined_thing)\nif (c(TRUE, FALSE)) 1\n";
+    write(tmp.path(), &[("bad.R", source)]);
+    for format in ["full", "concise", "json", "github", "gitlab", "junit"] {
+        let run = |args: &[&str]| {
+            fs::remove_file(tmp.path().join("ry.toml")).ok();
+            check_in(
+                tmp.path(),
+                &[&[".", "--output-format", format][..], args].concat(),
+            )
+        };
+        let default = run(&[]);
+        assert!(default.stdout().contains("RY010"), "{default:?}");
+        assert!(!default.stdout().contains("RY003"), "{default:?}");
+        let flag = run(&["--preview"]);
+        fs::write(tmp.path().join("ry.toml"), "preview = true\n").unwrap();
+        let config = check_in(tmp.path(), &[".", "--output-format", format]);
+        for preview in [flag, config] {
+            assert_eq!(preview.code(), default.code(), "{format}: {preview:?}");
+            assert_eq!(preview.stdout(), default.stdout(), "{format}");
+        }
+    }
+}
+
+#[test]
+fn explain_rule_shows_status() {
+    let explain = |args: &[&str]| {
+        let output = ry!().arg("explain").arg("rule").args(args).run();
+        assert!(output.success(), "{output:?}");
+        output
+    };
+    let stable = explain(&["RY010"]).stdout();
+    assert!(
+        stable.contains("Status: stable (on by default)"),
+        "{stable}"
+    );
+    let opt_in = explain(&["RY003"]).stdout();
+    assert!(
+        opt_in.contains("Status: opt-in (off by default"),
+        "{opt_in}"
+    );
+    let table = explain(&[]).stdout();
+    assert!(table.lines().next().unwrap().contains("status"), "{table}");
+    let rules = explain(&["--output-format", "json"]).json();
+    let status = |code: &str| {
+        let rules = rules.as_array().unwrap();
+        let rule = rules.iter().find(|rule| rule["code"] == code).unwrap();
+        rule["status"].as_str().unwrap().to_owned()
+    };
+    assert_eq!(status("RY010"), "stable");
+    assert_eq!(status("RY003"), "opt-in");
+    assert_eq!(status("RY113"), "opt-in");
+}

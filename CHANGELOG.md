@@ -43,6 +43,10 @@ All notable changes to ry are documented in this file.
   `parse()` and ry's RY000 must agree on every `.R` file of both corpora
   and base R's sources (12,594 files, no disagreements), so a false
   RY000 on valid R or newly accepted R-rejected input fails CI (#841).
+- A preview rule tier between default-on and opt-in: `preview = true` in
+  `ry.toml` or `ry check --preview` adds preview rules, their findings are
+  marked `[preview]` (`"preview": true` in JSON), and `ry explain rule` shows
+  each rule's status. No rule is in preview yet (#822).
 
 ### Fixed
 

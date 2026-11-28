@@ -584,6 +584,9 @@ async fn editing_a_helper_refreshes_its_callers_hints() {
         .unwrap();
     assert!(hint(&before).contains("integer"), "before edit: {before:?}");
 
+    // Read everything the opens caused, so only the edit's pass can
+    // supply the refresh awaited below.
+    harness::drain_publications(&mut session, &helper_uri).await;
     let mark = session.publication_mark();
     let _ = harness::change_published(
         &mut session,

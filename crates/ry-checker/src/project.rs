@@ -455,32 +455,29 @@ impl Project {
 
     /// Infer assignment-site types for one file using the project's full
     /// cross-file `FnTable`, `ReturnSlots`, and workspace context (#930).
-    /// Ensures Pass 1 and Pass 2 fixpoint tables are current via
-    /// [`Self::check_incremental`], then runs a single assignment-capturing
-    /// pass over `target_path`.
+    /// Brings the Pass 1 and Pass 2 tables current with
+    /// [`Self::check_incremental`] unless the last check left nothing to
+    /// redo, then runs a single assignment-capturing pass over `target_path`.
     pub fn assignment_types_for(
         &mut self,
         target_path: &str,
     ) -> Vec<(ry_core::Span, ry_core::types::RType)> {
-        let _ = self.check_incremental();
+        // Every input change marks a path dirty and the check clears the
+        // set, so a clean project's tables and `prev_tables` are current.
+        let current = self.has_prev_emit
+            && self.dirty_paths.is_empty()
+            && self
+                .files
+                .iter()
+                .all(|(path, _)| self.collected_files.contains_key(path));
+        if !current {
+            let _ = self.check_incremental();
+        }
         let Some(index) = self.files.iter().position(|(p, _)| p == target_path) else {
             return Vec::new();
         };
         let box_modules = self.build_box_modules();
-        let tables = TableSnapshot::of(&self.fn_table, self.namespaces());
         let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
-        let package_known_vars = Arc::new(fn_table.known_vars.clone());
-        let namespaces: HashMap<&str, SharedNamespacePool> = tables
-            .namespaces
-            .iter()
-            .map(|(package, pool)| {
-                let shared = (
-                    Arc::new(pool.known_vars.clone()),
-                    Arc::new(pool.superassigned.clone()),
-                );
-                (package.as_str(), shared)
-            })
-            .collect();
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
         let loaded = Arc::new(std::mem::take(&mut self.loaded));
 
@@ -488,15 +485,15 @@ impl Project {
         let mut emitter =
             Checker::with_shared_tables(path, Arc::clone(&fn_table), Arc::clone(&return_slots));
         emitter.set_shared_declarations(Arc::clone(&self.declarations));
-        let namespace = self
+        // Only the target's own package pool is needed.
+        let pool = self
             .source_package(path)
-            .and_then(|package| namespaces.get(package));
-        emitter.set_shared_known_vars(Arc::clone(
-            namespace.map_or(&package_known_vars, |(known_vars, _)| known_vars),
-        ));
-        emitter.set_namespace_superassigned(
-            namespace.map(|(_, superassigned)| Arc::clone(superassigned)),
-        );
+            .and_then(|package| self.prev_tables.namespaces.get(package));
+        emitter.set_shared_known_vars(Arc::new(pool.map_or_else(
+            || fn_table.known_vars.clone(),
+            |pool| pool.known_vars.clone(),
+        )));
+        emitter.set_namespace_superassigned(pool.map(|pool| Arc::new(pool.superassigned.clone())));
         emitter.set_shared_loaded(Arc::clone(&loaded));
         emitter.set_bare_loaded(
             self.bare_loaded
@@ -1577,6 +1574,29 @@ mod tests {
         warm.update_file("loader.R".into(), parse_file("loader.R", before).into());
         assert_matches_cold(&mut warm);
         assert!(!warm.refinement_discovered_attachments);
+    }
+
+    #[test]
+    fn assignment_types_follow_edits_and_reuse_a_clean_check() {
+        let mut project = Project::new();
+        project.add_file(
+            "helper.R".into(),
+            parse_file("helper.R", "make <- function() 42L\n"),
+        );
+        project.add_file("caller.R".into(), parse_file("caller.R", "n <- make()\n"));
+        let mode = |project: &mut Project| {
+            let types = project.assignment_types_for("caller.R");
+            format!("{:?}", types[0].1.mode)
+        };
+        assert!(mode(&mut project).contains("Integer"));
+        // Clean: no check runs, and the shared tables come back intact.
+        assert!(project.dirty_paths.is_empty());
+        assert!(mode(&mut project).contains("Integer"));
+        project.update_file(
+            "helper.R".into(),
+            parse_file("helper.R", "make <- function() \"x\"\n").into(),
+        );
+        assert!(mode(&mut project).contains("Character"));
     }
 
     #[test]

@@ -29,6 +29,10 @@ All notable changes to ry are documented in this file.
   tag, it skips the run instead of pushing a downgrade branch. The
   release runbook now requires releases to vendor a tagged r-typeshed
   commit (#928).
+- The default ecosystem corpus now includes `covr` 4.0.0 (0 findings), and
+  every package in its manifest has a ledger entry. Reconciliation now
+  fails on a manifest package the ledger does not list; before, it skipped
+  such packages silently (#927, #932).
 - Typeshed stubs can declare `return_mode: {"kind": "input_mode", ...}`:
   the result mode follows the data arguments' mode through a table, as
   in R. The vendored base stubs use it for `sum()`, `abs()`, `max()`,

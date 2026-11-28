@@ -123,6 +123,51 @@
       "name": "reprex",
       "commit": "0dcf301940c050e1cf32f230cab45503d85ac5a4",
       "diagnostics": 0
+    },
+    {
+      "name": "rlang",
+      "commit": "830745e8798b7f2ef7c4afd96ed40d4adfe2fdf0",
+      "diagnostics": 6
+    },
+    {
+      "name": "withr",
+      "commit": "c8539fe735a5b6cdb496c68bca8248f8b6b4d419",
+      "diagnostics": 0
+    },
+    {
+      "name": "fs",
+      "commit": "d1459d8a04efce4e1f6a66405af134f93355c31e",
+      "diagnostics": 0
+    },
+    {
+      "name": "cli",
+      "commit": "f8cd002012342fcf9e34940e80b32a4a17ada726",
+      "diagnostics": 6
+    },
+    {
+      "name": "scales",
+      "commit": "8d0b0bdb3e036c2336242a55bb0e02f6fb234b88",
+      "diagnostics": 0
+    },
+    {
+      "name": "jsonlite",
+      "commit": "0134cba18366b1c51c6497f4f97273a8423d8d86",
+      "diagnostics": 0
+    },
+    {
+      "name": "testthat",
+      "commit": "50a99ec76fed8140a9211ed862289e877e86614d",
+      "diagnostics": 1
+    },
+    {
+      "name": "curl",
+      "commit": "fa17cc6d238fbb331a5648b15a8018c4dc2e8f76",
+      "diagnostics": 0
+    },
+    {
+      "name": "covr",
+      "commit": "7dbd4deaea58f8d9533b7538bf5c16acad5764ba",
+      "diagnostics": 0
     }
   ],
   "findings": [
@@ -728,11 +773,128 @@
       "column": 16,
       "label": "true_positive",
       "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "rlang",
+      "code": "RY040",
+      "path": "tests/testthat/test-cnd-entrace.R",
+      "line": 284,
+      "column": 28,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "rlang",
+      "code": "RY040",
+      "path": "tests/testthat/test-cnd-message.R",
+      "line": 480,
+      "column": 8,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "rlang",
+      "code": "RY109",
+      "path": "tests/testthat/test-nse-defuse.R",
+      "line": 329,
+      "column": 22,
+      "label": "false_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "rlang",
+      "code": "RY109",
+      "path": "tests/testthat/test-nse-defuse.R",
+      "line": 334,
+      "column": 22,
+      "label": "false_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "rlang",
+      "code": "RY091",
+      "path": "tests/testthat/test-trace.R",
+      "line": 323,
+      "column": 5,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "rlang",
+      "code": "RY040",
+      "path": "tests/testthat/test-trace.R",
+      "line": 592,
+      "column": 28,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "cli",
+      "code": "RY032",
+      "path": "R/ansi-hyperlink.R",
+      "line": 144,
+      "column": 7,
+      "label": "false_positive",
+      "audit_group": "manual-audit"
+    },
+    {
+      "package": "cli",
+      "code": "RY032",
+      "path": "R/containers.R",
+      "line": 41,
+      "column": 7,
+      "label": "false_positive",
+      "audit_group": "manual-audit"
+    },
+    {
+      "package": "cli",
+      "code": "RY032",
+      "path": "R/status-bar.R",
+      "line": 239,
+      "column": 7,
+      "label": "false_positive",
+      "audit_group": "manual-audit"
+    },
+    {
+      "package": "cli",
+      "code": "RY032",
+      "path": "R/status-bar.R",
+      "line": 242,
+      "column": 7,
+      "label": "false_positive",
+      "audit_group": "manual-audit"
+    },
+    {
+      "package": "cli",
+      "code": "RY032",
+      "path": "R/status-bar.R",
+      "line": 245,
+      "column": 7,
+      "label": "false_positive",
+      "audit_group": "manual-audit"
+    },
+    {
+      "package": "cli",
+      "code": "RY040",
+      "path": "tests/testthat/test-defer.R",
+      "line": 4,
+      "column": 11,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "testthat",
+      "code": "RY032",
+      "path": "R/snapshot.R",
+      "line": 313,
+      "column": 7,
+      "label": "false_positive",
+      "audit_group": "manual-audit"
     }
   ],
   "classification": {
     "true_positive": 37,
-    "false_positive": 30,
+    "false_positive": 43,
     "unowned": 0
   },
   "audit_group_counts": {
@@ -748,12 +910,13 @@
     "plan-32-33": 0,
     "pr195-nse-stubs": 6,
     "ifelse-mode": 2,
-    "ry109-self-defaults": 10,
+    "ry109-self-defaults": 12,
     "seq-defaulted": 1,
     "ry111-constant-shadowing": 11,
     "ry001-null-union": 1,
-    "test-fixture": 1,
-    "partial-stub-search-path": 1
+    "test-fixture": 6,
+    "partial-stub-search-path": 1,
+    "manual-audit": 6
   },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
@@ -789,7 +952,8 @@
     "Top-level on_load() blocks bind package names (#691): plain assignments in a top-level rlang-style on_load({...}) block are now package bindings. No ledger identity changes; the ungated rlang reports lose five RY010 false positives, R/cnd-abort.R:855:10, R/env-special.R:220:16, and R/trace.R:1082:8, :1094:16 and :1096:16 (has_cli_format, base_pkg_env, has_cli_start_app, theme_error_highlight and theme_error_arg_highlight, which rlang binds in on_load() blocks; this manifest pins rlang 830745e8, so the trace.R lines differ from the Posit ledger's 1d0e0065 pin). The Posit ledger drops 46 reviewed false positives (namespace-on-load).",
     "A `$`/`[[` miss on a partly known list is unknown (#689). No ledger identity changes; one unowned RY001 report line disappears: testthat R/parallel-taskq.R:137:13, `private$tasks$idle[i]` after `$<-` writes to other fields of the opaque `private$tasks` (this manifest pins testthat 50a99ec7; the Posit ledger's 9b6f12b9 pin has it at :205:13 as a reviewed false positive, and that ledger drops 7 false positives and 1 true positive).",
     "A project-defined `%<-%` destructures (#706). No ledger identity changes; the ungated rlang reports lose one RY001 false positive, R/cnd-abort.R:548:7 (`if (found_restart)` after rlang's own standalone-zeallot `%<-%` binds it; also a reviewed false positive in the Posit ledger).",
-    "Vendoring the tagged r-typeshed v0.7.1 (#928) drops all 16 `plan-32-33` unowned RY010 identities (ggplot2 R/facet-.R, R/plot-render.R, R/utilities.R; tidyr R/chop.R, R/hoist.R, R/unnest-helper.R, R/unnest-longer.R, R/unnest-wider.R): their names are vctrs exports such as `vec_is_list` that the now partial vctrs stub does not list, which stay open (#926), or S7 names that the now complete S7 inventory lists. It adds one false positive, purrr RY032 R/deprec-prepend.R:34:7 (`is.null(before) || before == 1` after `stopifnot(is.null(before) || (before > 0 && before <= n))`): purrr's `import(vctrs)` now attaches a partial stub, so the search path is unknown and the scalar-assertion proof boundary (#702) no longer accepts the `stopifnot` fact. The guard is correct R; group `partial-stub-search-path`."
+    "Vendoring the tagged r-typeshed v0.7.1 (#928) drops all 16 `plan-32-33` unowned RY010 identities (ggplot2 R/facet-.R, R/plot-render.R, R/utilities.R; tidyr R/chop.R, R/hoist.R, R/unnest-helper.R, R/unnest-longer.R, R/unnest-wider.R): their names are vctrs exports such as `vec_is_list` that the now partial vctrs stub does not list, which stay open (#926), or S7 names that the now complete S7 inventory lists. It adds one false positive, purrr RY032 R/deprec-prepend.R:34:7 (`is.null(before) || before == 1` after `stopifnot(is.null(before) || (before > 0 && before <= n))`): purrr's `import(vctrs)` now attaches a partial stub, so the search path is unknown and the scalar-assertion proof boundary (#702) no longer accepts the `stopifnot` fact. The guard is correct R; group `partial-stub-search-path`.",
+    "Every manifest package now has a ledger entry, and reconciliation fails on a manifest package the ledger does not list (#932); before, `intersect()` dropped such packages from the gate. The nine entries added are rlang, withr, fs, cli, scales, jsonlite, testthat, curl and covr (#927, covr 4.0.0 at 7dbd4dea, 0 findings). Their 13 report identities are all false positives; 12 match the verdicts the Posit ledger gives the same sites at its own pins. test-fixture (6): rlang tests/testthat/test-cnd-entrace.R:284:28, test-trace.R:592:28 and cli tests/testthat/test-defer.R:4:11 RY040 are deliberate `1 + \"\"` errors caught by catch_cnd()/expect_snapshot(error = TRUE); rlang test-cnd-message.R:480:8 RY040 (`\"...\" + \"...\"`) is quoted by enexpr() and never evaluated; rlang test-trace.R:323:5 RY091 is a deliberate argument-less `eval()` under catch_cnd(), the error the test traces (the Posit ledger files it as type-narrowing). ry109-self-defaults (2): rlang test-nse-defuse.R:329:22 and :334:22 `function(x = x)` defaults are only captured by enexpr()/enquo(), never forced. manual-audit (5 RY032): cli R/ansi-hyperlink.R:144:7 (`value` is one hyperlink field), R/containers.R:41:7 (`id` is one container id), R/status-bar.R:239:7, :242:7 and :245:7 (`msg_class`/`done_class`/`failed_class` take single class names), and testthat R/snapshot.R:313:7 (`variant` comes from check_variant(), which returns \"_default\" or a string and aborts otherwise). No identity is removed and every true positive remains."
   ],
   "ry_commit": "4e4550e584ebf09831acde72c3848961ad8ca7f8",
   "source_sha256": "297ac40e4d9688fc5a5b1925205d5dff7ad42e25fed6bb68da57a64febc8c21b"

@@ -452,6 +452,12 @@ fn uncertain_local_calls_preserve_argument_diagnostics() {
         ),
     ] {
         let diagnostics = check(source);
+        if !codes.contains(&"RY010") {
+            assert!(
+                diagnostics.iter().all(|d| d.code != "RY010"),
+                "{source}: {diagnostics:?}"
+            );
+        }
         for &code in codes {
             assert!(
                 diagnostics.iter().any(|d| d.code == code),

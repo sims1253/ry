@@ -328,7 +328,9 @@ fn dbplyr_translation_helpers_capture_sql_expressions() {
     // `translate_sql` is the exported quoting entry point; the test-local
     // `expect_translation` helpers were removed from the stub because they
     // are not part of dbplyr's namespace (the audit enforces that).
-    let diags = check("library(dbplyr)\ntranslate_sql(x + y)\nmissing_after\n");
+    // Qualified, so the partial dbplyr stub is not attached and an unbound
+    // name after the call still reports (#926).
+    let diags = check("dbplyr::translate_sql(x + y)\nmissing_after\n");
     assert!(
         diags.iter().all(|diagnostic| {
             diagnostic.code != "RY010"
@@ -336,12 +338,9 @@ fn dbplyr_translation_helpers_capture_sql_expressions() {
         }),
         "translation expressions are captured rather than evaluated lexically: {diags:?}"
     );
-    // dbplyr's stub is partial, so an unlisted name may be an export
-    // once it is attached (#926).
-    assert!(
-        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
-        "{diags:?}"
-    );
+    assert!(diags.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("missing_after")
+    }));
 }
 
 #[test]
@@ -1576,6 +1575,20 @@ fn project_functions_shadow_injecting_stub_signatures() {
             "{source}: {diagnostics:?}"
         );
     }
+    let backticked = "`new_class` <- function(class_name, ...) 1\nnew_class(\"x\", new = 1)\n";
+    assert!(
+        check(backticked).iter().all(|d| d.code != "RY090"),
+        "{backticked}"
+    );
+    // Another package's qualified function is not S7's.
+    assert!(
+        check("stats::new_class(\"x\", new = 1)\n")
+            .iter()
+            .all(|d| d.code != "RY090")
+    );
+    // A data binding does not shadow the call: R skips it in call position.
+    let data = "library(S7)\nnew_class <- 1L\nnew_class(\"x\", new = 1)\n";
+    assert!(check(data).iter().any(|d| d.code == "RY090"), "{data}");
     let diagnostics = check("S7::new_class(\"x\", new = 1)\n");
     assert!(
         diagnostics.iter().any(|d| d.code == "RY090"),

@@ -1161,15 +1161,31 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> Option<RType> {
-        // A lexical or project definition of the bare name is the callee,
-        // not a package's: cli's own `new_class(class_name, ...)` must not
-        // be checked against S7's signature.
-        if !name.contains("::")
-            && (scope.get(name).is_some() || self.fn_table.functions.binds(lookup_name))
-        {
-            return None;
+        // A lexical or project function of the bare name is the callee, not
+        // a package's: cli's own `new_class(class_name, ...)` must not be
+        // checked against S7's signature. Like R's call-position lookup,
+        // only a function or a parameter shadows; a data binding does not.
+        let bare = !name.contains("::");
+        if bare {
+            let quoted = format!("`{lookup_name}`");
+            let shadows = |spelling: &str| {
+                scope.is_lexical_function(spelling)
+                    || scope.get(spelling).is_some_and(|binding| {
+                        matches!(binding.mode, ry_core::types::Mode::Function)
+                            || scope.is_parameter(spelling)
+                    })
+                    || self.fn_table.functions.binds(spelling)
+            };
+            if shadows(lookup_name) || shadows(&quoted) {
+                return None;
+            }
         }
         let signature = self.resolve_typeshed_sig(name).or_else(|| {
+            // Only a bare call can reach another package's stub;
+            // `stats::new_class()` is not S7's.
+            if !bare {
+                return None;
+            }
             self.available_package_names()
                 .into_iter()
                 .find_map(|package| {

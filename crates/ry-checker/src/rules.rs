@@ -127,7 +127,8 @@ pub const UNUSED_IGNORE: &str = "RY113";
 pub const NESTING_LIMIT: &str = "RY129";
 
 /// Whether `code` reports without preview mode or an explicit selection.
-/// Every checker entry point and CLI output path reads this one policy.
+/// [`status`] is the registry's single policy source; `SeverityFilter::effective`
+/// expands it per tier (stable: on, preview: with `preview`, opt-in: off).
 pub fn enabled_by_default(code: &str) -> bool {
     status(code) == RuleStatus::Stable
 }

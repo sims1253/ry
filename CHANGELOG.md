@@ -12,12 +12,23 @@ All notable changes to ry are documented in this file.
   building from source needs a newer toolchain. Cargo now resolves only
   crate versions published at least 7 days ago, matching the Dependabot
   cooldown (#906).
-- The vendored typeshed moves to r-typeshed c5659cb, whose base stubs now
-  match GNU R: `mean()`, `prod()`, `round()` and `cumprod()` return
-  double or complex, `seq()` integer or double, `names()`, `rownames()`
-  and `colnames()` may be `NULL`, `dim()`, `nrow()` and `ncol()` make no
-  claim, `table()`, `proc.time()`, `ordered()`, `interaction()` and
-  `dist()` declare their classes, and more stubs allow `NA` (#866).
+- The vendored typeshed moves to the tagged r-typeshed v0.7.1 release
+  (bfe0c8e). Its base stubs now match GNU R: `mean()`, `prod()`,
+  `round()` and `cumprod()` return double or complex, `seq()` integer or
+  double, `names()`, `rownames()` and `colnames()` may be `NULL`,
+  `dim()`, `nrow()` and `ncol()` make no claim, `table()`, `proc.time()`,
+  `ordered()`, `interaction()` and `dist()` declare their classes, more
+  stubs allow `NA`, `round()`, `signif()`, `log()`, `startsWith()` and
+  `endsWith()` recycle across both value arguments, and `rank()` may be
+  integer or double. It completes the `S7` and `testthat` export
+  inventories, so a misspelled name in a package test file reports RY010
+  even when testthat is not installed, and adds a `covr` 4.0.0 stub
+  (#866, #926, #927, #928).
+- The weekly typeshed bump workflow only moves the vendored typeshed
+  forward. When the vendored commit is ahead of the latest r-typeshed
+  tag, it skips the run instead of pushing a downgrade branch. The
+  release runbook now requires releases to vendor a tagged r-typeshed
+  commit (#928).
 - Typeshed stubs can declare `return_mode: {"kind": "input_mode", ...}`:
   the result mode follows the data arguments' mode through a table, as
   in R. The vendored base stubs use it for `sum()`, `abs()`, `max()`,
@@ -39,6 +50,24 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Inlay hints use the package's cross-file context, as `ry check` does,
+  so `n <- make_count()` shows the return type of a helper defined in
+  another file. After each diagnostics pass, clients that support it are
+  asked to pull hints again, so a caller's hints follow an edited helper.
+  Checking runs off the async runtime, so a long check no longer stalls
+  other LSP requests. Code actions skip diagnostics that cannot be
+  suppressed and offer no `# ry: ignore-file` when nothing in range can
+  be (#930).
+- Typeshed stubs can declare a top-level `"partial": true`. Attaching or
+  importing a partial stub keeps the package's other exports open, so a
+  name the stub does not list no longer reports RY010, while the listed
+  signatures, NSE rules and `injects` still apply. `library(S7);
+  class_double` and covr's S7 test package check clean (#926).
+- `ry explain packages [PATHS]...` prints the R libraries and package
+  versions ry resolves, and `ry check --explain-files` reports them on
+  stderr. A `uvr.toml` or `uvr.lock` at a project root adds its
+  `.uvr/library` to the search libraries without setting `R_LIBS`
+  (#812).
 - A ratcheted parse differential in `ecosystem/run.sh --check`: GNU R's
   `parse()` and ry's RY000 must agree on every `.R` file of both corpora
   and base R's sources (12,594 files, no disagreements), so a false
@@ -50,6 +79,31 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- A project's own function no longer takes the signature of a package
+  function that injects names, such as S7's `new_class()`: cli's
+  `new_class(class_name, ...)` stops reporting RY090 for each method
+  argument. A data binding of the same name still leaves the package
+  function callable, as in R, and `pkg::name()` reaches only `pkg` (#928).
+- `range(integer(0), finite = FALSE)` is double, as in R: `finite` and
+  `na.rm` are controls, not data, and `finite = TRUE` may drop every
+  element. `sum()` of integers may be integer or double, since it
+  overflows to double (#922).
+- Length intervals overlap as R allows: a non-empty value may have
+  length 1, so rlang-style scalar assertions no longer report RY092 or
+  make later code unreachable. `data.frame(a = integer(0))` has zero
+  rows, `t(df)` is a plain matrix without the data frame's class or
+  columns, and `data.frame(c(a = 1, b = 2))` stays one column (#923).
+- A project or package function named `t`, `list`, or `tryCatch`, or an
+  S3 or S4 method for it, is no longer treated as the base builtin, and
+  a user stub for a `stats`, `utils` or `base` function now applies to
+  qualified calls too (#924).
+- `NAMESPACE` `import(pkg, except = ...)` no longer treats `except` as a
+  package, `S3method(generic, class, fun)` registers `fun`, and
+  `library(pkg, character.only = TRUE)` and `base::library()` attach the
+  same packages everywhere (#925).
+- Installed-package discovery uses only the library tree of the active R
+  minor version, so packages built for another R version are no longer
+  mixed in (#929).
 - Callbacks over a value that may be `NULL`, such as
   `lapply(names(x), function(col) if (col == "a") 1)`, no longer report
   RY001: `NULL` has no elements, so the callback argument is a scalar
@@ -147,8 +201,9 @@ All notable changes to ry are documented in this file.
 - A `return()` inside `local(..., envir = environment())` no longer ends
   the enclosing function's scope-exit facts. In GNU R it returns from the
   `eval` call only, and the function keeps running (#897).
-- `sum(c(TRUE, FALSE))`, `sum(1:3)`, `abs(TRUE)`, `max(TRUE)` and
-  `seq(1, 10)` are integer, as in R; all were double. A `double_or_int`
+- `sum(c(TRUE, FALSE))`, `abs(TRUE)`, `max(TRUE)` and `seq(1, 10)` are
+  integer, as in R, and `sum(1:3)` is integer or double, since an integer
+  sum can overflow to double; all were double. A `double_or_int`
   return follows every data argument: any double makes it double, and
   character or complex input leaves it unknown. `seq()` follows
   `seq.default`'s storage rules and is `integer | double` where the mode

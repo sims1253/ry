@@ -1,0 +1,641 @@
+{
+  "schema_version": "2",
+  "package": "covr",
+  "version": "0.0.1",
+  "functions": {
+    "annotate_coverage": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "lines",
+        "context",
+        "files",
+        "max_lines"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "badge": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "file",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cobertura": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "code_coverage": {
+      "params": [
+        {
+          "name": "source_code",
+          "required": true
+        },
+        {
+          "name": "test_code",
+          "required": true
+        },
+        "line_exclusions",
+        "function_exclusions",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "codecov": {
+      "params": [
+        "...",
+        "coverage",
+        "base_url",
+        "token",
+        "commit",
+        "branch",
+        "pr",
+        "flags",
+        "quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coverage_to_list": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coverage_to_markdown": {
+      "params": [
+        "x",
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coveralls": {
+      "params": [
+        "...",
+        "coverage",
+        "repo_token",
+        "service_name",
+        "quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "current_coverage": {
+      "params": [
+        "reset"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "display_name": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "environment_coverage": {
+      "params": [
+        "env",
+        {
+          "name": "test_files",
+          "required": true
+        },
+        "line_exclusions",
+        "function_exclusions"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "file_coverage": {
+      "params": [
+        {
+          "name": "source_files",
+          "required": true
+        },
+        {
+          "name": "test_files",
+          "required": true
+        },
+        "line_exclusions",
+        "function_exclusions",
+        "parent_env",
+        "runner"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "file_report": {
+      "params": [
+        "x",
+        "file",
+        "out_file",
+        "browse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "file_report_html": {
+      "params": [
+        "x",
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "function_coverage": {
+      "params": [
+        {
+          "name": "fun",
+          "required": true
+        },
+        "code",
+        "env",
+        "enc"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gitlab": {
+      "params": [
+        "...",
+        "coverage",
+        "file",
+        "quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "in_covr": {
+      "params": [],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "lcov": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "package_coverage": {
+      "params": [
+        "path",
+        "type",
+        "combine_types",
+        "relative_path",
+        "quiet",
+        "clean",
+        "line_exclusions",
+        "function_exclusions",
+        "code",
+        "install_path",
+        "...",
+        "allow_failures",
+        "show_code_output"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "percent_coverage": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "double",
+        "length": "1",
+        "na": true
+      }
+    },
+    "report": {
+      "params": [
+        "x",
+        "file",
+        "browse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "report_html": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "shiny_app_coverage": {
+      "params": [
+        "app_dir",
+        "code",
+        "line_exclusions",
+        "function_exclusions"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sonarqube": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "file",
+        "path_prefix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tally_coverage": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "by"
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "class": [
+          "data.frame"
+        ],
+        "na": true
+      }
+    },
+    "tally_tests": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "to_cobertura": {
+      "params": [
+        {
+          "name": "cov",
+          "required": true
+        },
+        "filename"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "to_sonarqube": {
+      "params": [
+        {
+          "name": "cov",
+          "required": true
+        },
+        "filename",
+        "path_prefix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "value": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "with_coverage": {
+      "params": [
+        {
+          "name": "code",
+          "required": true
+        },
+        "env",
+        "line_exclusions",
+        "function_exclusions"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "zero_coverage": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "class": [
+          "data.frame"
+        ],
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "colorblind_palette": {
+      "mode": "character",
+      "length": "3",
+      "na": false
+    }
+  },
+  "s3_methods": [
+    {
+      "generic": "[",
+      "class": "coverage",
+      "params": [
+        "x",
+        "i",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "as.data.frame",
+      "class": "coverage",
+      "params": [
+        "x",
+        "row.names",
+        "optional",
+        "sort",
+        "..."
+      ],
+      "return": {
+        "mode": "list",
+        "length": "unknown",
+        "class": [
+          "data.frame"
+        ],
+        "na": true
+      }
+    },
+    {
+      "generic": "c",
+      "class": "coverage",
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "format",
+      "class": "covr_error",
+      "params": [
+        "x",
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "character",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "merge_coverage",
+      "class": "character",
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "merge_coverage",
+      "class": "list",
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "print",
+      "class": "coverage",
+      "params": [
+        "x",
+        "group",
+        "by",
+        "n",
+        "missing",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "print",
+      "class": "coverages",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "print",
+      "class": "covr_annotation",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "print",
+      "class": "covr_error",
+      "params": [
+        "x",
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "print",
+      "class": "covr_markdown",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "value",
+      "class": "coverage",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "value",
+      "class": "default",
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  ]
+}

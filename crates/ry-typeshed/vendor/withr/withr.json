@@ -2,21 +2,65 @@
   "schema_version": "2",
   "package": "withr",
   "version": "0.0.1",
+  "partial": true,
   "functions": {
     "with_file": {
-      "params": ["new", "code"],
-      "injects": [{"into": ["code"], "strings_from": ["new"]}],
-      "return": {"mode": "opaque", "length": "unknown"}
+      "params": [
+        "new",
+        "code"
+      ],
+      "injects": [
+        {
+          "into": [
+            "code"
+          ],
+          "strings_from": [
+            "new"
+          ]
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      }
     },
     "with_tempdir": {
-      "params": ["code", "clean"],
-      "injects": [{"into": ["code"]}],
-      "return": {"mode": "opaque", "length": "unknown"}
+      "params": [
+        "code",
+        "clean"
+      ],
+      "injects": [
+        {
+          "into": [
+            "code"
+          ]
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      }
     },
     "with_tempfile": {
-      "params": ["new", "code", "clean"],
-      "injects": [{"into": ["code"], "strings_from": ["new"]}],
-      "return": {"mode": "opaque", "length": "unknown"}
+      "params": [
+        "new",
+        "code",
+        "clean"
+      ],
+      "injects": [
+        {
+          "into": [
+            "code"
+          ],
+          "strings_from": [
+            "new"
+          ]
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown"
+      }
     }
   }
 }

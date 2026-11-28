@@ -34,7 +34,9 @@ const CHARACTER: &[Mode] = &[Mode::Character];
 /// leave the result unknown. Before #866, logical input read as double;
 /// before r-typeshed#125, `sum(1i)` read as double, `max("a")` as
 /// unknown, and `pmax(c(TRUE, FALSE))` as integer (R: logical, but
-/// `pmax(TRUE, FALSE)` is integer, so the rule makes no claim).
+/// `pmax(TRUE, FALSE)` is integer, so the rule makes no claim). Integer
+/// `sum()` may overflow to double (`sum(2147483647L, 1L)`), so its
+/// integer cell is integer or double (r-typeshed 0.7.0, #922).
 #[test]
 fn input_mode_follows_each_input_mode() {
     let inputs = [
@@ -45,7 +47,10 @@ fn input_mode_follows_each_input_mode() {
         "c(\"1\", \"2\")",
     ];
     for (call, row) in [
-        ("sum", [INTEGER, INTEGER, DOUBLE, COMPLEX, UNKNOWN]),
+        (
+            "sum",
+            [INTEGER, INTEGER_OR_DOUBLE, DOUBLE, COMPLEX, UNKNOWN],
+        ),
         ("cumsum", [INTEGER, INTEGER, DOUBLE, COMPLEX, DOUBLE]),
         ("diff", [INTEGER, INTEGER, DOUBLE, COMPLEX, UNKNOWN]),
         ("abs", [INTEGER, INTEGER, DOUBLE, DOUBLE, UNKNOWN]),
@@ -74,7 +79,7 @@ fn input_mode_follows_each_input_mode() {
 #[test]
 fn input_mode_joins_the_data_arguments() {
     for (src, expected) in [
-        ("x <- sum(1:3, na.rm = TRUE)", INTEGER),
+        ("x <- sum(1:3, na.rm = TRUE)", INTEGER_OR_DOUBLE),
         ("x <- max(1L, 2.5)", DOUBLE),
         ("x <- max(2.5, 1L)", DOUBLE),
         ("x <- max(TRUE, \"a\")", CHARACTER),
@@ -89,7 +94,9 @@ fn input_mode_joins_the_data_arguments() {
         ("x <- min(seq_len(0))", DOUBLE),
         ("x <- max(character(0))", CHARACTER),
         ("x <- max(integer(0), 1L)", INTEGER),
-        ("x <- sum(integer(0))", INTEGER),
+        // R: integer `0L`, but the stub maps all integer data to integer
+        // or double for overflow, and declares no separate empty mode.
+        ("x <- sum(integer(0))", INTEGER_OR_DOUBLE),
         ("x <- max()", DOUBLE),
         // Data that may be empty, or all `NA` under `na.rm = TRUE`.
         ("x <- max(c(TRUE, NA), na.rm = TRUE)", INTEGER_OR_DOUBLE),

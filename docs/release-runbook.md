@@ -42,15 +42,22 @@ Before starting any release:
 3. **Ledger reconciled:** `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json docs/corpus/tidyverse-0.7.1.json`
    reports agreement.
 
-4. **CHANGELOG reviewed:** verify the new version's section is complete and
+4. **Typeshed vendored from a tag:** the `commit:` in
+   `crates/ry-typeshed/vendor/SOURCE` must be a tagged r-typeshed release
+   with `tree-state: clean`. In an r-typeshed checkout,
+   `git tag --points-at <commit>` must print a `v*` tag. If it does not,
+   tag r-typeshed first and re-vendor with
+   `scripts/sync_typeshed.sh <checkout at that tag>`.
+
+5. **CHANGELOG reviewed:** verify the new version's section is complete and
    dated, including changes since the previous release and any upgrade notes.
    Check the comparison links. For an extension release, also check
    `editors/code/CHANGELOG.md`.
 
-5. **Version bumped:** core workspace `Cargo.toml` to the target version
+6. **Version bumped:** core workspace `Cargo.toml` to the target version
    (e.g. `0.10.0`). Editor extension versions are independent.
 
-6. **Zed binary integrity verified:** run
+7. **Zed binary integrity verified:** run
    `cargo test --manifest-path editors/zed/Cargo.toml` and
    `python3 -m unittest discover -s scripts/release -p 'test_*.py'` to check
    download verification and sidecar generation. Archive `.sha256` files

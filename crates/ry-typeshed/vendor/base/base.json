@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.37",
+  "version": "0.0.38",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2648,7 +2648,7 @@
       "return": {
         "mode": "character",
         "length": "arg0",
-        "na": false
+        "na": true
       }
     },
     "Sys.time": {
@@ -2672,7 +2672,18 @@
         "length": "arg0",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "complex": "double"}}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "x"
+        ],
+        "modes": {
+          "logical": "integer",
+          "integer": "integer",
+          "double": "double",
+          "complex": "double"
+        }
+      }
     },
     "acos": {
       "params": [
@@ -3196,7 +3207,11 @@
         "length": "unknown",
         "na": false
       },
-      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
+      "return_length": {
+        "kind": "param_value",
+        "param": "length",
+        "default_length": 0
+      }
     },
     "charmatch": {
       "params": [
@@ -3218,7 +3233,7 @@
       "return": {
         "mode": "character",
         "length": "arg2",
-        "na": false
+        "na": true
       }
     },
     "chisq.test": {
@@ -3436,7 +3451,18 @@
         "length": "arg0",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "double"}}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "x"
+        ],
+        "modes": {
+          "logical": "integer",
+          "integer": "integer",
+          "double": "double",
+          "character": "double"
+        }
+      }
     },
     "cummin": {
       "params": [
@@ -3447,7 +3473,18 @@
         "length": "arg0",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "double"}}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "x"
+        ],
+        "modes": {
+          "logical": "integer",
+          "integer": "integer",
+          "double": "double",
+          "character": "double"
+        }
+      }
     },
     "cumprod": {
       "params": [
@@ -3472,7 +3509,19 @@
         "length": "arg0",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "complex": "complex", "character": "double"}}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "x"
+        ],
+        "modes": {
+          "logical": "integer",
+          "integer": "integer",
+          "double": "double",
+          "complex": "complex",
+          "character": "double"
+        }
+      }
     },
     "cut": {
       "params": [
@@ -3691,7 +3740,18 @@
         "length": "unknown",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"logical": "integer", "integer": "integer", "double": "double", "complex": "complex"}}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "x"
+        ],
+        "modes": {
+          "logical": "integer",
+          "integer": "integer",
+          "double": "double",
+          "complex": "complex"
+        }
+      }
     },
     "diff.ts": {
       "params": [
@@ -3844,7 +3904,11 @@
         "length": "unknown",
         "na": false
       },
-      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
+      "return_length": {
+        "kind": "param_value",
+        "param": "length",
+        "default_length": 0
+      }
     },
     "dpois": {
       "params": [
@@ -3917,8 +3981,16 @@
       ],
       "return": {
         "mode": "logical",
-        "length": "arg0",
-        "na": false
+        "length": "unknown",
+        "na": true
+      },
+      "return_length": {
+        "kind": "recycled_values",
+        "value_params": [
+          "x",
+          "suffix"
+        ],
+        "any_value_zero": "zero"
       }
     },
     "environment": {
@@ -4084,7 +4156,7 @@
       ],
       "return": {
         "mode": "logical",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
       }
     },
@@ -4494,7 +4566,14 @@
         "length": "test",
         "na": true
       },
-      "return_mode": {"kind": "test_template", "test": "test", "values": ["yes", "no"]}
+      "return_mode": {
+        "kind": "test_template",
+        "test": "test",
+        "values": [
+          "yes",
+          "no"
+        ]
+      }
     },
     "inherits": {
       "params": [
@@ -4529,7 +4608,11 @@
         "length": "unknown",
         "na": false
       },
-      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
+      "return_length": {
+        "kind": "param_value",
+        "param": "length",
+        "default_length": 0
+      }
     },
     "interaction": {
       "params": [
@@ -5080,12 +5163,20 @@
       ],
       "return": {
         "mode": "union",
-        "length": "arg0",
+        "length": "unknown",
         "members": [
           "double",
           "complex"
         ],
         "na": true
+      },
+      "return_length": {
+        "kind": "recycled_values",
+        "value_params": [
+          "x",
+          "base"
+        ],
+        "any_value_zero": "zero"
       }
     },
     "log10": {
@@ -5148,7 +5239,11 @@
         "length": "unknown",
         "na": false
       },
-      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
+      "return_length": {
+        "kind": "param_value",
+        "param": "length",
+        "default_length": 0
+      }
     },
     "ls": {
       "params": [],
@@ -5279,7 +5374,19 @@
         "length": "1",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "character"}, "empty": "double"}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "..."
+        ],
+        "modes": {
+          "logical": "integer",
+          "integer": "integer",
+          "double": "double",
+          "character": "character"
+        },
+        "empty": "double"
+      }
     },
     "mcnemar.test": {
       "params": [
@@ -5376,7 +5483,19 @@
         "length": "1",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "character"}, "empty": "double"}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "..."
+        ],
+        "modes": {
+          "logical": "integer",
+          "integer": "integer",
+          "double": "double",
+          "character": "character"
+        },
+        "empty": "double"
+      }
     },
     "missing": {
       "params": [
@@ -5599,7 +5718,11 @@
         "length": "unknown",
         "na": false
       },
-      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
+      "return_length": {
+        "kind": "param_value",
+        "param": "length",
+        "default_length": 0
+      }
     },
     "nzchar": {
       "params": [
@@ -5975,7 +6098,17 @@
         "length": "unknown",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"integer": "integer", "double": "double", "character": "character"}}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "..."
+        ],
+        "modes": {
+          "integer": "integer",
+          "double": "double",
+          "character": "character"
+        }
+      }
     },
     "pmin": {
       "params": [
@@ -5986,7 +6119,17 @@
         "length": "unknown",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"integer": "integer", "double": "double", "character": "character"}}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "..."
+        ],
+        "modes": {
+          "integer": "integer",
+          "double": "double",
+          "character": "character"
+        }
+      }
     },
     "pnorm": {
       "params": [
@@ -6359,15 +6502,35 @@
         "length": "2",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"logical": "integer", "integer": "integer", "double": "double", "character": "character"}, "empty": "double"}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "..."
+        ],
+        "modes": {
+          "logical": "integer",
+          "integer": "integer",
+          "double": "double",
+          "character": "character"
+        },
+        "empty": "double",
+        "drop_controls": [
+          "na.rm",
+          "finite"
+        ]
+      }
     },
     "rank": {
       "params": [
         "x"
       ],
       "return": {
-        "mode": "double",
+        "mode": "union",
         "length": "arg0",
+        "members": [
+          "integer",
+          "double"
+        ],
         "na": true
       }
     },
@@ -6423,7 +6586,11 @@
         "length": "unknown",
         "na": false
       },
-      "return_length": {"kind": "param_value", "param": "length", "default_length": 0}
+      "return_length": {
+        "kind": "param_value",
+        "param": "length",
+        "default_length": 0
+      }
     },
     "rbind": {
       "params": [
@@ -6743,12 +6910,20 @@
       ],
       "return": {
         "mode": "union",
-        "length": "arg0",
+        "length": "unknown",
         "members": [
           "double",
           "complex"
         ],
         "na": true
+      },
+      "return_length": {
+        "kind": "recycled_values",
+        "value_params": [
+          "x",
+          "digits"
+        ],
+        "any_value_zero": "zero"
       }
     },
     "rowMeans": {
@@ -6800,9 +6975,18 @@
       "return": {
         "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["x"], "modes": {"integer": "integer", "double": "double"}}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "x"
+        ],
+        "modes": {
+          "integer": "integer",
+          "double": "double"
+        }
+      }
     },
     "rpois": {
       "params": [
@@ -6985,7 +7169,11 @@
         "length": "unknown",
         "na": false
       },
-      "return_length": {"kind": "param_value", "param": "length.out", "default_length": 0}
+      "return_length": {
+        "kind": "param_value",
+        "param": "length.out",
+        "default_length": 0
+      }
     },
     "set.seed": {
       "params": [
@@ -7065,12 +7253,20 @@
       ],
       "return": {
         "mode": "union",
-        "length": "arg0",
+        "length": "unknown",
         "members": [
           "double",
           "complex"
         ],
         "na": true
+      },
+      "return_length": {
+        "kind": "recycled_values",
+        "value_params": [
+          "x",
+          "digits"
+        ],
+        "any_value_zero": "zero"
       }
     },
     "sin": {
@@ -7290,8 +7486,16 @@
       ],
       "return": {
         "mode": "logical",
-        "length": "arg0",
-        "na": false
+        "length": "unknown",
+        "na": true
+      },
+      "return_length": {
+        "kind": "recycled_values",
+        "value_params": [
+          "x",
+          "prefix"
+        ],
+        "any_value_zero": "zero"
       }
     },
     "step": {
@@ -7490,7 +7694,24 @@
         "length": "1",
         "na": true
       },
-      "return_mode": {"kind": "input_mode", "params": ["..."], "modes": {"logical": "integer", "integer": "integer", "double": "double", "complex": "complex"}}
+      "return_mode": {
+        "kind": "input_mode",
+        "params": [
+          "..."
+        ],
+        "modes": {
+          "logical": "integer",
+          "integer": [
+            "integer",
+            "double"
+          ],
+          "double": "double",
+          "complex": "complex"
+        },
+        "drop_controls": [
+          "na.rm"
+        ]
+      }
     },
     "summary": {
       "params": [
@@ -22214,6 +22435,53 @@
         "right",
         "dig.lab",
         "ordered_result",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "confint",
+      "class": "MPLfree1way",
+      "params": [
+        "object",
+        "parm",
+        "level",
+        "test",
+        "what",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "print",
+      "class": "MPLfree1way",
+      "params": [
+        "x",
+        "test",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    {
+      "generic": "summary",
+      "class": "MPLfree1way",
+      "params": [
+        "object",
+        "test",
+        "alternative",
+        "tol",
         "..."
       ],
       "return": {

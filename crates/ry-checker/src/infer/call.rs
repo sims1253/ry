@@ -1161,7 +1161,33 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> Option<RType> {
-        let signature = self.resolve_typeshed_sig(name).or_else(|| {
+        // A lexical or project function of the bare name is the callee, not
+        // a package's: cli's own `new_class(class_name, ...)` must not be
+        // checked against S7's signature. Like ordinary call resolution, a
+        // binding that may hold a function shadows; known data does not,
+        // since R's call-position lookup skips it.
+        let bare = !name.contains("::");
+        if bare {
+            let shadows = |spelling: &str| {
+                scope.is_lexical_function(spelling)
+                    || scope.binding_may_be_callee(spelling)
+                    || self.fn_table.functions.binds(spelling)
+            };
+            if shadows(lookup_name) || shadows(&format!("`{lookup_name}`")) {
+                return None;
+            }
+        }
+        let resolved = self.resolve_typeshed_sig(name);
+        // A signature found only by scanning unattached packages is a guess
+        // at the callee: it may inject names, but it does not prove the
+        // call's arity (`Person := new_class()` without S7 attached).
+        let speculative = resolved.is_none();
+        let signature = resolved.or_else(|| {
+            // Only a bare call can reach another package's stub;
+            // `stats::new_class()` is not S7's.
+            if !bare {
+                return None;
+            }
             self.available_package_names()
                 .into_iter()
                 .find_map(|package| {
@@ -1256,7 +1282,9 @@ impl Checker {
                 },
             );
         }
-        self.check_typeshed_call_arguments(lookup_name, &signature, args, &arg_types, span);
+        if !speculative {
+            self.check_typeshed_call_arguments(lookup_name, &signature, args, &arg_types, span);
+        }
         Some(self.apply_sig(&signature, &arg_types, args))
     }
 

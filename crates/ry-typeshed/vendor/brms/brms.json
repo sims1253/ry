@@ -2,6 +2,7 @@
   "schema_version": "2",
   "package": "brms",
   "version": "0.0.1",
+  "partial": true,
   "functions": {
     "brm": {
       "params": [

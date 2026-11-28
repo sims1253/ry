@@ -328,7 +328,9 @@ fn dbplyr_translation_helpers_capture_sql_expressions() {
     // `translate_sql` is the exported quoting entry point; the test-local
     // `expect_translation` helpers were removed from the stub because they
     // are not part of dbplyr's namespace (the audit enforces that).
-    let diags = check("library(dbplyr)\ntranslate_sql(x + y)\nmissing_after\n");
+    // Qualified, so the partial dbplyr stub is not attached and an unbound
+    // name after the call still reports (#926).
+    let diags = check("dbplyr::translate_sql(x + y)\nmissing_after\n");
     assert!(
         diags.iter().all(|diagnostic| {
             diagnostic.code != "RY010"
@@ -1147,10 +1149,10 @@ fn exported_html_tags_are_values_under_package_lookup() {
                 .any(|d| d.code == "RY010" && d.message.contains("`tags`")),
             "{diagnostics:?}"
         );
+        // Both stubs are partial: an unlisted name may be an export of
+        // the attached package (#926).
         assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "RY010" && d.message.contains("missing_before")),
+            !diagnostics.iter().any(|d| d.code == "RY010"),
             "{diagnostics:?}"
         );
         let diagnostics = check(&format!("library({package})\ntags <- 1L\ntags$div\n"));
@@ -1554,5 +1556,51 @@ fn partial_stub_keeps_unstubbed_exports_silent_while_applying_known_rules() {
     assert!(
         pkg_diags.iter().any(|d| d.code == "RY040"),
         "NAMESPACE import(partialdemo) must still apply known signatures: {pkg_diags:?}"
+    );
+}
+
+/// A project's own function named like a stub that declares `injects`
+/// is the callee (cli's `new_class(class_name, ...)` in `R/aaa-utils.R`),
+/// so its call is not checked against S7's `new_class` signature. A
+/// qualified call still is.
+#[test]
+fn project_functions_shadow_injecting_stub_signatures() {
+    // S7 is attached, so without the shadowing guard its signature would
+    // apply and report RY090.
+    for source in [
+        "library(S7)\nnew_class <- function(class_name, ...) 1\nnew_class(\"x\", new = 1)\n",
+        "library(S7)\nf <- function() {\n  new_class <- function(class_name, ...) 1\n  new_class(\"x\", new = 1)\n}\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY090"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let backticked =
+        "library(S7)\n`new_class` <- function(class_name, ...) 1\nnew_class(\"x\", new = 1)\n";
+    assert!(
+        check(backticked).iter().all(|d| d.code != "RY090"),
+        "{backticked}"
+    );
+    // Another package's qualified function is not S7's.
+    assert!(
+        check("stats::new_class(\"x\", new = 1)\n")
+            .iter()
+            .all(|d| d.code != "RY090")
+    );
+    // A binding that may hold a function shadows the stub.
+    let hook = "library(S7)\nf <- function(hooks) {\n  new_class <- hooks$new_class\n  new_class(\"x\", new = 1)\n}\n";
+    assert!(check(hook).iter().all(|d| d.code != "RY090"), "{hook}");
+    // A formal may receive a function, so it shadows the stub.
+    let formal = "library(S7)\nf <- function(new_class = 1L) new_class(\"x\", new = 1)\n";
+    assert!(check(formal).iter().all(|d| d.code != "RY090"), "{formal}");
+    // A data binding does not shadow the call: R skips it in call position.
+    let data = "library(S7)\nnew_class <- 1L\nnew_class(\"x\", new = 1)\n";
+    assert!(check(data).iter().any(|d| d.code == "RY090"), "{data}");
+    let diagnostics = check("S7::new_class(\"x\", new = 1)\n");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY090"),
+        "{diagnostics:?}"
     );
 }

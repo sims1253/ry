@@ -80,6 +80,9 @@ pub struct Project {
     prev_loaded: Option<HashSet<String>>,
     /// Whether `refine_and_emit` has completed at least once.
     has_prev_emit: bool,
+    /// A reorder since the last check may change which definition wins
+    /// without dirtying a file; the next check's table comparison decides.
+    reordered: bool,
     /// Function names each file calls (from `call_sites`).
     file_called_fns: HashMap<String, HashSet<String>>,
     /// Actual callable reads during emission include callbacks and aliases
@@ -290,6 +293,7 @@ impl Project {
         if !moved || self.collected_files.is_empty() {
             return;
         }
+        self.reordered = true;
         // Only a name defined in more than one file can change its winner.
         // A name defined twice in one file resolves inside that file's
         // collection.
@@ -462,9 +466,11 @@ impl Project {
         &mut self,
         target_path: &str,
     ) -> Vec<(ry_core::Span, ry_core::types::RType)> {
-        // Every input change marks a path dirty and the check clears the
-        // set, so a clean project's tables and `prev_tables` are current.
+        // Every input change marks a path dirty or, for a reorder, sets
+        // `reordered`, and the check clears both, so a clean project's
+        // tables and `prev_tables` are current.
         let current = self.has_prev_emit
+            && !self.reordered
             && self.dirty_paths.is_empty()
             && self
                 .files
@@ -1165,6 +1171,7 @@ impl Project {
             .collect();
         self.dirty_paths.clear();
         self.invalidated_fns.clear();
+        self.reordered = false;
 
         self.diagnostics = result.clone();
         result
@@ -1597,6 +1604,43 @@ mod tests {
             parse_file("helper.R", "make <- function() \"x\"\n").into(),
         );
         assert!(mode(&mut project).contains("Character"));
+    }
+
+    #[test]
+    fn assignment_types_follow_a_reorder_that_changes_the_winning_method() {
+        let files = [
+            (
+                "class.R",
+                "setGeneric(\"g\", function(x, y) standardGeneric(\"g\"))\nsetClass(\"A\", representation(v = \"numeric\"))\n",
+            ),
+            (
+                "m1.R",
+                "setMethod(\"g\", signature(\"A\", \"character\"), function(x, y) 1L)\n",
+            ),
+            (
+                "m2.R",
+                "setMethod(\"g\", signature(x = \"A\", y = \"character\"), function(x, y) \"chr\")\n",
+            ),
+            ("caller.R", "n <- g(new(\"A\"), \"t\")\n"),
+        ];
+        let project_in = |order: &[usize]| {
+            let mut project = Project::new();
+            for &i in order {
+                let (path, source) = files[i];
+                project.add_file(path.into(), parse_file(path, source));
+            }
+            project
+        };
+        let mode = |project: &mut Project| {
+            format!("{:?}", project.assignment_types_for("caller.R")[0].1.mode)
+        };
+        let mut warm = project_in(&[0, 1, 2, 3]);
+        let before = mode(&mut warm);
+        let swapped = ["class.R", "m2.R", "m1.R", "caller.R"].map(String::from);
+        warm.reorder_files(&swapped);
+        let after = mode(&mut warm);
+        assert_eq!(after, mode(&mut project_in(&[0, 2, 1, 3])));
+        assert_ne!(before, after, "the swap must change the winner");
     }
 
     #[test]

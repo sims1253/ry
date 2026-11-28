@@ -1161,6 +1161,14 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> Option<RType> {
+        // A lexical or project definition of the bare name is the callee,
+        // not a package's: cli's own `new_class(class_name, ...)` must not
+        // be checked against S7's signature.
+        if !name.contains("::")
+            && (scope.get(name).is_some() || self.fn_table.functions.binds(lookup_name))
+        {
+            return None;
+        }
         let signature = self.resolve_typeshed_sig(name).or_else(|| {
             self.available_package_names()
                 .into_iter()

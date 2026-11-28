@@ -439,12 +439,20 @@ fn local_foreach_and_data_masks_keep_outward_callables() {
 
 #[test]
 fn uncertain_local_calls_preserve_argument_diagnostics() {
-    for source in [
-        "local <- 1L; local({ missing_xyz; list(\"field\" <- 1L) })",
-        "library(foreach); local({ missing_xyz; list(\"field\" <- 1L) })",
+    // foreach's stub is partial, so attaching it leaves `missing_xyz`
+    // open (#926); the argument diagnostic still reports.
+    for (source, codes) in [
+        (
+            "local <- 1L; local({ missing_xyz; list(\"field\" <- 1L) })",
+            &["RY010", "RY102"][..],
+        ),
+        (
+            "library(foreach); local({ missing_xyz; list(\"field\" <- 1L) })",
+            &["RY102"][..],
+        ),
     ] {
         let diagnostics = check(source);
-        for code in ["RY010", "RY102"] {
+        for &code in codes {
             assert!(
                 diagnostics.iter().any(|d| d.code == code),
                 "{source}: {diagnostics:?}"

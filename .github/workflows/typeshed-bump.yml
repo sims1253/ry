@@ -37,9 +37,21 @@ jobs:
           tag="$(git -C /tmp/r-typeshed describe --tags --abbrev=0)"
           git -C /tmp/r-typeshed checkout --quiet "$tag"
           echo "TYPESHED_TAG=$tag" >> "$GITHUB_ENV"
+          # Bump only forward: sync when the vendored commit is the tag or
+          # one of its ancestors. A vendored commit ahead of the tag, or one
+          # the clone does not know, would turn the sync into a downgrade.
+          tag_commit=$(git -C /tmp/r-typeshed rev-parse HEAD)
+          vendored=$(sed -n 's/^commit: //p' crates/ry-typeshed/vendor/SOURCE)
+          if [ "$vendored" != "$tag_commit" ] \
+            && ! git -C /tmp/r-typeshed merge-base --is-ancestor "$vendored" "$tag_commit" 2>/dev/null; then
+            echo "Vendored r-typeshed $vendored is not an ancestor of $tag ($tag_commit); skipping the bump."
+            echo "SKIP_BUMP=1" >> "$GITHUB_ENV"
+          fi
       - name: Sync and validate vendored typeshed
+        if: env.SKIP_BUMP != '1'
         run: scripts/sync_typeshed.sh /tmp/r-typeshed
       - name: Push bump branch on drift
+        if: env.SKIP_BUMP != '1'
         run: |
           if git diff --quiet; then
             echo "Vendored typeshed is already current."

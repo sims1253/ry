@@ -1,12 +1,638 @@
 {
   "schema_version": "2",
   "package": "S7",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "functions": {
+    "as_class": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_is_S7": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "class",
+        "arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "convert": {
+      "params": [
+        {
+          "name": "from",
+          "required": true
+        },
+        {
+          "name": "to",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "method": {
+      "params": [
+        {
+          "name": "generic",
+          "required": true
+        },
+        "class",
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "method_explain": {
+      "params": [
+        {
+          "name": "generic",
+          "required": true
+        },
+        "class",
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "method<-": {
+      "params": [
+        {
+          "name": "generic",
+          "required": true
+        },
+        {
+          "name": "signature",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "methods_register": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
     "new_class": {
-      "params": ["name", "parent", "package", "properties", "abstract", "constructor", "validator"],
-      "injects": [{"into": ["name", "properties", "constructor", "validator"], "names": ["self", "private", "super"]}],
-      "return": {"mode": "opaque", "length": "unknown"}
+      "params": [
+        {
+          "name": "name",
+          "required": true
+        },
+        "parent",
+        "package",
+        "properties",
+        "abstract",
+        "constructor",
+        "validator"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injects": [
+        {
+          "into": [
+            "name",
+            "properties",
+            "constructor",
+            "validator"
+          ],
+          "names": [
+            "self",
+            "private",
+            "super"
+          ]
+        }
+      ]
+    },
+    "new_external_generic": {
+      "params": [
+        {
+          "name": "package",
+          "required": true
+        },
+        {
+          "name": "name",
+          "required": true
+        },
+        {
+          "name": "dispatch_args",
+          "required": true
+        },
+        "version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_generic": {
+      "params": [
+        {
+          "name": "name",
+          "required": true
+        },
+        {
+          "name": "dispatch_args",
+          "required": true
+        },
+        "fun"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_object": {
+      "params": [
+        {
+          "name": ".parent",
+          "required": true
+        },
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_property": {
+      "params": [
+        "class",
+        "getter",
+        "setter",
+        "validator",
+        "default",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_S3_class": {
+      "params": [
+        {
+          "name": "class",
+          "required": true
+        },
+        "constructor",
+        "validator"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_union": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "prop": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "prop_exists": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "prop_names": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "prop<-": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        {
+          "name": "name",
+          "required": true
+        },
+        "check",
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "props": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "props<-": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        "check",
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "S4_register": {
+      "params": [
+        {
+          "name": "class",
+          "required": true
+        },
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "S7_class": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "S7_data": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "S7_data<-": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        "check",
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "S7_dispatch": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "S7_inherits": {
+      "params": [
+        {
+          "name": "x",
+          "required": true
+        },
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "S7_object": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_props": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        "...",
+        ".check"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "super": {
+      "params": [
+        {
+          "name": "from",
+          "required": true
+        },
+        {
+          "name": "to",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "valid_eventually": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        {
+          "name": "fun",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "valid_implicitly": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        {
+          "name": "fun",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "validate": {
+      "params": [
+        {
+          "name": "object",
+          "required": true
+        },
+        "recursive",
+        "properties"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "class_Date": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_POSIXct": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_POSIXlt": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_POSIXt": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_any": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_atomic": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_call": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_character": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_complex": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_data.frame": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_double": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_environment": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_expression": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_factor": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_formula": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_function": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_integer": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_language": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_list": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_logical": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_missing": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_name": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_numeric": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_raw": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_vector": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
     }
   }
 }

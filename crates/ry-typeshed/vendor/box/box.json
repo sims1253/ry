@@ -2,8 +2,33 @@
   "schema_version": "2",
   "package": "box",
   "version": "0.0.2",
+  "partial": true,
   "functions": {
-    "use": {"params": ["..."], "eval": {"...": "quoted_expression"}, "return": {"mode": "null", "length": "0", "na": false}},
-    "export": {"params": ["..."], "eval": {"...": "quoted_expression"}, "return": {"mode": "null", "length": "0", "na": false}}
+    "use": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    },
+    "export": {
+      "params": [
+        "..."
+      ],
+      "eval": {
+        "...": "quoted_expression"
+      },
+      "return": {
+        "mode": "null",
+        "length": "0",
+        "na": false
+      }
+    }
   }
 }

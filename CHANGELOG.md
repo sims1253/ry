@@ -12,12 +12,21 @@ All notable changes to ry are documented in this file.
   building from source needs a newer toolchain. Cargo now resolves only
   crate versions published at least 7 days ago, matching the Dependabot
   cooldown (#906).
-- The vendored typeshed moves to r-typeshed c5659cb, whose base stubs now
-  match GNU R: `mean()`, `prod()`, `round()` and `cumprod()` return
-  double or complex, `seq()` integer or double, `names()`, `rownames()`
-  and `colnames()` may be `NULL`, `dim()`, `nrow()` and `ncol()` make no
-  claim, `table()`, `proc.time()`, `ordered()`, `interaction()` and
-  `dist()` declare their classes, and more stubs allow `NA` (#866).
+- The vendored typeshed moves to the tagged r-typeshed v0.7.0 release
+  (073a389). Its base stubs now match GNU R: `mean()`, `prod()`,
+  `round()` and `cumprod()` return double or complex, `seq()` integer or
+  double, `names()`, `rownames()` and `colnames()` may be `NULL`,
+  `dim()`, `nrow()` and `ncol()` make no claim, `table()`, `proc.time()`,
+  `ordered()`, `interaction()` and `dist()` declare their classes, more
+  stubs allow `NA`, `round()`, `signif()`, `log()`, `startsWith()` and
+  `endsWith()` recycle across both value arguments, and `rank()` may be
+  integer or double. It completes the `S7` export inventory and adds a
+  `covr` 4.0.0 stub (#866, #926, #927, #928).
+- The weekly typeshed bump workflow only moves the vendored typeshed
+  forward. When the vendored commit is ahead of the latest r-typeshed
+  tag, it skips the run instead of pushing a downgrade branch. The
+  release runbook now requires releases to vendor a tagged r-typeshed
+  commit (#928).
 - Typeshed stubs can declare `return_mode: {"kind": "input_mode", ...}`:
   the result mode follows the data arguments' mode through a table, as
   in R. The vendored base stubs use it for `sum()`, `abs()`, `max()`,
@@ -39,6 +48,16 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Typeshed stubs can declare a top-level `"partial": true`. Attaching or
+  importing a partial stub keeps the package's other exports open, so a
+  name the stub does not list no longer reports RY010, while the listed
+  signatures, NSE rules and `injects` still apply. `library(S7);
+  class_double` and covr's S7 test package check clean (#926).
+- `ry explain packages [PATHS]...` prints the R libraries and package
+  versions ry resolves, and `ry check --explain-files` reports them on
+  stderr. A `uvr.toml` or `uvr.lock` at a project root adds its
+  `.uvr/library` to the search libraries without setting `R_LIBS`
+  (#812).
 - A ratcheted parse differential in `ecosystem/run.sh --check`: GNU R's
   `parse()` and ry's RY000 must agree on every `.R` file of both corpora
   and base R's sources (12,594 files, no disagreements), so a false
@@ -50,6 +69,26 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- `range(integer(0), finite = FALSE)` is double, as in R: `finite` and
+  `na.rm` are controls, not data, and `finite = TRUE` may drop every
+  element. `sum()` of integers may be integer or double, since it
+  overflows to double (#922).
+- Length intervals overlap as R allows: a non-empty value may have
+  length 1, so rlang-style scalar assertions no longer report RY092 or
+  make later code unreachable. `data.frame(a = integer(0))` has zero
+  rows, `t(df)` is a plain matrix without the data frame's class or
+  columns, and `data.frame(c(a = 1, b = 2))` stays one column (#923).
+- A project or package function named `t`, `list`, or `tryCatch`, or an
+  S3 or S4 method for it, is no longer treated as the base builtin, and
+  a user stub for a `stats`, `utils` or `base` function now applies to
+  qualified calls too (#924).
+- `NAMESPACE` `import(pkg, except = ...)` no longer treats `except` as a
+  package, `S3method(generic, class, fun)` registers `fun`, and
+  `library(pkg, character.only = TRUE)` and `base::library()` attach the
+  same packages everywhere (#925).
+- Installed-package discovery uses only the library tree of the active R
+  minor version, so packages built for another R version are no longer
+  mixed in (#929).
 - Callbacks over a value that may be `NULL`, such as
   `lapply(names(x), function(col) if (col == "a") 1)`, no longer report
   RY001: `NULL` has no elements, so the callback argument is a scalar

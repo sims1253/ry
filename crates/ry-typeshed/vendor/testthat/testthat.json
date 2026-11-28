@@ -2,6 +2,7 @@
   "schema_version": "2",
   "package": "testthat",
   "version": "0.0.2",
+  "partial": true,
   "functions": {
     "describe": {
       "params": [

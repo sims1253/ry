@@ -2,6 +2,7 @@
   "schema_version": "2",
   "package": "posterior",
   "version": "0.0.1",
+  "partial": true,
   "functions": {
     "as_draws_array": {
       "params": [

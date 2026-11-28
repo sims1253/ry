@@ -336,9 +336,12 @@ fn dbplyr_translation_helpers_capture_sql_expressions() {
         }),
         "translation expressions are captured rather than evaluated lexically: {diags:?}"
     );
-    assert!(diags.iter().any(|diagnostic| {
-        diagnostic.code == "RY010" && diagnostic.message.contains("missing_after")
-    }));
+    // dbplyr's stub is partial, so an unlisted name may be an export
+    // once it is attached (#926).
+    assert!(
+        diags.iter().all(|diagnostic| diagnostic.code != "RY010"),
+        "{diags:?}"
+    );
 }
 
 #[test]
@@ -1147,10 +1150,10 @@ fn exported_html_tags_are_values_under_package_lookup() {
                 .any(|d| d.code == "RY010" && d.message.contains("`tags`")),
             "{diagnostics:?}"
         );
+        // Both stubs are partial: an unlisted name may be an export of
+        // the attached package (#926).
         assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == "RY010" && d.message.contains("missing_before")),
+            !diagnostics.iter().any(|d| d.code == "RY010"),
             "{diagnostics:?}"
         );
         let diagnostics = check(&format!("library({package})\ntags <- 1L\ntags$div\n"));
@@ -1554,5 +1557,28 @@ fn partial_stub_keeps_unstubbed_exports_silent_while_applying_known_rules() {
     assert!(
         pkg_diags.iter().any(|d| d.code == "RY040"),
         "NAMESPACE import(partialdemo) must still apply known signatures: {pkg_diags:?}"
+    );
+}
+
+/// A project's own function named like a stub that declares `injects`
+/// is the callee (cli's `new_class(class_name, ...)` in `R/aaa-utils.R`),
+/// so its call is not checked against S7's `new_class` signature. A
+/// qualified call still is.
+#[test]
+fn project_functions_shadow_injecting_stub_signatures() {
+    for source in [
+        "new_class <- function(class_name, ...) 1\nnew_class(\"x\", new = 1)\n",
+        "f <- function() {\n  new_class <- function(class_name, ...) 1\n  new_class(\"x\", new = 1)\n}\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY090"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("S7::new_class(\"x\", new = 1)\n");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY090"),
+        "{diagnostics:?}"
     );
 }

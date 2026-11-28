@@ -32,6 +32,11 @@ All notable changes to ry are documented in this file.
   small fixture. The two targets cross-compiled on x64 runners,
   `aarch64-pc-windows-msvc` and `armv7-unknown-linux-gnueabihf`, are
   skipped (#856).
+- `docs/scalar-guards.md` now records why RY032 stays quiet on a returned
+  `length(x) > 1L || !x %in% modes` guard and on an unknown-length parameter
+  aliased into a loop, and why it keeps warning when `getOption()` may
+  replace a scalar default (#625).
+
 ### Added
 
 - A ratcheted parse differential in `ecosystem/run.sh --check`: GNU R's

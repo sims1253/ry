@@ -393,3 +393,31 @@ fn stopifnot_controls_and_comparison_methods() {
         "`==.foo` <- function(e1, e2) TRUE\nf <- function(xs) { x <- c(1L, 2L); for (i in xs) x <- 1L; if (x == 1L && TRUE) x }"
     ));
 }
+
+/// The #625 boundaries in docs/scalar-guards.md: the returned purrr guard
+/// and tibble's aliased, loop-reassigned `.rows` stay quiet, and the
+/// modelbased option replacement keeps the parameter-guard warning
+/// (`modelbased_option_scalar_guard.R` is its R oracle).
+#[test]
+fn issue_625_boundaries_stay_as_documented() {
+    // purrr R/superseded-simplify.R: the RHS runs only for length <= 1,
+    // so it is never a vector; an empty `type` yields NA (#354).
+    let is_mold = "is_mold <- function(type) {\n  modes <- c(\"numeric\", \"logical\", \"integer\", \"double\", \"complex\", \"character\", \"raw\")\n  length(type) > 1 || (!type %in% modes)\n}\nas_vector <- function(.x, .type) if (is_mold(.type)) 1 else 2\n";
+    assert!(!warns_ry032(is_mold), "{is_mold}");
+    // tibble R/tibble.R: unknown length alone stays quiet, through an
+    // alias and loop reassignment or on the bare parameter.
+    for source in [
+        "f <- function(xs, .rows = NULL) {\n  first_size <- .rows\n  for (j in seq_along(xs)) {\n    current_size <- length(xs[[j]])\n    if (is.null(first_size)) {\n      first_size <- current_size\n    } else if (first_size == 1L && current_size != 1L) {\n      first_size <- current_size\n    }\n  }\n}\n",
+        "f <- function(.rows = NULL, current_size = 2L) {\n  if (is.null(.rows)) NULL else if (.rows == 1L && current_size != 1L) TRUE\n}\n",
+    ] {
+        assert!(!warns_ry032(source), "{source}");
+    }
+    // modelbased R/utils.R: a scalar default proves nothing about callers,
+    // with or without an option that may replace it.
+    for source in [
+        "f <- function(n = 5L) {\n  if (is.null(n) || is.na(n)) FALSE else TRUE\n}\n",
+        "f <- function(n = 5L) {\n  if (!is.null(getOption(\"o\"))) {\n    n <- getOption(\"o\")\n  }\n  if (is.null(n) || is.na(n)) FALSE else TRUE\n}\n",
+    ] {
+        assert!(warns_ry032(source), "{source}");
+    }
+}

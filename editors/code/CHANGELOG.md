@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Stop registering notebook document selectors. The ry language server does
+  not model multi-cell notebooks yet (#931).
+- An unrelated or unchanged setting event during startup no longer starts a
+  second server, which could drop ry's code actions (#919). A command run
+  while the extension shuts down does nothing instead of starting a new
+  server, and shutdown raises no error messages.
+
 ## [0.12.0] - 2026-11-01
 
 - Bundle ry 0.12.0 with 17 new rules (RY112 to RY128) and argument checks

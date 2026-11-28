@@ -69,6 +69,11 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- A project's own function no longer takes the signature of a package
+  function that injects names, such as S7's `new_class()`: cli's
+  `new_class(class_name, ...)` stops reporting RY090 for each method
+  argument. A data binding of the same name still leaves the package
+  function callable, as in R, and `pkg::name()` reaches only `pkg` (#928).
 - `range(integer(0), finite = FALSE)` is double, as in R: `finite` and
   `na.rm` are controls, not data, and `finite = TRUE` may drop every
   element. `sum()` of integers may be integer or double, since it
@@ -186,8 +191,9 @@ All notable changes to ry are documented in this file.
 - A `return()` inside `local(..., envir = environment())` no longer ends
   the enclosing function's scope-exit facts. In GNU R it returns from the
   `eval` call only, and the function keeps running (#897).
-- `sum(c(TRUE, FALSE))`, `sum(1:3)`, `abs(TRUE)`, `max(TRUE)` and
-  `seq(1, 10)` are integer, as in R; all were double. A `double_or_int`
+- `sum(c(TRUE, FALSE))`, `abs(TRUE)`, `max(TRUE)` and `seq(1, 10)` are
+  integer, as in R, and `sum(1:3)` is integer or double, since an integer
+  sum can overflow to double; all were double. A `double_or_int`
   return follows every data argument: any double makes it double, and
   character or complex input leaves it unknown. `seq()` follows
   `seq.default`'s storage rules and is `integer | double` where the mode

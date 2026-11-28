@@ -37,6 +37,10 @@ impl LanguageServer for Backend {
         let supports_related_information = publish_diagnostics
             .and_then(|diagnostics| diagnostics.related_information)
             .unwrap_or(false);
+        let supports_inlay_hint_refresh = workspace
+            .and_then(|w| w.inlay_hint.as_ref())
+            .and_then(|hints| hints.refresh_support)
+            .unwrap_or(false);
         let supports_document_changes = workspace
             .and_then(|w| w.workspace_edit.as_ref())
             .and_then(|edit| edit.document_changes)
@@ -81,6 +85,7 @@ impl LanguageServer for Backend {
         state.supports_document_changes = supports_document_changes;
         state.supports_diagnostic_data = supports_diagnostic_data;
         state.supports_related_information = supports_related_information;
+        state.supports_inlay_hint_refresh = supports_inlay_hint_refresh;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
         state.supports_relative_patterns = supports_relative_patterns;
         state.folder_contexts = folder_contexts;

@@ -59,6 +59,8 @@ pub(super) struct State {
     supports_diagnostic_data: bool,
     /// Whether the client accepts `relatedInformation` on published diagnostics.
     supports_related_information: bool,
+    /// Whether the client re-pulls inlay hints on `workspace/inlayHint/refresh`.
+    supports_inlay_hint_refresh: bool,
     /// Whether `workspace/didChangeWatchedFiles` can be registered dynamically.
     supports_did_change_watched_files: bool,
     supports_relative_patterns: bool,
@@ -813,6 +815,11 @@ impl Backend {
                 };
 
                 let mut guard = cache.lock_owned().await;
+                // A request superseded while it waited for the package lock
+                // would compute a result the final guard discards.
+                if self.state.lock().await.diag_generation != generation {
+                    continue;
+                }
                 let target_path = path.to_string();
                 let stubs_for_task = Arc::clone(&user_stubs);
                 let text_for_task = text.clone();

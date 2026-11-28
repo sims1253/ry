@@ -61,6 +61,10 @@ pub(super) struct IndexWriter {
     deadline: Option<Instant>,
     /// Passes wait for the first scan so they see the workspace bindings.
     indexed: bool,
+    /// The index or workspace changed since the last pass. Hints a client
+    /// pulled before then may lack those bindings, so the next pass asks it
+    /// to pull again.
+    hints_stale: bool,
     /// URIs whose last publication carried diagnostics, keyed by display
     /// path. A URI that stops receiving publications gets an empty one.
     published_uris: HashMap<String, HashSet<Url>>,
@@ -79,6 +83,7 @@ impl IndexWriter {
             pending: HashSet::new(),
             deadline: None,
             indexed: false,
+            hints_stale: false,
             published_uris: HashMap::new(),
         }
     }
@@ -107,6 +112,12 @@ impl IndexWriter {
 
     /// Apply one item of work; false once the writer stopped.
     async fn handle(&mut self, work: Work) -> bool {
+        if matches!(
+            work,
+            Work::Configure { .. } | Work::Folders { .. } | Work::Watched(_)
+        ) {
+            self.hints_stale = true;
+        }
         match work {
             Work::Configure { settings, reload } => {
                 if let Some(settings) = settings {
@@ -709,7 +720,20 @@ impl IndexWriter {
         self.deadline = None;
         let requested = std::mem::take(&mut self.pending);
         match self.publish_diagnostics().await {
-            Some(published) => self.reconcile(&requested, published).await,
+            Some(published) => {
+                self.reconcile(&requested, published).await;
+                // The pass advanced `diag_generation`, so a re-pull misses
+                // the hint cache and sees the current index.
+                if std::mem::take(&mut self.hints_stale)
+                    && self.state.lock().await.supports_inlay_hint_refresh
+                {
+                    // Spawned: the writer must not wait on the client.
+                    let client = self.client.clone();
+                    tokio::spawn(async move {
+                        let _ = client.inlay_hint_refresh().await;
+                    });
+                }
+            }
             // A document changed while the pass ran; the next pass covers
             // these paths too.
             None => self.request(requested).await,

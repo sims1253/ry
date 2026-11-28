@@ -503,3 +503,49 @@ async fn code_actions_omit_ignore_file_for_unsuppressible_diagnostics() {
         "expected no suppression actions for RY112-only range, got: {actions}"
     );
 }
+
+/// Hints pulled before the first index lack the package's other files, so
+/// a client that supports refresh is asked to pull again once the pass
+/// after the index has run, and the re-pull sees the cross-file binding.
+#[tokio::test]
+async fn inlay_hints_refresh_after_the_index_lands() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("DESCRIPTION", "Package: hintpkg\nVersion: 0.1.0\n")
+        .unwrap();
+    fixture.write_file("NAMESPACE", "").unwrap();
+    fixture
+        .write_file("R/helper.R", "make_count <- function() 42L\n")
+        .unwrap();
+    let caller_src = "n <- make_count()\n";
+    fixture.write_file("R/caller.R", caller_src).unwrap();
+    let caller_uri = file_uri(&fixture.path("R/caller.R"));
+    let (mut session, server) = spawn_session(
+        &[fixture.root()],
+        json!({ "workspace": { "inlayHint": { "refreshSupport": true } } }),
+        None,
+    )
+    .await;
+    let _ = harness::open_published(&mut session, &caller_uri, 1, caller_src).await;
+    session
+        .respond_to_request("workspace/inlayHint/refresh", Value::Null)
+        .await
+        .unwrap();
+
+    let hints = session
+        .request(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": {"uri": caller_uri},
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 1, "character": 0}}
+            }),
+        )
+        .await
+        .unwrap();
+    join_session(session, server).await;
+    let label = hints[0]["label"].as_str().expect("string hint label");
+    assert!(
+        label.contains("integer"),
+        "expected cross-file type, got: {label}"
+    );
+}

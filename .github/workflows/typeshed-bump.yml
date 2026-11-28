@@ -23,6 +23,7 @@ permissions:
 jobs:
   bump:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       # The "Push bump branch on drift" step below pushes the bump branch
       # with the credentials this checkout persists, so
@@ -52,7 +53,7 @@ jobs:
           fi
           if [ "$vendored" != "$tag_commit" ] \
             && ! git -C /tmp/r-typeshed merge-base --is-ancestor "$vendored" "$tag_commit" 2>/dev/null; then
-            echo "Vendored r-typeshed $vendored is not an ancestor of $tag ($tag_commit); skipping the bump."
+            echo "::warning::Vendored r-typeshed $vendored is not an ancestor of $tag ($tag_commit); skipping the bump."
             echo "SKIP_BUMP=1" >> "$GITHUB_ENV"
           fi
       - name: Sync and validate vendored typeshed

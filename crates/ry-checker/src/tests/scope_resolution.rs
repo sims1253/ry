@@ -697,17 +697,9 @@ fn within_block_bindings_stay_visible_to_later_expectations() {
 /// diagnostics pinned.
 #[test]
 fn testthat_block_environment_oracle() {
-    let fixture = include_str!("../../testdata/oracle/testthat_block_environment.R");
-    let codes =
-        |source: &str| -> Vec<&'static str> { check(source).iter().map(|d| d.code).collect() };
-    // testthat's stub is partial since r-typeshed 0.7.0, so with
-    // testthat attached `shadowed(2)` may find an unlisted export, and
-    // the RY070 the R oracle confirms stays quiet (#926).
-    assert_eq!(codes(fixture), vec!["RY040"]);
-    // Qualified blocks without the attachment keep the search path closed,
-    // so both pinned diagnostics report.
-    let qualified = fixture
-        .replace("library(testthat)\n", "")
-        .replace("test_that(", "testthat::test_that(");
-    assert_eq!(codes(&qualified), vec!["RY070", "RY040"]);
+    let diagnostics = check(include_str!(
+        "../../testdata/oracle/testthat_block_environment.R"
+    ));
+    let codes: Vec<&str> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec!["RY070", "RY040"], "{diagnostics:?}");
 }

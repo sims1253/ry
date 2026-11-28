@@ -756,6 +756,15 @@
       "severity": "error",
       "message": "invalid multibyte character: source file is not valid UTF-8 (R's parser rejects it)"
     },
+    "lintr::RY010::tests/testthat/dummy_packages/RConfig/tests/testthat.R:5:18": {
+      "package": "lintr",
+      "code": "RY010",
+      "path": "tests/testthat/dummy_packages/RConfig/tests/testthat.R",
+      "line": 5,
+      "column": 18,
+      "severity": "warning",
+      "message": "variable `x` is not bound in this scope"
+    },
     "lintr::RY032::R/get_source_expressions.R:583:7": {
       "package": "lintr",
       "code": "RY032",
@@ -1799,6 +1808,51 @@
       "column": 15,
       "severity": "warning",
       "message": "argument `columns = FALSE` to `stream_read_generic` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `columns` value is silently ignored; forward it as `columns = columns` instead"
+    },
+    "styler::RY010::tests/testthat/public-api/renvpkg/tests/testthat/test-package-xyz.R:2:18": {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/renvpkg/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "severity": "warning",
+      "message": "variable `x` is not bound in this scope"
+    },
+    "styler::RY010::tests/testthat/public-api/xyzpackage-qmd/tests/testthat/test-package-xyz.R:2:18": {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/xyzpackage-qmd/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "severity": "warning",
+      "message": "variable `x` is not bound in this scope"
+    },
+    "styler::RY010::tests/testthat/public-api/xyzpackage-rmd/tests/testthat/test-package-xyz.R:2:18": {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/xyzpackage-rmd/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "severity": "warning",
+      "message": "variable `x` is not bound in this scope"
+    },
+    "styler::RY010::tests/testthat/public-api/xyzpackage-rnw/tests/testthat/test-package-xyz.R:2:18": {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/xyzpackage-rnw/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "severity": "warning",
+      "message": "variable `x` is not bound in this scope"
+    },
+    "styler::RY010::tests/testthat/public-api/xyzpackage/tests/testthat/test-package-xyz.R:2:18": {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/xyzpackage/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "severity": "warning",
+      "message": "variable `x` is not bound in this scope"
     },
     "tensorflow::RY032::R/install.R:428:6": {
       "package": "tensorflow",

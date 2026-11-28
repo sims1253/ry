@@ -3,7 +3,7 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "f8e165592fc2d4067c79a9159f6660bc911c92874f5434284fa483aaac413a14",
+  "source_sha256": "4ee48cf8544a55a7f0d8fc8d5b2e4bc23653f7015b5f7bf241ea0d76b2e62839",
   "ry_commit": "4e4550e584ebf09831acde72c3848961ad8ca7f8",
   "reconciliation": "hermetic",
   "packages": [
@@ -82,7 +82,7 @@
       "repo": "r-lib/lintr",
       "stars": 1289,
       "commit": "990e57870498634ce67d1fa0e53311f385b4b3d4",
-      "diagnostics": 10
+      "diagnostics": 11
     },
     {
       "name": "renv",
@@ -173,7 +173,7 @@
       "repo": "r-lib/styler",
       "stars": 770,
       "commit": "d3d7854df2d73f539b6cb2286dbf5dddaf3e58f6",
-      "diagnostics": 0
+      "diagnostics": 5
     },
     {
       "name": "glue",
@@ -1198,6 +1198,15 @@
       "column": 1,
       "label": "true_positive",
       "audit_group": "upstream-package"
+    },
+    {
+      "package": "lintr",
+      "code": "RY010",
+      "path": "tests/testthat/dummy_packages/RConfig/tests/testthat.R",
+      "line": 5,
+      "column": 18,
+      "label": "false_positive",
+      "audit_group": "type-narrowing"
     },
     {
       "package": "lintr",
@@ -2244,6 +2253,51 @@
       "audit_group": "manual-audit"
     },
     {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/renvpkg/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/xyzpackage-qmd/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/xyzpackage-rmd/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/xyzpackage-rnw/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "styler",
+      "code": "RY010",
+      "path": "tests/testthat/public-api/xyzpackage/tests/testthat/test-package-xyz.R",
+      "line": 2,
+      "column": 18,
+      "label": "false_positive",
+      "audit_group": "test-fixture"
+    },
+    {
       "package": "tensorflow",
       "code": "RY032",
       "path": "R/install.R",
@@ -2398,16 +2452,16 @@
     }
   ],
   "classification": {
-    "false_positive": 129,
+    "false_positive": 135,
     "true_positive": 88
   },
   "audit_group_counts": {
     "reassign-scope": 2,
-    "type-narrowing": 12,
+    "type-narrowing": 13,
     "manual-audit": 49,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 1,
-    "test-fixture": 76,
+    "test-fixture": 81,
     "s3-method-dispatch": 1,
     "delayed-assign": 1,
     "function-shadowing": 0,
@@ -2470,6 +2524,6 @@
     "A project-defined `%<-%` destructures (#706): a project's own `%<-%`/`%->%`, like rlang's R/standalone-zeallot.R copy, now binds its `c(...)` pattern names to unknown as zeallot's does. One reviewed false positive disappears: rlang R/cnd-abort.R:548:7 RY001 (type-narrowing), `if (found_restart)` after `c(tmp_node, tmp_loc, found_restart) %<-% advance_restart(node, loc)` read the `found_restart <- NULL` placeholder. No identity is added and every true positive remains.",
     "A mode test's rejecting arm gives a classless local an unknown value (#710): when ry typed a binding as exactly the mode family a predicate tests (an integer under the `else` of `is.numeric(x)` or under `!is.numeric(x)`), R never enters that arm, so code there no longer reports on the recorded type; only defaulted parameters degraded before, and a binding with a known class keeps its type. One reviewed false positive disappears, RY061 type-narrowing: tensorflow R/generics.R:805:34 (`shape$shape$rank` in the `else` of `is.numeric(shape)`, where the omitted `shape = NULL` default was rebound to an integer in an earlier guard). No identity is added and every true positive remains.",
     "Reporting syntax GNU R rejects (#841) adds one shiny-r RY000 at inst/app_template/tests/testthat/test-shinytest2.R:6:3. The file is a whisker template: `}){{` after `test_that()` is two adjacent expressions, and R 4.6.1's `parse()` stops at the same 6:3 with \"unexpected '{'\". It is a true positive in a template fixture; no other identity changes.",
-    "Vendoring the tagged r-typeshed v0.7.0 (#928) drops 94 reviewed false positives, all RY010 for S7 names the now complete S7 inventory lists, or for names unlisted in stubs that are now partial, such as vctrs (#926): ellmer 63, ggplot2 8, tidyr 8, bslib 5, styler 5, shiny-r 2, flexdashboard 1, learnr 1, lintr 1. No true positive changes. It adds one false positive, purrr RY032 R/deprec-prepend.R:34:7: purrr's `import(vctrs)` now attaches a partial stub, so the unknown search path keeps the scalar-assertion proof boundary (#702) from accepting `stopifnot(is.null(before) || (before > 0 && before <= n))`; group `partial-stub-search-path`."
+    "Vendoring the tagged r-typeshed v0.7.1 (#928) drops 88 reviewed false positives, all RY010 for S7 names the now complete S7 inventory lists, or for names unlisted in stubs that are now partial, such as vctrs (#926): ellmer 63, ggplot2 8, tidyr 8, bslib 5, shiny-r 2, flexdashboard 1, learnr 1. No true positive changes. It adds one false positive, purrr RY032 R/deprec-prepend.R:34:7: purrr's `import(vctrs)` now attaches a partial stub, so the unknown search path keeps the scalar-assertion proof boundary (#702) from accepting `stopifnot(is.null(before) || (before > 0 && before <= n))`; group `partial-stub-search-path`."
   ]
 }

@@ -12,16 +12,18 @@ All notable changes to ry are documented in this file.
   building from source needs a newer toolchain. Cargo now resolves only
   crate versions published at least 7 days ago, matching the Dependabot
   cooldown (#906).
-- The vendored typeshed moves to the tagged r-typeshed v0.7.0 release
-  (073a389). Its base stubs now match GNU R: `mean()`, `prod()`,
+- The vendored typeshed moves to the tagged r-typeshed v0.7.1 release
+  (bfe0c8e). Its base stubs now match GNU R: `mean()`, `prod()`,
   `round()` and `cumprod()` return double or complex, `seq()` integer or
   double, `names()`, `rownames()` and `colnames()` may be `NULL`,
   `dim()`, `nrow()` and `ncol()` make no claim, `table()`, `proc.time()`,
   `ordered()`, `interaction()` and `dist()` declare their classes, more
   stubs allow `NA`, `round()`, `signif()`, `log()`, `startsWith()` and
   `endsWith()` recycle across both value arguments, and `rank()` may be
-  integer or double. It completes the `S7` export inventory and adds a
-  `covr` 4.0.0 stub (#866, #926, #927, #928).
+  integer or double. It completes the `S7` and `testthat` export
+  inventories, so a misspelled name in a package test file reports RY010
+  even when testthat is not installed, and adds a `covr` 4.0.0 stub
+  (#866, #926, #927, #928).
 - The weekly typeshed bump workflow only moves the vendored typeshed
   forward. When the vendored commit is ahead of the latest r-typeshed
   tag, it skips the run instead of pushing a downgrade branch. The

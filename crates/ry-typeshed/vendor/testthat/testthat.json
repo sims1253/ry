@@ -1,9 +1,236 @@
 {
   "schema_version": "2",
   "package": "testthat",
-  "version": "0.0.2",
-  "partial": true,
+  "version": "0.0.3",
   "functions": {
+    "%>%": {
+      "params": [
+        "lhs",
+        "rhs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "announce_snapshot_file": {
+      "params": [
+        "path",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "auto_test": {
+      "params": [
+        "code_path",
+        "test_path",
+        "reporter",
+        "env",
+        "hash"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "auto_test_package": {
+      "params": [
+        "pkg",
+        "reporter",
+        "hash"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "capture_condition": {
+      "params": [
+        "code",
+        "entrace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "capture_error": {
+      "params": [
+        "code",
+        "entrace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "capture_expectation": {
+      "params": [
+        "code",
+        "entrace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "capture_message": {
+      "params": [
+        "code",
+        "entrace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "capture_messages": {
+      "params": [
+        "code"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "capture_output": {
+      "params": [
+        "code",
+        "print",
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "capture_output_lines": {
+      "params": [
+        "code",
+        "print",
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "capture_warning": {
+      "params": [
+        "code",
+        "entrace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "capture_warnings": {
+      "params": [
+        "code",
+        "ignore_deprecation"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_reporter": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "compare": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "compare_file_binary": {
+      "params": [
+        "old",
+        "new"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "compare_file_text": {
+      "params": [
+        "old",
+        "new"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "context": {
+      "params": [
+        "desc"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "context_start_file": {
+      "params": [
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "default_compact_reporter": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "default_reporter": {
+      "params": [
+        "parallel"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
     "describe": {
       "params": [
         {
@@ -19,6 +246,1207 @@
         "mode": "logical",
         "length": "1",
         "na": false
+      }
+    },
+    "edition_get": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "equals": {
+      "params": [
+        "expected",
+        "label",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "equals_reference": {
+      "params": [
+        "file",
+        "label",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "evaluate_promise": {
+      "params": [
+        "code",
+        "print"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "exp_signal": {
+      "params": [
+        "exp"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect": {
+      "params": [
+        "ok",
+        "failure_message",
+        "info",
+        "srcref",
+        "trace",
+        "trace_env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_all_equal": {
+      "params": [
+        "object",
+        "expected"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_all_false": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_all_true": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_condition": {
+      "params": [
+        "object",
+        "regexp",
+        "class",
+        "...",
+        "inherit",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_contains": {
+      "params": [
+        "object",
+        "expected"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_cpp_tests_pass": {
+      "params": [
+        "package"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_disjoint": {
+      "params": [
+        "object",
+        "expected"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_equal": {
+      "params": [
+        "object",
+        "expected",
+        "...",
+        "tolerance",
+        "info",
+        "label",
+        "expected.label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_equal_to_reference": {
+      "params": [
+        "...",
+        "update"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_equivalent": {
+      "params": [
+        "object",
+        "expected",
+        "...",
+        "info",
+        "label",
+        "expected.label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_error": {
+      "params": [
+        "object",
+        "regexp",
+        "class",
+        "...",
+        "inherit",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_failure": {
+      "params": [
+        "expr",
+        "message",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_false": {
+      "params": [
+        "object",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_gt": {
+      "params": [
+        "object",
+        "expected",
+        "label",
+        "expected.label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_gte": {
+      "params": [
+        "object",
+        "expected",
+        "label",
+        "expected.label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_identical": {
+      "params": [
+        "object",
+        "expected",
+        "info",
+        "label",
+        "expected.label",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_in": {
+      "params": [
+        "object",
+        "expected"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_invisible": {
+      "params": [
+        "call",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_is": {
+      "params": [
+        "object",
+        "class",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_known_hash": {
+      "params": [
+        "object",
+        "hash"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_known_output": {
+      "params": [
+        "object",
+        "file",
+        "update",
+        "...",
+        "info",
+        "label",
+        "print",
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_known_value": {
+      "params": [
+        "object",
+        "file",
+        "update",
+        "...",
+        "info",
+        "label",
+        "version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_length": {
+      "params": [
+        "object",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_less_than": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_lt": {
+      "params": [
+        "object",
+        "expected",
+        "label",
+        "expected.label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_lte": {
+      "params": [
+        "object",
+        "expected",
+        "label",
+        "expected.label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_mapequal": {
+      "params": [
+        "object",
+        "expected"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_match": {
+      "params": [
+        "object",
+        "regexp",
+        "perl",
+        "fixed",
+        "...",
+        "all",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_message": {
+      "params": [
+        "object",
+        "regexp",
+        "class",
+        "...",
+        "inherit",
+        "all",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_more_than": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_named": {
+      "params": [
+        "object",
+        "expected",
+        "ignore.order",
+        "ignore.case",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_no_condition": {
+      "params": [
+        "object",
+        "...",
+        "message",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_no_error": {
+      "params": [
+        "object",
+        "...",
+        "message",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_no_failure": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_no_match": {
+      "params": [
+        "object",
+        "regexp",
+        "perl",
+        "fixed",
+        "...",
+        "all",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_no_message": {
+      "params": [
+        "object",
+        "...",
+        "message",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_no_success": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_no_warning": {
+      "params": [
+        "object",
+        "...",
+        "message",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_null": {
+      "params": [
+        "object",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_output": {
+      "params": [
+        "object",
+        "regexp",
+        "...",
+        "info",
+        "label",
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_output_file": {
+      "params": [
+        "object",
+        "file",
+        "update",
+        "...",
+        "info",
+        "label",
+        "print",
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_r6_class": {
+      "params": [
+        "object",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_reference": {
+      "params": [
+        "object",
+        "expected",
+        "info",
+        "label",
+        "expected.label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_s3_class": {
+      "params": [
+        "object",
+        "class",
+        "exact"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_s4_class": {
+      "params": [
+        "object",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_s7_class": {
+      "params": [
+        "object",
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_setequal": {
+      "params": [
+        "object",
+        "expected"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full",
+        "expected": "full"
+      }
+    },
+    "expect_shape": {
+      "params": [
+        "object",
+        "...",
+        "nrow",
+        "ncol",
+        "dim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_silent": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_snapshot": {
+      "params": [
+        "x",
+        "cran",
+        "error",
+        "transform",
+        "variant",
+        "cnd_class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_snapshot_error": {
+      "params": [
+        "x",
+        "class",
+        "cran",
+        "variant"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_snapshot_failure": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_snapshot_file": {
+      "params": [
+        "path",
+        "name",
+        "binary",
+        "cran",
+        "compare",
+        "transform",
+        "variant"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_snapshot_output": {
+      "params": [
+        "x",
+        "cran",
+        "variant"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_snapshot_value": {
+      "params": [
+        "x",
+        "style",
+        "cran",
+        "tolerance",
+        "...",
+        "variant"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_snapshot_warning": {
+      "params": [
+        "x",
+        "class",
+        "cran",
+        "variant"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_success": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_that": {
+      "params": [
+        "object",
+        "condition",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_true": {
+      "params": [
+        "object",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_type": {
+      "params": [
+        "object",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_vector": {
+      "params": [
+        "object",
+        "ptype",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expect_visible": {
+      "params": [
+        "call",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_warning": {
+      "params": [
+        "object",
+        "regexp",
+        "class",
+        "...",
+        "inherit",
+        "all",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "object": "full"
+      }
+    },
+    "expectation": {
+      "params": [
+        "type",
+        "message",
+        "...",
+        "srcref",
+        "trace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "extract_test": {
+      "params": [
+        "location",
+        "path",
+        "package"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fail": {
+      "params": [
+        "message",
+        "info",
+        "srcref",
+        "trace_env",
+        "trace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "find_test_scripts": {
+      "params": [
+        "path",
+        "filter",
+        "invert",
+        "...",
+        "full.names",
+        "start_first"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_reporter": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gives_warning": {
+      "params": [
+        "regexp",
+        "all",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "has_names": {
+      "params": [
+        "expected",
+        "ignore.order",
+        "ignore.case"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.expectation": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_a": {
+      "params": [
+        "class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_checking": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_equivalent_to": {
+      "params": [
+        "expected",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_identical_to": {
+      "params": [
+        "expected",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_informative_error": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_less_than": {
+      "params": [
+        "expected",
+        "label",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_more_than": {
+      "params": [
+        "expected",
+        "label",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_parallel": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_snapshot": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_testing": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
       }
     },
     "it": {
@@ -38,6 +1466,705 @@
         "na": false
       }
     },
+    "local_edition": {
+      "params": [
+        "x",
+        ".env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_mock": {
+      "params": [
+        "...",
+        ".env",
+        ".local_envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_mocked_bindings": {
+      "params": [
+        "...",
+        ".package",
+        ".env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "...": "splice"
+      }
+    },
+    "local_mocked_r6_class": {
+      "params": [
+        "class",
+        "public",
+        "private",
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_mocked_s3_method": {
+      "params": [
+        "generic",
+        "signature",
+        "definition",
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_mocked_s4_method": {
+      "params": [
+        "generic",
+        "signature",
+        "definition",
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_on_cran": {
+      "params": [
+        "on_cran",
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_reproducible_output": {
+      "params": [
+        "width",
+        "crayon",
+        "unicode",
+        "rstudio",
+        "hyperlinks",
+        "lang",
+        ".env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_snapshotter": {
+      "params": [
+        "snap_dir",
+        "reporter",
+        "cleanup",
+        "desc",
+        "fail_on_new",
+        "frame"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_test_context": {
+      "params": [
+        ".env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_test_directory": {
+      "params": [
+        "path",
+        "package",
+        ".env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "make_expectation": {
+      "params": [
+        "x",
+        "expectation"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mock_output_sequence": {
+      "params": [
+        "...",
+        "recycle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "...": "splice"
+      }
+    },
+    "new_expectation": {
+      "params": [
+        "type",
+        "message",
+        "...",
+        "srcref",
+        "trace",
+        ".subclass"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "not": {
+      "params": [
+        "f"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pass": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "prints_text": {
+      "params": [
+        "regexp",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "quasi_label": {
+      "params": [
+        "quo",
+        "label",
+        "arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "run_cpp_tests": {
+      "params": [
+        "package"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_max_fails": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_reporter": {
+      "params": [
+        "reporter"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_state_inspector": {
+      "params": [
+        "callback",
+        "tolerance"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setup": {
+      "params": [
+        "code",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "code": "full"
+      }
+    },
+    "show_failure": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "shows_message": {
+      "params": [
+        "regexp",
+        "all",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "simulate_test_env": {
+      "params": [
+        "package",
+        "path"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip": {
+      "params": [
+        "message"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_if": {
+      "params": [
+        "condition",
+        "message"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_if_not": {
+      "params": [
+        "condition",
+        "message"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_if_not_installed": {
+      "params": [
+        "pkg",
+        "minimum_version"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_if_offline": {
+      "params": [
+        "host"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_if_translated": {
+      "params": [
+        "msgid"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_on_appveyor": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_on_bioc": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_on_ci": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_on_covr": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_on_cran": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_on_os": {
+      "params": [
+        "os",
+        "arch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_on_travis": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skip_unless_r": {
+      "params": [
+        "spec"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "snapshot_accept": {
+      "params": [
+        "files",
+        "path"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "snapshot_download_gh": {
+      "params": [
+        "repository",
+        "run_id",
+        "dest_dir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "snapshot_reject": {
+      "params": [
+        "files",
+        "path"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "snapshot_review": {
+      "params": [
+        "files",
+        "path",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "source_dir": {
+      "params": [
+        "path",
+        "pattern",
+        "env",
+        "chdir",
+        "wrap",
+        "shuffle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "source_file": {
+      "params": [
+        "path",
+        "env",
+        "chdir",
+        "desc",
+        "wrap",
+        "shuffle",
+        "error_call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "source_test_helpers": {
+      "params": [
+        "path",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "source_test_setup": {
+      "params": [
+        "path",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "source_test_teardown": {
+      "params": [
+        "path",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "succeed": {
+      "params": [
+        "message",
+        "info"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "takes_less_than": {
+      "params": [
+        "amount"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "teardown": {
+      "params": [
+        "code",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "code": "full"
+      }
+    },
+    "teardown_env": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_check": {
+      "params": [
+        "package",
+        "reporter",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_dir": {
+      "params": [
+        "path",
+        "filter",
+        "reporter",
+        "env",
+        "...",
+        "load_helpers",
+        "stop_on_failure",
+        "stop_on_warning",
+        "package",
+        "load_package",
+        "shuffle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_env": {
+      "params": [
+        "package"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_example": {
+      "params": [
+        "path",
+        "title"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_examples": {
+      "params": [
+        "path"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_file": {
+      "params": [
+        "path",
+        "reporter",
+        "desc",
+        "package",
+        "shuffle",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_local": {
+      "params": [
+        "path",
+        "reporter",
+        "...",
+        "load_package",
+        "shuffle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_package": {
+      "params": [
+        "package",
+        "reporter",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
     "test_path": {
       "params": [
         "..."
@@ -48,6 +2175,17 @@
         "na": false
       },
       "source_relative_path_arg": 0
+    },
+    "test_rd": {
+      "params": [
+        "rd",
+        "title"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
     },
     "test_that": {
       "params": [
@@ -65,6 +2203,253 @@
         "length": "1",
         "na": false
       }
+    },
+    "testing_package": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testthat_example": {
+      "params": [
+        "filename"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testthat_examples": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testthat_print": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testthat_tolerance": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "throws_error": {
+      "params": [
+        "regexp",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "try_again": {
+      "params": [
+        "times",
+        "code"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "code": "full"
+      }
+    },
+    "use_catch": {
+      "params": [
+        "dir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "verify_output": {
+      "params": [
+        "path",
+        "code",
+        "width",
+        "crayon",
+        "unicode",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "watch": {
+      "params": [
+        "path",
+        "callback",
+        "pattern",
+        "hash"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "with_mock": {
+      "params": [
+        "...",
+        ".env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "with_mocked_bindings": {
+      "params": [
+        "code",
+        "...",
+        ".package"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {
+        "...": "splice"
+      }
+    },
+    "with_reporter": {
+      "params": [
+        "reporter",
+        "code",
+        "start_end_reporter"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "CheckReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CompactProgressReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "DebugReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "FailReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "JunitReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ListReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "LlmReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "LocationReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "MinimalReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "MultiReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ParallelProgressReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ProgressReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Reporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "RStudioReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "SilentReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "SlowReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StopReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "SummaryReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "TapReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "TeamcityReporter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
     }
   }
 }

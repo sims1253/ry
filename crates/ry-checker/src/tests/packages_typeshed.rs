@@ -1586,6 +1586,10 @@ fn project_functions_shadow_injecting_stub_signatures() {
             .iter()
             .all(|d| d.code != "RY090")
     );
+    // A binding that may hold a function shadows the stub.
+    let hook =
+        "f <- function(hooks) {\n  new_class <- hooks$new_class\n  new_class(\"x\", new = 1)\n}\n";
+    assert!(check(hook).iter().all(|d| d.code != "RY090"), "{hook}");
     // A data binding does not shadow the call: R skips it in call position.
     let data = "library(S7)\nnew_class <- 1L\nnew_class(\"x\", new = 1)\n";
     assert!(check(data).iter().any(|d| d.code == "RY090"), "{data}");

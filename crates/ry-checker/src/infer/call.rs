@@ -1163,17 +1163,16 @@ impl Checker {
     ) -> Option<RType> {
         // A lexical or project function of the bare name is the callee, not
         // a package's: cli's own `new_class(class_name, ...)` must not be
-        // checked against S7's signature. Like R's call-position lookup,
-        // only a function or a parameter shadows; a data binding does not.
+        // checked against S7's signature. Like ordinary call resolution, a
+        // binding that may hold a function or a parameter shadows; known data
+        // does not, since R's call-position lookup skips it.
         let bare = !name.contains("::");
         if bare {
             let quoted = format!("`{lookup_name}`");
             let shadows = |spelling: &str| {
                 scope.is_lexical_function(spelling)
-                    || scope.get(spelling).is_some_and(|binding| {
-                        matches!(binding.mode, ry_core::types::Mode::Function)
-                            || scope.is_parameter(spelling)
-                    })
+                    || scope.binding_may_be_callee(spelling)
+                    || scope.is_parameter(spelling)
                     || self.fn_table.functions.binds(spelling)
             };
             if shadows(lookup_name) || shadows(&quoted) {

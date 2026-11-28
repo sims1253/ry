@@ -48,9 +48,12 @@ read_actual_identities <- function(reports_dir, report_prefix = "", audited) {
 #' @return Integer exit status: 0 = pass, 1 = fail.
 reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {
   corpus <- jsonlite::fromJSON(corpus_path, simplifyDataFrame = TRUE)
-  audited <- intersect(processed, corpus$packages$name)
+  # Every processed package must have a ledger entry, even one with no
+  # findings: a package missing from the ledger would otherwise leave the gate
+  # silently.
+  unledgered <- setdiff(processed, corpus$packages$name)
 
-  expected_rows <- corpus$findings[corpus$findings$package %in% audited, , drop = FALSE]
+  expected_rows <- corpus$findings[corpus$findings$package %in% processed, , drop = FALSE]
   expected <- identity_key(
     expected_rows$package,
     expected_rows$code,
@@ -58,7 +61,7 @@ reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {
     expected_rows$line,
     expected_rows$column
   )
-  actual <- read_actual_identities(reports_dir, report_prefix, audited)
+  actual <- read_actual_identities(reports_dir, report_prefix, processed)
 
   missing <- multiset_delta(expected, actual)
   unowned <- multiset_delta(actual, expected)
@@ -86,11 +89,14 @@ reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {
   if (length(unowned)) {
     writeLines(c("ecosystem: unowned hermetic findings appeared:", paste0("  - ", unowned)), stderr())
   }
+  if (length(unledgered)) {
+    writeLines(c("ecosystem: manifest packages missing from the ledger:", paste0("  - ", unledgered)), stderr())
+  }
   if (length(missing_required)) {
     writeLines("ecosystem: a reviewed true_positive finding disappeared.", stderr())
     return(1L)
   }
-  if (length(missing) || length(unowned)) {
+  if (length(missing) || length(unowned) || length(unledgered)) {
     writeLines(sprintf("ecosystem: update %s with the reviewed findings delta", corpus_path), stderr())
     return(1L)
   }

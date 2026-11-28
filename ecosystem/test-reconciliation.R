@@ -111,4 +111,12 @@ cli <- suppressWarnings(system2("Rscript", c(
 stopifnot(cli != 0L)
 cat("  PASS\n")
 
+# A manifest package without a ledger entry must not drop out of the gate,
+# even when its report is clean (#932).
+cat("Test 11: a processed package absent from the ledger -> exit 1\n")
+write_report("pkg", list(tp, fp))
+write_report("other", list())
+stopifnot(reconcile(file.path(tmp, "corpus.json"), tmp, "", c("pkg", "other")) == 1L)
+cat("  PASS\n")
+
 cat("\nAll reconciliation tests passed.\n")

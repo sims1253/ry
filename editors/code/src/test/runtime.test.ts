@@ -9,6 +9,8 @@ type ConfigListener = (event: {
 let configListener: ConfigListener | undefined;
 let currentPath: string[] = [];
 let starts = 0;
+// Each test decides whether the next start hangs until it settles it.
+let holdNextStart = false;
 let releaseFirstStart: (() => void) | undefined;
 let failHeldStart: ((error: unknown) => void) | undefined;
 let toasts = 0;
@@ -73,9 +75,8 @@ mock.module("../common/settings", () => ({
 mock.module("../common/server", () => ({
   startServer: () => {
     starts++;
-    // Hold the first start open so startup configuration events land
-    // while it is in flight, as they do in a real window.
-    if (starts !== 1 && starts !== 3) return Promise.resolve({});
+    if (!holdNextStart) return Promise.resolve({});
+    holdNextStart = false;
     return new Promise((resolve, reject) => {
       releaseFirstStart = () => resolve({});
       failHeldStart = reject;
@@ -94,6 +95,10 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 describe("startup configuration events (#919)", () => {
   it("start one server, then restart only for a changed ry.path", async () => {
+    starts = 0;
+    // Hold the first start open so startup configuration events land
+    // while it is in flight, as they do in a real window.
+    holdNextStart = true;
     const runtime = start({ subscriptions: [] } as never);
     await settle();
     expect(starts).toBe(1);
@@ -118,9 +123,13 @@ describe("startup configuration events (#919)", () => {
 
 describe("shutdown during a start", () => {
   it("raises no error toast when the in-flight start fails", async () => {
-    // Third start overall: held open, then failed after shutdown began.
+    starts = 0;
+    toasts = 0;
+    holdNextStart = true;
     const runtime = start({ subscriptions: [] } as never);
     await settle();
+    // The start is in flight before shutdown begins.
+    expect(starts).toBe(1);
     const shutdown = runtime.shutdown();
     failHeldStart?.(new Error("spawn ENOENT"));
     await shutdown;

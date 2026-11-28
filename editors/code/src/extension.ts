@@ -11,9 +11,6 @@ let bootImmediate: NodeJS.Immediate | null = null;
 let deactivated = false;
 
 function runtime(context: vscode.ExtensionContext): Promise<Runtime> {
-  if (deactivated) {
-    return Promise.reject(new Error("The ry extension is shutting down."));
-  }
   if (runtimePromise == null) {
     const pending: Promise<Runtime> = import("./common/runtime")
       .then((module) => module.start(context))
@@ -32,26 +29,33 @@ function runtime(context: vscode.ExtensionContext): Promise<Runtime> {
 export function activate(context: vscode.ExtensionContext): void {
   deactivated = false;
   const serverId = RY_SETTINGS_NAMESPACE;
+  // A command queued during teardown has nothing to act on.
+  const command = (run: (instance: Runtime) => unknown) => async () => {
+    if (deactivated) return;
+    await run(await runtime(context));
+  };
 
   context.subscriptions.push(
-    vscode.commands.registerCommand(`${serverId}.restart`, async () => {
-      await (await runtime(context)).requestRestart();
-    }),
-    vscode.commands.registerCommand(`${serverId}.showLogs`, async () => {
-      (await runtime(context)).showLogs();
-    }),
-    vscode.commands.registerCommand(`${serverId}.showServerLogs`, async () => {
-      (await runtime(context)).showServerLogs();
-    }),
+    vscode.commands.registerCommand(
+      `${serverId}.restart`,
+      command((instance) => instance.requestRestart()),
+    ),
+    vscode.commands.registerCommand(
+      `${serverId}.showLogs`,
+      command((instance) => instance.showLogs()),
+    ),
+    vscode.commands.registerCommand(
+      `${serverId}.showServerLogs`,
+      command((instance) => instance.showServerLogs()),
+    ),
     vscode.commands.registerCommand(
       `${serverId}.debugInformation`,
-      async () => {
-        await (await runtime(context)).debugInformation();
-      },
+      command((instance) => instance.debugInformation()),
     ),
-    vscode.commands.registerCommand(`${serverId}.explainRule`, async () => {
-      await (await runtime(context)).explainRule();
-    }),
+    vscode.commands.registerCommand(
+      `${serverId}.explainRule`,
+      command((instance) => instance.explainRule()),
+    ),
   );
 
   // Boot the runtime shortly after activation.

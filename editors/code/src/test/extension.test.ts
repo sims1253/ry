@@ -1,9 +1,11 @@
 // Partial VS Code doubles expose only what activation uses.
 /* oxlint-disable typescript/consistent-type-assertions */
-import { expect, it, mock } from "bun:test";
+import { beforeEach, expect, it, mock } from "bun:test";
 
 let starts = 0;
-const rejectFirst: Array<(error: unknown) => void> = [];
+// Each test decides whether the next load hangs until it rejects it.
+let holdNextLoad = false;
+let rejectHeldLoad: ((error: unknown) => void) | undefined;
 const commands: Record<string, () => Promise<void>> = {};
 
 mock.module("vscode", () => ({
@@ -18,8 +20,10 @@ mock.module("vscode", () => ({
 mock.module("../common/runtime", () => ({
   start: () => {
     starts++;
-    if (starts === 1)
-      return new Promise((_, reject) => rejectFirst.push(reject));
+    if (holdNextLoad) {
+      holdNextLoad = false;
+      return new Promise((_, reject) => (rejectHeldLoad = reject));
+    }
     return { showLogs() {}, shutdown: async () => {} };
   },
 }));
@@ -27,26 +31,35 @@ mock.module("../common/runtime", () => ({
 const { activate, deactivate } = await import("../extension");
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
+beforeEach(async () => {
+  await deactivate();
+  starts = 0;
+  holdNextLoad = false;
+  rejectHeldLoad = undefined;
+});
+
 it("a load that deactivate() dropped does not clear a newer load", async () => {
   const context = { subscriptions: [] } as never;
+  holdNextLoad = true;
   activate(context);
   await settle();
+  expect(starts).toBe(1);
   void deactivate();
   activate(context);
   await settle();
-  rejectFirst[0]?.(new Error("old load failed"));
+  rejectHeldLoad?.(new Error("old load failed"));
   await settle();
   await commands["ry.showLogs"]?.();
   expect(starts).toBe(2);
 });
 
-it("a command queued during deactivate() boots no second runtime", async () => {
+it("a command queued during deactivate() does nothing", async () => {
   const context = { subscriptions: [] } as never;
   activate(context);
   await settle();
-  const before = starts;
+  expect(starts).toBe(1);
   const teardown = deactivate();
-  await expect(commands["ry.showLogs"]?.()).rejects.toThrow("shutting down");
+  await commands["ry.showLogs"]?.();
   await teardown;
-  expect(starts).toBe(before);
+  expect(starts).toBe(1);
 });

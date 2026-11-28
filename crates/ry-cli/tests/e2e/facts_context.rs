@@ -59,6 +59,7 @@ fn configuration_changes_invalidate_unchanged_source_context() {
             "warn = ['RY040']\n[[rule-overrides]]\npaths = ['R/**']\nignore = ['RY040']\n",
         ),
         ("globals = []\n", "globals = ['ambient']\n"),
+        ("preview = false\n", "preview = true\n"),
         (
             "[reports]\nenabled = false\n",
             "[reports]\nenabled = true\n",

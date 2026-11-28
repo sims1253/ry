@@ -1179,7 +1179,12 @@ impl Checker {
                 return None;
             }
         }
-        let signature = self.resolve_typeshed_sig(name).or_else(|| {
+        let resolved = self.resolve_typeshed_sig(name);
+        // A signature found only by scanning unattached packages is a guess
+        // at the callee: it may inject names, but it does not prove the
+        // call's arity (`Person := new_class()` without S7 attached).
+        let speculative = resolved.is_none();
+        let signature = resolved.or_else(|| {
             // Only a bare call can reach another package's stub;
             // `stats::new_class()` is not S7's.
             if !bare {
@@ -1279,7 +1284,9 @@ impl Checker {
                 },
             );
         }
-        self.check_typeshed_call_arguments(lookup_name, &signature, args, &arg_types, span);
+        if !speculative {
+            self.check_typeshed_call_arguments(lookup_name, &signature, args, &arg_types, span);
+        }
         Some(self.apply_sig(&signature, &arg_types, args))
     }
 

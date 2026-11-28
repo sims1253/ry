@@ -153,10 +153,14 @@ fn purrr_vendor_snapshot() {
     // `useDynLib(purrr, .registration = TRUE)`.
     //
     // Whole-package imports resolve rlang/vctrs functions and constants.
-    // The former RY032 on prepend()'s `before` is gone: its earlier
-    // stopifnot checks the comparison's scalar length and rejects vector
-    // inputs before the later `||`. The exact pinned source and R witness
-    // are retained with the #351 scalar-flow tests.
+    //
+    // deprec-prepend.R:34:7 RY032 — FALSE POSITIVE, back since r-typeshed
+    // 0.7.0 marks the vctrs stub partial. `import(vctrs)` then leaves the
+    // search path open, and the scalar-assertion proof boundary (#702)
+    // no longer accepts the earlier `stopifnot`, which checks the
+    // comparison's scalar length and rejects vector inputs before the
+    // later `||`. #945 tracks restoring the proof; the exact pinned source
+    // and R witness are retained with the #351 scalar-flow tests.
     //
     // progress-bars.R:56:16 RY109 — TRUE POSITIVE, latent. The default
     // `caller_env = caller_env()` in as_progress() references the formal

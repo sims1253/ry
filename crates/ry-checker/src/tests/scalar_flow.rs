@@ -403,7 +403,7 @@ fn issue_625_boundaries_stay_as_documented() {
     // purrr R/superseded-simplify.R: the RHS runs only for length <= 1,
     // so it is never a vector; an empty `type` yields NA (#354).
     let is_mold = "is_mold <- function(type) {\n  modes <- c(\"numeric\", \"logical\", \"integer\", \"double\", \"complex\", \"character\", \"raw\")\n  length(type) > 1 || (!type %in% modes)\n}\nas_vector <- function(.x, .type) if (is_mold(.type)) 1 else 2\n";
-    assert!(!warns_ry032(is_mold));
+    assert!(!warns_ry032(is_mold), "{is_mold}");
     // tibble R/tibble.R: unknown length alone stays quiet, through an
     // alias and loop reassignment or on the bare parameter.
     for source in [

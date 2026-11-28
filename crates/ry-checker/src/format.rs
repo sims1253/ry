@@ -6,9 +6,15 @@
 //! - `github`: GitHub Actions workflow-command annotations.
 //! - `gitlab`: GitLab Code Quality JSON report.
 //! - `junit`: JUnit XML report for CI test aggregation.
+//!
+//! A diagnostic from a preview rule carries a `[preview]` message prefix in
+//! every format except `json`, which instead adds `"preview": true` and
+//! keeps the message as is.
 
+use crate::rules::{self, RuleStatus};
 use crate::{Diagnostic, Related, Severity};
 use serde::Serialize;
+use std::borrow::Cow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -49,8 +55,24 @@ struct JsonDiagnostic<'a> {
     line: usize,
     column: usize,
     confidence: &'a str,
+    /// Present only for preview rules, so stable output is unchanged.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    preview: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     related: Vec<JsonRelated<'a>>,
+}
+
+fn is_preview(d: &Diagnostic) -> bool {
+    rules::status(d.code) == RuleStatus::Preview
+}
+
+/// The message with the `[preview]` label that text formats show.
+fn labelled_message(d: &Diagnostic) -> Cow<'_, str> {
+    if is_preview(d) {
+        Cow::Owned(format!("[preview] {}", d.message))
+    } else {
+        Cow::Borrowed(&d.message)
+    }
 }
 
 /// A related item. The location is omitted, never guessed, when its span
@@ -141,6 +163,7 @@ pub fn render_with_color(
                         line,
                         column: col,
                         confidence: d.confidence.as_str(),
+                        preview: is_preview(d),
                         related: d
                             .related
                             .iter()
@@ -176,7 +199,7 @@ pub fn render_with_color(
                     d.span.line + 1,
                     char_col_for(d, srcs),
                     d.code,
-                    d.message
+                    labelled_message(d)
                 ));
             }
             out
@@ -191,7 +214,7 @@ pub fn render_with_color(
                         Severity::Info => "info",
                     };
                     serde_json::json!({
-                        "description": d.message,
+                        "description": labelled_message(d),
                         "check_name": d.code,
                         "fingerprint": format!("{}:{}:{}", d.path, d.span.start, d.code),
                         "severity": severity,
@@ -235,8 +258,7 @@ pub fn render_with_color(
                     d.path
                 ));
                 // XML-escape the message.
-                let escaped = d
-                    .message
+                let escaped = labelled_message(d)
                     .replace('&', "&amp;")
                     .replace('<', "&lt;")
                     .replace('>', "&gt;")
@@ -289,7 +311,7 @@ fn write_concise_header(
         col,
         styled_severity(d.severity, color),
         styled_code(d.code, color),
-        d.message
+        labelled_message(d)
     );
     col
 }
@@ -518,6 +540,30 @@ mod tests {
         assert_eq!(parsed[0]["code"], "RY001");
         assert_eq!(parsed[0]["severity"], "warning");
         assert_eq!(parsed[0]["confidence"], "medium");
+        assert!(parsed[0].get("preview").is_none(), "{out}");
+    }
+
+    #[test]
+    fn preview_rules_are_labelled_in_every_format() {
+        let preview = vec![diag(rules::TEST_PREVIEW.code, Severity::Warning)];
+        let stable = vec![diag("RY010", Severity::Warning)];
+        let srcs = std::collections::HashMap::new();
+        for format in [
+            OutputFormat::Full,
+            OutputFormat::Concise,
+            OutputFormat::Github,
+            OutputFormat::Gitlab,
+            OutputFormat::Junit,
+        ] {
+            let out = render(&preview, format, &srcs);
+            assert!(out.contains("[preview] msg"), "{format:?}: {out}");
+            let out = render(&stable, format, &srcs);
+            assert!(!out.contains("[preview]"), "{format:?}: {out}");
+        }
+        let out = render(&preview, OutputFormat::Json, &srcs);
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(parsed[0]["preview"], true, "{out}");
+        assert_eq!(parsed[0]["message"], "msg", "{out}");
     }
 
     #[test]

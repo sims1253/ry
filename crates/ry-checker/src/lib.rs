@@ -72,10 +72,13 @@ pub fn build_filter(error: &[String], warn: &[String], ignore: &[String]) -> Sev
     f
 }
 
-/// Convenience: build a [`SeverityFilter`] directly from a
-/// config's `error`, `warn`, `ignore`, `select`, and `extend_select` fields.
+/// Convenience: build a [`SeverityFilter`] directly from a config's
+/// `error`, `warn`, `ignore`, `select`, `extend_select`, and `preview` fields.
 pub fn filter_from_config(cfg: &ry_config::Config) -> SeverityFilter {
     let mut filter = build_filter(&cfg.error, &cfg.warn, &cfg.ignore);
+    if cfg.preview {
+        filter.enable_preview();
+    }
     if let Some(select) = &cfg.select {
         filter.begin_selection();
         for rule in select {

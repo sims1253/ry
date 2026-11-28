@@ -58,7 +58,8 @@ color policy with `--color auto|always|never`. Automatic color respects
 `--output-format json` prints an array of objects with `code`, `severity`,
 `message`, `path`, `line`, `column`, `confidence`, and an optional `related`
 array. Lines and columns are 1-based; columns count Unicode scalar values.
-`related` is omitted when empty. Each item has a `message` and, when its span
+`related` is omitted when empty, and `preview` (always `true`) appears only on
+findings from a [preview rule](rules.md#rule-status). Each item has a `message` and, when its span
 fits the checked source, the `path`, `line`, and `column` of the location;
 ry never guesses a location. A diagnostic carries at most three items.
 

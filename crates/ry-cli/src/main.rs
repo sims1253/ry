@@ -116,6 +116,10 @@ struct CheckArgs {
     /// Always use exit code 0, even if there are error-level diagnostics.
     #[arg(long)]
     exit_zero: bool,
+    /// Enable preview rules: newer rules that may still change. Their
+    /// diagnostics are marked as preview. Same as `preview = true`.
+    #[arg(long)]
+    preview: bool,
     /// Output format. One of: full, concise, json, github, gitlab, junit.
     /// `full` is the default (matches ty); `concise` is available for a
     /// one-line-per-diagnostic view.
@@ -426,6 +430,7 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
                         "code": r.code,
                         "name": r.name,
                         "severity": r.default_severity.as_str(),
+                        "status": r.status.as_str(),
                         "summary": r.summary,
                         "example": {
                             "extension": example.extension,
@@ -446,23 +451,25 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
                 let r = matched[0];
                 let _ = writeln!(buf, "{} ({})", r.code, r.name);
                 let _ = writeln!(buf, "Default severity: {}", r.default_severity);
+                let _ = writeln!(buf, "Status: {}", status_line(r.status));
                 let _ = writeln!(buf);
                 let _ = writeln!(buf, "{}", r.summary);
                 write_rule_example(&mut buf, &r.example());
             } else {
                 let _ = writeln!(
                     buf,
-                    "{:<8} {:<24} {:<10} summary",
-                    "code", "name", "severity"
+                    "{:<8} {:<24} {:<10} {:<8} summary",
+                    "code", "name", "severity", "status"
                 );
                 let _ = writeln!(buf, "{}", "-".repeat(78));
                 for r in &matched {
                     let _ = writeln!(
                         buf,
-                        "{:<8} {:<24} {:<10} {}",
+                        "{:<8} {:<24} {:<10} {:<8} {}",
                         r.code,
                         r.name,
                         r.default_severity.as_str(),
+                        r.status.as_str(),
                         r.summary
                     );
                 }
@@ -471,6 +478,17 @@ fn run_explain_rule(rule: Option<String>, output_format: &str) -> Result<ExitCod
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A rule's status, with how it reaches output.
+fn status_line(status: ry_checker::rules::RuleStatus) -> String {
+    use ry_checker::rules::RuleStatus;
+    let how = match status {
+        RuleStatus::Stable => "on by default",
+        RuleStatus::Preview => "on with `preview = true` or `--preview`; may still change",
+        RuleStatus::OptIn => "off by default; enable with `extend-select` or a severity override",
+    };
+    format!("{} ({how})", status.as_str())
 }
 
 /// The worked example under a single rule's explanation.

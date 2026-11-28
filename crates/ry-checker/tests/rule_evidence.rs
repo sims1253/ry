@@ -25,7 +25,7 @@
 use std::collections::BTreeSet;
 
 use ry_checker::Checker;
-use ry_checker::rules::{RULES, enabled_by_default};
+use ry_checker::rules::{RULES, RuleStatus, enabled_by_default, status};
 use ry_core::RParser;
 
 // -- Shared helpers --------------------------------------------------------
@@ -610,7 +610,7 @@ fn every_rule_has_an_executed_verdict() {
 
 #[test]
 fn verdicts_use_only_allowed_values() {
-    const ALLOWED: &[&str] = &["keep", "fix", "default-off", "retire"];
+    const ALLOWED: &[&str] = &["keep", "fix", "preview", "default-off", "retire"];
     for v in VERDICTS {
         assert!(
             ALLOWED.contains(&v.verdict),
@@ -625,21 +625,20 @@ fn verdicts_use_only_allowed_values() {
 #[test]
 fn default_off_verdicts_match_the_registry() {
     for v in VERDICTS {
-        let registry_enabled = enabled_by_default(v.code);
-        match v.verdict {
-            "default-off" => assert!(
-                !registry_enabled,
-                "{} verdict is default-off but enabled_by_default returns true",
-                v.code
-            ),
-            "keep" | "fix" => assert!(
-                registry_enabled,
-                "{} verdict is {} but enabled_by_default returns false",
-                v.code, v.verdict
-            ),
+        let expected = match v.verdict {
+            "default-off" => RuleStatus::OptIn,
+            "preview" => RuleStatus::Preview,
+            "keep" | "fix" => RuleStatus::Stable,
             "retire" => panic!("{} has retire verdict but is still in RULES", v.code),
             _ => unreachable!(),
-        }
+        };
+        assert_eq!(
+            status(v.code),
+            expected,
+            "{} verdict is {} but the registry disagrees",
+            v.code,
+            v.verdict
+        );
     }
 }
 
@@ -654,8 +653,8 @@ fn reverting_default_off_rules_fails() {
             continue;
         }
         assert!(
-            enabled_by_default(rule.code),
-            "{} must be enabled by default (keep verdict)",
+            rule.status != RuleStatus::OptIn,
+            "{} must not be default-off (keep or preview verdict)",
             rule.code
         );
     }

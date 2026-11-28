@@ -48,6 +48,14 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Inlay hints use the package's cross-file context, as `ry check` does,
+  so `n <- make_count()` shows the return type of a helper defined in
+  another file. After each diagnostics pass, clients that support it are
+  asked to pull hints again, so a caller's hints follow an edited helper.
+  Checking runs off the async runtime, so a long check no longer stalls
+  other LSP requests. Code actions skip diagnostics that cannot be
+  suppressed and offer no `# ry: ignore-file` when nothing in range can
+  be (#930).
 - Typeshed stubs can declare a top-level `"partial": true`. Attaching or
   importing a partial stub keeps the package's other exports open, so a
   name the stub does not list no longer reports RY010, while the listed

@@ -791,6 +791,6 @@
     "A project-defined `%<-%` destructures (#706). No ledger identity changes; the ungated rlang reports lose one RY001 false positive, R/cnd-abort.R:548:7 (`if (found_restart)` after rlang's own standalone-zeallot `%<-%` binds it; also a reviewed false positive in the Posit ledger).",
     "Vendoring the tagged r-typeshed v0.7.0 (#928) drops all 16 `plan-32-33` unowned RY010 identities (ggplot2 R/facet-.R, R/plot-render.R, R/utilities.R; tidyr R/chop.R, R/hoist.R, R/unnest-helper.R, R/unnest-longer.R, R/unnest-wider.R): their names are vctrs exports such as `vec_is_list` that the now partial vctrs stub does not list, which stay open (#926), or S7 names that the now complete S7 inventory lists. It adds one false positive, purrr RY032 R/deprec-prepend.R:34:7 (`is.null(before) || before == 1` after `stopifnot(is.null(before) || (before > 0 && before <= n))`): purrr's `import(vctrs)` now attaches a partial stub, so the search path is unknown and the scalar-assertion proof boundary (#702) no longer accepts the `stopifnot` fact. The guard is correct R; group `partial-stub-search-path`."
   ],
-  "ry_commit": "16afcc12034c8663305be2c0cc921c514bff3552",
+  "ry_commit": "4e4550e584ebf09831acde72c3848961ad8ca7f8",
   "source_sha256": "297ac40e4d9688fc5a5b1925205d5dff7ad42e25fed6bb68da57a64febc8c21b"
 }

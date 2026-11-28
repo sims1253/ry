@@ -95,11 +95,15 @@ pub(super) fn make_ignore_action(
     uri: &Url,
     diag: &LspDiagnostic,
     file: &SourceFile,
+    parser: &mut ry_core::RParser,
 ) -> Option<CodeAction> {
     let text = &file.source;
     let line = diag.range.start.line as usize;
     let line_text = text.lines().nth(line)?;
     let code = diag_code_from_lsp(diag);
+    if !code.is_empty() && !ry_checker::rules::suppressible(&code) {
+        return None;
+    }
 
     let suppressions = ry_checker::parse_suppressions_from_comments(&file.comments, text);
     let already_ignored = suppressions
@@ -173,7 +177,6 @@ pub(super) fn make_ignore_action(
     // become a comment rather than text inside a multiline string or name.
     let mut edited = text.to_string();
     edited.replace_range(line_start_byte..line_end, &new_line);
-    let mut parser = ry_core::RParser::new().ok()?;
     let edited_file = parser.parse(&file.path, &edited).ok()?;
     let marker_col = comment.map_or(line_text.len() + 2, |comment| comment.col);
     if !edited_file

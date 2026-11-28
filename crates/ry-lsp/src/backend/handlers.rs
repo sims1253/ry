@@ -37,6 +37,10 @@ impl LanguageServer for Backend {
         let supports_related_information = publish_diagnostics
             .and_then(|diagnostics| diagnostics.related_information)
             .unwrap_or(false);
+        let supports_inlay_hint_refresh = workspace
+            .and_then(|w| w.inlay_hint.as_ref())
+            .and_then(|hints| hints.refresh_support)
+            .unwrap_or(false);
         let supports_document_changes = workspace
             .and_then(|w| w.workspace_edit.as_ref())
             .and_then(|edit| edit.document_changes)
@@ -81,6 +85,7 @@ impl LanguageServer for Backend {
         state.supports_document_changes = supports_document_changes;
         state.supports_diagnostic_data = supports_diagnostic_data;
         state.supports_related_information = supports_related_information;
+        state.supports_inlay_hint_refresh = supports_inlay_hint_refresh;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
         state.supports_relative_patterns = supports_relative_patterns;
         state.folder_contexts = folder_contexts;
@@ -322,16 +327,24 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        // One quick fix per diagnostic. Lines that already suppress it get
-        // none.
+        // One quick fix per suppressible diagnostic, reusing a single parser
+        // across the request. Lines that already suppress it get none, and
+        // `# ry: ignore-file` is omitted when only unsuppressible codes
+        // (`RY112`/`RY113`) are in range (#930).
         let mut actions: CodeActionResponse = Vec::new();
-        for diag in diagnostics {
-            if let Some(action) = make_ignore_action(&uri, diag, &file) {
-                actions.push(CodeActionOrCommand::CodeAction(action));
+        let has_suppressible = diagnostics.iter().any(|diag| {
+            let code = crate::diagnostics::diag_code_from_lsp(diag);
+            code.is_empty() || ry_checker::rules::suppressible(&code)
+        });
+        if has_suppressible && let Ok(mut parser) = RParser::new() {
+            for diag in diagnostics {
+                if let Some(action) = make_ignore_action(&uri, diag, &file, &mut parser) {
+                    actions.push(CodeActionOrCommand::CodeAction(action));
+                }
             }
         }
 
-        if let Some(action) = make_ignore_file_action(&uri, &file) {
+        if has_suppressible && let Some(action) = make_ignore_file_action(&uri, &file) {
             actions.push(CodeActionOrCommand::CodeAction(action));
         }
 

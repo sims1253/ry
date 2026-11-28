@@ -427,3 +427,185 @@ async fn inlay_hint_does_not_cross_workspace_roots() {
         "root-b's binding leaked: {label}"
     );
 }
+
+/// Inlay hints inside a package reuse cross-file `FnTable` and `WorkspaceContext`
+/// so inferred types for cross-file helpers match `ry check` (#930).
+#[tokio::test]
+async fn inlay_hint_uses_cross_file_package_context() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("DESCRIPTION", "Package: hintpkg\nVersion: 0.1.0\n")
+        .unwrap();
+    fixture.write_file("NAMESPACE", "").unwrap();
+    fixture
+        .write_file("R/helper.R", "make_count <- function() 42L\n")
+        .unwrap();
+    let caller_src = "n <- make_count()\n";
+    fixture.write_file("R/caller.R", caller_src).unwrap();
+    let caller_uri = file_uri(&fixture.path("R/caller.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &caller_uri).await;
+    let _ = harness::open_published(&mut session, &caller_uri, 1, caller_src).await;
+
+    let hints = session
+        .request(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": {"uri": caller_uri},
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 1, "character": 0}}
+            }),
+        )
+        .await
+        .unwrap();
+    join_session(session, server).await;
+    let hints = hints.as_array().expect("expected inlay hints array");
+    assert_eq!(hints.len(), 1, "expected hint for `n`: {hints:?}");
+    let label = hints[0]["label"].as_str().expect("string hint label");
+    assert!(
+        label.contains("integer"),
+        "expected cross-file integer return type, got: {label}"
+    );
+}
+
+/// Code actions must not offer `# ry: ignore-file` or line suppressions when
+/// only unsuppressible directive diagnostics (`RY112`/`RY113`) are in range (#930).
+#[tokio::test]
+async fn code_actions_omit_ignore_file_for_unsuppressible_diagnostics() {
+    let fixture = FixtureProject::empty().unwrap();
+    let src = "x <- 1L # ry: ignore[NOTARULE]\n";
+    fixture.write_file("bad_ignore.R", src).unwrap();
+    let uri = file_uri(&fixture.path("bad_ignore.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let publish = harness::open_published(&mut session, &uri, 1, src).await;
+    let diagnostics = publish["params"]["diagnostics"]
+        .as_array()
+        .expect("diagnostics array")
+        .clone();
+    assert!(
+        diagnostics.iter().any(|d| d["code"] == "RY112"),
+        "expected RY112 diagnostic: {diagnostics:?}"
+    );
+
+    let actions = session
+        .request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 30}},
+                "context": {"diagnostics": diagnostics}
+            }),
+        )
+        .await
+        .unwrap();
+    join_session(session, server).await;
+    assert!(
+        actions.is_null() || actions.as_array().is_some_and(Vec::is_empty),
+        "expected no suppression actions for RY112-only range, got: {actions}"
+    );
+}
+
+/// Hints pulled before the first index lack the package's other files, so
+/// a client that supports refresh is asked to pull again once the pass
+/// after the index has run, and the re-pull sees the cross-file binding.
+#[tokio::test]
+async fn inlay_hints_refresh_after_the_index_lands() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("DESCRIPTION", "Package: hintpkg\nVersion: 0.1.0\n")
+        .unwrap();
+    fixture.write_file("NAMESPACE", "").unwrap();
+    fixture
+        .write_file("R/helper.R", "make_count <- function() 42L\n")
+        .unwrap();
+    let caller_src = "n <- make_count()\n";
+    fixture.write_file("R/caller.R", caller_src).unwrap();
+    let caller_uri = file_uri(&fixture.path("R/caller.R"));
+    let (mut session, server) = spawn_session(
+        &[fixture.root()],
+        json!({ "workspace": { "inlayHint": { "refreshSupport": true } } }),
+        None,
+    )
+    .await;
+    let _ = harness::open_published(&mut session, &caller_uri, 1, caller_src).await;
+    session
+        .respond_to_request("workspace/inlayHint/refresh", Value::Null)
+        .await
+        .unwrap();
+
+    let hints = session
+        .request(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": {"uri": caller_uri},
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 1, "character": 0}}
+            }),
+        )
+        .await
+        .unwrap();
+    join_session(session, server).await;
+    let label = hints[0]["label"].as_str().expect("string hint label");
+    assert!(
+        label.contains("integer"),
+        "expected cross-file type, got: {label}"
+    );
+}
+
+/// Editing an open helper changes its callers' types without touching the
+/// callers, so the pass after the edit asks the client to re-pull hints.
+#[tokio::test]
+async fn editing_a_helper_refreshes_its_callers_hints() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("DESCRIPTION", "Package: hintpkg\nVersion: 0.1.0\n")
+        .unwrap();
+    fixture.write_file("NAMESPACE", "").unwrap();
+    let helper_src = "make_count <- function() 42L\n";
+    fixture.write_file("R/helper.R", helper_src).unwrap();
+    let caller_src = "n <- make_count()\n";
+    fixture.write_file("R/caller.R", caller_src).unwrap();
+    let helper_uri = file_uri(&fixture.path("R/helper.R"));
+    let caller_uri = file_uri(&fixture.path("R/caller.R"));
+    let (mut session, server) = spawn_session(
+        &[fixture.root()],
+        json!({ "workspace": { "inlayHint": { "refreshSupport": true } } }),
+        None,
+    )
+    .await;
+    let _ = harness::open_published(&mut session, &caller_uri, 1, caller_src).await;
+    let _ = harness::open_published(&mut session, &helper_uri, 1, helper_src).await;
+    let hint = |hints: &Value| hints[0]["label"].as_str().unwrap_or_default().to_string();
+    let range = json!({"start": {"line": 0, "character": 0}, "end": {"line": 1, "character": 0}});
+    let before = session
+        .request(
+            "textDocument/inlayHint",
+            json!({"textDocument": {"uri": caller_uri}, "range": range}),
+        )
+        .await
+        .unwrap();
+    assert!(hint(&before).contains("integer"), "before edit: {before:?}");
+
+    // Read everything the opens caused, so only the edit's pass can
+    // supply the refresh awaited below.
+    harness::drain_publications(&mut session, &helper_uri).await;
+    let mark = session.publication_mark();
+    let _ = harness::change_published(
+        &mut session,
+        &helper_uri,
+        2,
+        "make_count <- function() \"x\"\n",
+    )
+    .await;
+    session
+        .respond_to_request_after(mark, "workspace/inlayHint/refresh", Value::Null)
+        .await
+        .unwrap();
+    let after = session
+        .request(
+            "textDocument/inlayHint",
+            json!({"textDocument": {"uri": caller_uri}, "range": range}),
+        )
+        .await
+        .unwrap();
+    join_session(session, server).await;
+    assert!(hint(&after).contains("character"), "after edit: {after:?}");
+}

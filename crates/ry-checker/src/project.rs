@@ -80,6 +80,9 @@ pub struct Project {
     prev_loaded: Option<HashSet<String>>,
     /// Whether `refine_and_emit` has completed at least once.
     has_prev_emit: bool,
+    /// A reorder since the last check may change which definition wins
+    /// without dirtying a file; the next check's table comparison decides.
+    reordered: bool,
     /// Function names each file calls (from `call_sites`).
     file_called_fns: HashMap<String, HashSet<String>>,
     /// Actual callable reads during emission include callbacks and aliases
@@ -290,6 +293,7 @@ impl Project {
         if !moved || self.collected_files.is_empty() {
             return;
         }
+        self.reordered = true;
         // Only a name defined in more than one file can change its winner.
         // A name defined twice in one file resolves inside that file's
         // collection.
@@ -451,6 +455,98 @@ impl Project {
         if set_if_changed(&mut self.external_s3_method_functions, functions) {
             self.mark_all_dirty();
         }
+    }
+
+    /// Infer assignment-site types for one file using the project's full
+    /// cross-file `FnTable`, `ReturnSlots`, and workspace context (#930).
+    /// Brings the Pass 1 and Pass 2 tables current with
+    /// [`Self::check_incremental`] unless the last check left nothing to
+    /// redo, then runs a single assignment-capturing pass over `target_path`.
+    pub fn assignment_types_for(
+        &mut self,
+        target_path: &str,
+    ) -> Vec<(ry_core::Span, ry_core::types::RType)> {
+        if !self.files.iter().any(|(p, _)| p == target_path) {
+            return Vec::new();
+        }
+        // Every input change marks a path dirty or, for a reorder, sets
+        // `reordered`, and the check clears both, so a clean project's
+        // tables and `prev_tables` are current.
+        let current = self.has_prev_emit
+            && !self.reordered
+            && self.dirty_paths.is_empty()
+            && self
+                .files
+                .iter()
+                .all(|(path, _)| self.collected_files.contains_key(path));
+        if !current {
+            let _ = self.check_incremental();
+        }
+        let Some(index) = self.files.iter().position(|(p, _)| p == target_path) else {
+            return Vec::new();
+        };
+        let box_modules = self.build_box_modules();
+        // The tables are taken out for the walk. If it unwinds, a cleared
+        // `has_prev_emit` makes the next call run a full check, which
+        // rebuilds them, instead of trusting the empty ones.
+        self.has_prev_emit = false;
+        let fn_table = Arc::new(std::mem::take(&mut self.fn_table));
+        let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
+        let loaded = Arc::new(std::mem::take(&mut self.loaded));
+
+        let (path, file) = &self.files[index];
+        let mut emitter =
+            Checker::with_shared_tables(path, Arc::clone(&fn_table), Arc::clone(&return_slots));
+        emitter.set_shared_declarations(Arc::clone(&self.declarations));
+        // Only the target's own package pool is needed.
+        let pool = self
+            .source_package(path)
+            .and_then(|package| self.prev_tables.namespaces.get(package));
+        emitter.set_shared_known_vars(Arc::new(pool.map_or_else(
+            || fn_table.known_vars.clone(),
+            |pool| pool.known_vars.clone(),
+        )));
+        emitter.set_namespace_superassigned(pool.map(|pool| Arc::new(pool.superassigned.clone())));
+        emitter.set_shared_loaded(Arc::clone(&loaded));
+        emitter.set_bare_loaded(
+            self.bare_loaded
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| loaded.as_ref().clone()),
+        );
+        emitter.set_user_stubs(Arc::clone(&self.user_stubs));
+        emitter.set_box_modules(box_modules);
+        emitter.set_external_bindings(
+            self.external_bindings
+                .get(path)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        emitter.set_package_facts(self.package_facts.get(path).cloned().unwrap_or_default());
+        emitter.set_imported_from(self.imported_from.get(path).cloned().unwrap_or_default());
+        emitter.set_external_s3_methods(
+            self.external_s3_methods
+                .get(path)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        emitter.set_external_s3_method_functions(
+            self.external_s3_method_functions
+                .get(path)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        emitter.set_load_bindings(self.load_bindings.get(path).cloned().unwrap_or_default());
+        emitter.enable_assignment_capture();
+        emitter.emit_diagnostics(file);
+        let types = emitter.take_assignment_types();
+        drop(emitter);
+
+        self.fn_table = Arc::unwrap_or_clone(fn_table);
+        self.return_slots = Arc::unwrap_or_clone(return_slots);
+        self.loaded = Arc::unwrap_or_clone(loaded);
+        self.has_prev_emit = true;
+        types
     }
 
     pub fn set_load_bindings(
@@ -742,7 +838,7 @@ impl Project {
         affected
     }
 
-    fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
+    fn build_box_modules(&self) -> Arc<crate::box_imports::BoxModules> {
         // Box overlays are keyed by physical identity. A native path keeps
         // a lossy display path from colliding with a distinct Unicode module;
         // unsaved buffers use their logical path.
@@ -760,8 +856,12 @@ impl Project {
                 }
             }
         }
+        Arc::new(crate::box_imports::BoxModules::new(box_sources))
+    }
+
+    fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
         // Pass 2 and pass 3 share one module inventory per run.
-        let box_modules = Arc::new(crate::box_imports::BoxModules::new(box_sources));
+        let box_modules = self.build_box_modules();
         // Pass 2. Compute the scope before moving the tables into the
         // refiner, because `fn_table` records S3 generic-to-method edges.
         let mut fixpoint_scope = self.compute_fixpoint_scope();
@@ -1079,6 +1179,7 @@ impl Project {
             .collect();
         self.dirty_paths.clear();
         self.invalidated_fns.clear();
+        self.reordered = false;
 
         self.diagnostics = result.clone();
         result
@@ -1488,6 +1589,69 @@ mod tests {
         warm.update_file("loader.R".into(), parse_file("loader.R", before).into());
         assert_matches_cold(&mut warm);
         assert!(!warm.refinement_discovered_attachments);
+    }
+
+    #[test]
+    fn assignment_types_follow_edits_and_reuse_a_clean_check() {
+        let mut project = Project::new();
+        project.add_file(
+            "helper.R".into(),
+            parse_file("helper.R", "make <- function() 42L\n"),
+        );
+        project.add_file("caller.R".into(), parse_file("caller.R", "n <- make()\n"));
+        let mode = |project: &mut Project| {
+            let types = project.assignment_types_for("caller.R");
+            let (_, ty) = types.first().expect("caller.R has one assignment");
+            format!("{:?}", ty.mode)
+        };
+        assert!(mode(&mut project).contains("Integer"));
+        // Clean: no check runs, and the shared tables come back intact.
+        assert!(project.dirty_paths.is_empty());
+        assert!(mode(&mut project).contains("Integer"));
+        project.update_file(
+            "helper.R".into(),
+            parse_file("helper.R", "make <- function() \"x\"\n").into(),
+        );
+        assert!(mode(&mut project).contains("Character"));
+    }
+
+    #[test]
+    fn assignment_types_follow_a_reorder_that_changes_the_winning_method() {
+        let files = [
+            (
+                "class.R",
+                "setGeneric(\"g\", function(x, y) standardGeneric(\"g\"))\nsetClass(\"A\", representation(v = \"numeric\"))\n",
+            ),
+            (
+                "m1.R",
+                "setMethod(\"g\", signature(\"A\", \"character\"), function(x, y) 1L)\n",
+            ),
+            (
+                "m2.R",
+                "setMethod(\"g\", signature(x = \"A\", y = \"character\"), function(x, y) \"chr\")\n",
+            ),
+            ("caller.R", "n <- g(new(\"A\"), \"t\")\n"),
+        ];
+        let project_in = |order: &[usize]| {
+            let mut project = Project::new();
+            for &i in order {
+                let (path, source) = files[i];
+                project.add_file(path.into(), parse_file(path, source));
+            }
+            project
+        };
+        let mode = |project: &mut Project| {
+            let types = project.assignment_types_for("caller.R");
+            let (_, ty) = types.first().expect("caller.R has one assignment");
+            format!("{:?}", ty.mode)
+        };
+        let mut warm = project_in(&[0, 1, 2, 3]);
+        let before = mode(&mut warm);
+        let swapped = ["class.R", "m2.R", "m1.R", "caller.R"].map(String::from);
+        warm.reorder_files(&swapped);
+        let after = mode(&mut warm);
+        assert_eq!(after, mode(&mut project_in(&[0, 2, 1, 3])));
+        assert_ne!(before, after, "the swap must change the winner");
     }
 
     #[test]

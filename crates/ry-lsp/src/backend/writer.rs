@@ -709,7 +709,20 @@ impl IndexWriter {
         self.deadline = None;
         let requested = std::mem::take(&mut self.pending);
         match self.publish_diagnostics().await {
-            Some(published) => self.reconcile(&requested, published).await,
+            Some(published) => {
+                self.reconcile(&requested, published).await;
+                // A pass follows every change to the index or to an open
+                // document, and either can change another file's types.
+                // The pass advanced `diag_generation`, so a re-pull misses
+                // the hint cache and sees the current state.
+                if self.state.lock().await.supports_inlay_hint_refresh {
+                    // Spawned: the writer must not wait on the client.
+                    let client = self.client.clone();
+                    tokio::spawn(async move {
+                        let _ = client.inlay_hint_refresh().await;
+                    });
+                }
+            }
             // A document changed while the pass ran; the next pass covers
             // these paths too.
             None => self.request(requested).await,
@@ -779,7 +792,6 @@ impl IndexWriter {
                     .collect::<Vec<_>>(),
             )
         };
-        let colliding = |path: &str| open_uris.get(path).is_some_and(|(uris, _)| uris.len() > 1);
 
         let mut open_files = Vec::with_capacity(doc_versions.len());
         // Buffers ry cannot parse publish one RY000 each, as in `ry check`.
@@ -923,34 +935,46 @@ impl IndexWriter {
 
         // Every open buffer, eligible or not, hides its disk copy from box.
         let open_paths: HashSet<String> = open_uris.keys().cloned().collect();
+        let colliding_paths: HashSet<String> = open_uris
+            .iter()
+            .filter(|(_, (uris, _))| uris.len() > 1)
+            .map(|(path, _)| path.clone())
+            .collect();
         let mut all_results: Vec<(Arc<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
         for job in jobs {
-            // Colliding paths get their RY117 from the per-URI pass above.
-            let adoptable: Vec<Arc<SourceFile>> = job
-                .files
-                .iter()
-                .filter(|(path, _, _)| !colliding(path))
-                .map(|(_, _, file)| Arc::clone(file))
-                .collect();
-            let adopted = ry_checker::frontend::adopted_records(&adoptable, &job.ctx.config);
-            let mut project = job.cache.lock().await;
-            let mut result = project.check_with_workspace(
-                job.files,
-                Arc::clone(&job.ctx.stubs),
-                job.workspace,
-                adopted.records,
-                &open_paths,
-            );
-            for diagnostic in adopted.diagnostics {
-                if let Some((_, diagnostics)) = result
-                    .diagnostics
-                    .iter_mut()
-                    .find(|(path, _)| *path == diagnostic.path)
-                {
-                    diagnostics.push(diagnostic);
+            let mut project = Arc::clone(&job.cache).lock_owned().await;
+            let open_paths_for_task = open_paths.clone();
+            let colliding_for_task = colliding_paths.clone();
+            let (ctx, result) = tokio::task::spawn_blocking(move || {
+                // Colliding paths get their RY117 from the per-URI pass above.
+                let adoptable: Vec<Arc<SourceFile>> = job
+                    .files
+                    .iter()
+                    .filter(|(path, _, _)| !colliding_for_task.contains(path))
+                    .map(|(_, _, file)| Arc::clone(file))
+                    .collect();
+                let adopted = ry_checker::frontend::adopted_records(&adoptable, &job.ctx.config);
+                let mut result = project.check_with_workspace(
+                    job.files,
+                    Arc::clone(&job.ctx.stubs),
+                    job.workspace,
+                    adopted.records,
+                    &open_paths_for_task,
+                );
+                for diagnostic in adopted.diagnostics {
+                    if let Some((_, diagnostics)) = result
+                        .diagnostics
+                        .iter_mut()
+                        .find(|(path, _)| *path == diagnostic.path)
+                    {
+                        diagnostics.push(diagnostic);
+                    }
                 }
-            }
-            all_results.push((job.ctx, result));
+                (job.ctx, result)
+            })
+            .await
+            .expect("project checker worker panicked");
+            all_results.push((ctx, result));
         }
 
         // An edit during the check invalidates the whole result.

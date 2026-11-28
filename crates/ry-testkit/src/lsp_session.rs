@@ -149,8 +149,19 @@ where
     /// server unblocks and proceeds (without it, a pull-config server stalls
     /// in the handler awaiting the reply).
     pub async fn respond_to_request(&mut self, method: &str, result: Value) -> io::Result<Value> {
+        self.respond_to_request_after(0, method, result).await
+    }
+
+    /// [`Self::respond_to_request`] for the first matching request received
+    /// after `mark` (from [`Self::publication_mark`]).
+    pub async fn respond_to_request_after(
+        &mut self,
+        mark: u64,
+        method: &str,
+        result: Value,
+    ) -> io::Result<Value> {
         let request = self
-            .receive_matching(0, |message| {
+            .receive_matching(mark.saturating_add(1), |message| {
                 message.get("method").and_then(Value::as_str) == Some(method)
                     && message.get("id").is_some()
             })

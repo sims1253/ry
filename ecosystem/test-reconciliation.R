@@ -114,9 +114,20 @@ cat("  PASS\n")
 # A manifest package without a ledger entry must not drop out of the gate,
 # even when its report is clean (#932).
 cat("Test 11: a processed package absent from the ledger -> exit 1\n")
+# A ledger whose only gap is the missing entry, so nothing else can fail.
+writeLines(toJSON(make_corpus(list(tp, fp)), auto_unbox = TRUE), file.path(tmp, "corpus.json"))
 write_report("pkg", list(tp, fp))
 write_report("other", list())
-stopifnot(reconcile(file.path(tmp, "corpus.json"), tmp, "", c("pkg", "other")) == 1L)
+err <- capture.output(
+  type = "message",
+  status <- reconcile(file.path(tmp, "corpus.json"), tmp, "", c("pkg", "other"))
+)
+stopifnot(
+  status == 1L,
+  any(grepl("manifest packages missing from the ledger", err, fixed = TRUE)),
+  any(err == "  - other"),
+  !any(grepl("disappeared|appeared", err))
+)
 cat("  PASS\n")
 
 cat("\nAll reconciliation tests passed.\n")

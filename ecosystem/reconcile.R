@@ -23,10 +23,11 @@ multiset_delta <- function(left, right) {
 #'
 #' @param reports_dir Directory containing the .root.txt report files.
 #' @param report_prefix Manifest namespace prefixed to each report file name ("" for the default manifest).
-#' @param audited Character vector of package names to read.
-read_actual_identities <- function(reports_dir, report_prefix = "", audited) {
+#' @param processed Character vector of processed package names; each one's
+#'   report is read whether or not the ledger lists the package.
+read_actual_identities <- function(reports_dir, report_prefix = "", processed) {
   actual <- character(0)
-  for (package in audited) {
+  for (package in processed) {
     report <- file.path(reports_dir, paste0(report_prefix, package, ".root.txt"))
     lines <- readLines(report, encoding = "UTF-8", warn = FALSE)
     lines <- lines[nzchar(lines)]
@@ -96,8 +97,13 @@ reconcile <- function(corpus_path, reports_dir, report_prefix = "", processed) {
     writeLines("ecosystem: a reviewed true_positive finding disappeared.", stderr())
     return(1L)
   }
-  if (length(missing) || length(unowned) || length(unledgered)) {
+  if (length(unledgered)) {
+    writeLines(sprintf("ecosystem: add each missing package to the `packages` of %s, with its commit and diagnostics count", corpus_path), stderr())
+  }
+  if (length(missing) || length(unowned)) {
     writeLines(sprintf("ecosystem: update %s with the reviewed findings delta", corpus_path), stderr())
+  }
+  if (length(missing) || length(unowned) || length(unledgered)) {
     return(1L)
   }
   0L

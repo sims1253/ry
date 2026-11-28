@@ -99,6 +99,8 @@ export function start(context: vscode.ExtensionContext): Runtime {
   let shutdownStarted = false;
   const reportFailure = (message: string) => {
     logger.error(message);
+    // A window reload or deactivation must not raise error toasts.
+    if (shutdownStarted) return;
     if (serverState && resolvedBinary) statusItem.setReady(resolvedBinary);
     else statusItem.setError(message);
     void vscode.window

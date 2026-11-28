@@ -10,6 +10,8 @@ let configListener: ConfigListener | undefined;
 let currentPath: string[] = [];
 let starts = 0;
 let releaseFirstStart: (() => void) | undefined;
+let failHeldStart: ((error: unknown) => void) | undefined;
+let toasts = 0;
 
 const disposable = { dispose() {} };
 const channel = { show() {}, dispose() {} };
@@ -29,7 +31,10 @@ mock.module("vscode", () => ({
   },
   window: {
     createOutputChannel: () => channel,
-    showErrorMessage: () => Promise.resolve(undefined),
+    showErrorMessage: () => {
+      toasts++;
+      return Promise.resolve(undefined);
+    },
     showWarningMessage: () => Promise.resolve(undefined),
   },
 }));
@@ -70,9 +75,10 @@ mock.module("../common/server", () => ({
     starts++;
     // Hold the first start open so startup configuration events land
     // while it is in flight, as they do in a real window.
-    if (starts > 1) return Promise.resolve({});
-    return new Promise((resolve) => {
+    if (starts !== 1 && starts !== 3) return Promise.resolve({});
+    return new Promise((resolve, reject) => {
       releaseFirstStart = () => resolve({});
+      failHeldStart = reject;
     });
   },
   stopServer: async () => {},
@@ -107,5 +113,17 @@ describe("startup configuration events (#919)", () => {
     expect(starts).toBe(2);
 
     await runtime.shutdown();
+  });
+});
+
+describe("shutdown during a start", () => {
+  it("raises no error toast when the in-flight start fails", async () => {
+    // Third start overall: held open, then failed after shutdown began.
+    const runtime = start({ subscriptions: [] } as never);
+    await settle();
+    const shutdown = runtime.shutdown();
+    failHeldStart?.(new Error("spawn ENOENT"));
+    await shutdown;
+    expect(toasts).toBe(0);
   });
 });

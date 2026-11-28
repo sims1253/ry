@@ -39,3 +39,14 @@ it("a load that deactivate() dropped does not clear a newer load", async () => {
   await commands["ry.showLogs"]?.();
   expect(starts).toBe(2);
 });
+
+it("a command queued during deactivate() boots no second runtime", async () => {
+  const context = { subscriptions: [] } as never;
+  activate(context);
+  await settle();
+  const before = starts;
+  const teardown = deactivate();
+  await expect(commands["ry.showLogs"]?.()).rejects.toThrow("shutting down");
+  await teardown;
+  expect(starts).toBe(before);
+});

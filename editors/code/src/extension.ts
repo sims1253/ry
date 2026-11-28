@@ -6,8 +6,14 @@ import type { Runtime } from "./common/runtime";
 
 let runtimePromise: Promise<Runtime> | null = null;
 let bootImmediate: NodeJS.Immediate | null = null;
+// Set from deactivate() until the next activate(): a command queued during
+// teardown must not boot a runtime nothing will shut down.
+let deactivated = false;
 
 function runtime(context: vscode.ExtensionContext): Promise<Runtime> {
+  if (deactivated) {
+    return Promise.reject(new Error("The ry extension is shutting down."));
+  }
   if (runtimePromise == null) {
     const pending: Promise<Runtime> = import("./common/runtime")
       .then((module) => module.start(context))
@@ -24,6 +30,7 @@ function runtime(context: vscode.ExtensionContext): Promise<Runtime> {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  deactivated = false;
   const serverId = RY_SETTINGS_NAMESPACE;
 
   context.subscriptions.push(
@@ -60,6 +67,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): Promise<void> {
+  deactivated = true;
   // Cancel a still-pending boot so it cannot load the runtime after
   // deactivation.
   if (bootImmediate != null) {

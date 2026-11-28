@@ -1565,9 +1565,11 @@ fn partial_stub_keeps_unstubbed_exports_silent_while_applying_known_rules() {
 /// qualified call still is.
 #[test]
 fn project_functions_shadow_injecting_stub_signatures() {
+    // S7 is attached, so without the shadowing guard its signature would
+    // apply and report RY090.
     for source in [
-        "new_class <- function(class_name, ...) 1\nnew_class(\"x\", new = 1)\n",
-        "f <- function() {\n  new_class <- function(class_name, ...) 1\n  new_class(\"x\", new = 1)\n}\n",
+        "library(S7)\nnew_class <- function(class_name, ...) 1\nnew_class(\"x\", new = 1)\n",
+        "library(S7)\nf <- function() {\n  new_class <- function(class_name, ...) 1\n  new_class(\"x\", new = 1)\n}\n",
     ] {
         let diagnostics = check(source);
         assert!(
@@ -1575,7 +1577,8 @@ fn project_functions_shadow_injecting_stub_signatures() {
             "{source}: {diagnostics:?}"
         );
     }
-    let backticked = "`new_class` <- function(class_name, ...) 1\nnew_class(\"x\", new = 1)\n";
+    let backticked =
+        "library(S7)\n`new_class` <- function(class_name, ...) 1\nnew_class(\"x\", new = 1)\n";
     assert!(
         check(backticked).iter().all(|d| d.code != "RY090"),
         "{backticked}"
@@ -1587,8 +1590,7 @@ fn project_functions_shadow_injecting_stub_signatures() {
             .all(|d| d.code != "RY090")
     );
     // A binding that may hold a function shadows the stub.
-    let hook =
-        "f <- function(hooks) {\n  new_class <- hooks$new_class\n  new_class(\"x\", new = 1)\n}\n";
+    let hook = "library(S7)\nf <- function(hooks) {\n  new_class <- hooks$new_class\n  new_class(\"x\", new = 1)\n}\n";
     assert!(check(hook).iter().all(|d| d.code != "RY090"), "{hook}");
     // A data binding does not shadow the call: R skips it in call position.
     let data = "library(S7)\nnew_class <- 1L\nnew_class(\"x\", new = 1)\n";

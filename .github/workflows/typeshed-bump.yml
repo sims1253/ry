@@ -39,7 +39,7 @@ jobs:
       - name: Check out latest r-typeshed tag
         run: |
           git clone --quiet https://github.com/sims1253/r-typeshed /tmp/r-typeshed
-          tag="$(git -C /tmp/r-typeshed describe --tags --abbrev=0)"
+          tag="$(git -C /tmp/r-typeshed describe --tags --abbrev=0 --match 'v*')"
           git -C /tmp/r-typeshed checkout --quiet "$tag"
           echo "TYPESHED_TAG=$tag" >> "$GITHUB_ENV"
           # Bump only forward: sync when the vendored commit is the tag or
